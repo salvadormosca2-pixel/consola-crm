@@ -67,6 +67,54 @@ email ya existe, `user:create` le cambia la contraseña.
 
 ---
 
+## Trabajar desde otra computadora
+
+El repo tiene el código, pero **dos cosas no viajan con él a propósito**: los
+secretos y la base de datos. Sin eso, `npm run dev` arranca y falla.
+
+```bash
+git clone https://github.com/salvadormosca2-pixel/consola-crm.git
+cd consola-crm
+npm install
+```
+
+### 1. Los secretos
+
+`.env.local` está ignorado, así que hay que crearlo:
+
+```bash
+cp .env.example .env.local
+node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"   # → AUTH_SECRET
+node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"   # → ENCRYPTION_KEY
+```
+
+> **Cuidado con `ENCRYPTION_KEY` si las dos máquinas usan la misma base.** Con
+> esa clave se cifran el token de Chatwoot y la API key de Evolution. Si en la
+> segunda compu generás una distinta, la app no va a poder descifrar las
+> credenciales guardadas y va a pedirte que las cargues de nuevo — y al
+> guardarlas, la primera compu deja de poder leerlas. **Copiá la misma clave a
+> las dos.** `AUTH_SECRET` puede ser distinta: solo invalida las sesiones.
+
+### 2. La base de datos
+
+`.pgdev/` no está en el repo (son 300 MB de binarios). Tres caminos:
+
+| | Cuándo conviene |
+| --- | --- |
+| `docker compose up -d db redis` | Si esa compu tiene Docker. Es lo más simple. |
+| Postgres portable | Bajar el zip de PostgreSQL 16 para Windows, descomprimirlo en `.pgdev/` y correr `.\scripts\pg-local.ps1 init`. Es lo que usa esta máquina porque no tiene Docker. |
+| Postgres en la nube | **El único que te deja trabajar con los mismos datos desde las dos compus.** Creás la base en Neon o Supabase y ponés esa `DATABASE_URL` en las dos. |
+
+Con base local, cada máquina tiene su propia copia de los datos y no se
+sincronizan: los contactos que importás en una no aparecen en la otra. Si vas a
+trabajar en serio desde dos lados, la base en la nube es el camino.
+
+```bash
+npm run db:migrate
+npm run user:create
+npm run dev
+```
+
 ## Comandos
 
 | Comando | Qué hace |
