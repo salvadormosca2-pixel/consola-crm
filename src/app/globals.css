@@ -1,0 +1,139 @@
+@import 'tailwindcss';
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Consola de despacho. Panel de instrumentos, no landing de SaaS.
+   Paleta fija de la spec: sin degradados, sin sombras difusas grandes,
+   radios de 4–6 px, nunca cápsulas.
+   ───────────────────────────────────────────────────────────────────────── */
+
+@theme {
+  /* Superficies */
+  --color-fondo: #141a22;
+  --color-superficie: #1e2732;
+  --color-elevada: #26313e;
+  --color-borde: #33404f;
+  --color-borde-fuerte: #43526580;
+
+  /* Texto */
+  --color-texto: #e6eaf0;
+  --color-texto-2: #8d9bab;
+
+  /* Señales */
+  --color-ambar: #e8a33d;
+  --color-ambar-tenue: #e8a33d1f;
+  --color-verde: #4fb3a6;
+  --color-verde-tenue: #4fb3a61f;
+  --color-rojo: #d2544b;
+  --color-rojo-tenue: #d2544b1f;
+
+  /* Tipografía */
+  --font-titulo: var(--fuente-chivo), ui-sans-serif, system-ui, sans-serif;
+  --font-sans: var(--fuente-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--fuente-mono), ui-monospace, SFMono-Regular, monospace;
+
+  /* Radios: 4–6 px y nada más */
+  --radius-sm: 4px;
+  --radius-md: 5px;
+  --radius-lg: 6px;
+
+  /* Animación funcional: 150–200 ms */
+  --ease-consola: cubic-bezier(0.2, 0, 0, 1);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-borde);
+  }
+
+  html {
+    color-scheme: dark;
+  }
+
+  body {
+    background-color: var(--color-fondo);
+    color: var(--color-texto);
+    font-family: var(--font-sans);
+    font-size: 13px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Títulos: Chivo 700, apretada, con seguimiento negativo en los grandes. */
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-titulo);
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+  }
+  h1 {
+    letter-spacing: -0.035em;
+  }
+
+  /* Foco de teclado siempre visible. */
+  :focus-visible {
+    outline: 2px solid var(--color-ambar);
+    outline-offset: 2px;
+    border-radius: 3px;
+  }
+
+  ::selection {
+    background: var(--color-ambar);
+    color: var(--color-fondo);
+  }
+
+  /* Barras de scroll acordes a la consola. */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: var(--color-fondo);
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-borde);
+    border-radius: 5px;
+    border: 2px solid var(--color-fondo);
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #4a5a6d;
+  }
+}
+
+@layer components {
+  /*
+   * Dato de instrumento: teléfonos, usuarios de IG, contadores, cupos,
+   * porcentajes y marcas de tiempo. El contraste con el texto de interfaz
+   * es lo que le da el carácter de instrumento — no usar en párrafos.
+   */
+  .dato {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'zero' 1;
+    letter-spacing: -0.01em;
+  }
+
+  /* Encabezado de sección: versalitas chicas, para rotular grupos de datos. */
+  .rotulo {
+    font-family: var(--font-sans);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--color-texto-2);
+  }
+}
+
+/* Animación solo funcional, y desactivable. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

@@ -1,0 +1,342 @@
+# Consola
+
+Consola de operaciones para hacerle seguimiento a clientes que ya compraron:
+importar la lista, ordenarla, repartirla entre las cuentas emisoras y —a partir
+de la parte 2— despachar los mensajes de a uno con un click.
+
+**Estado:** terminadas la fase 1 y la fase 2 de la parte 1 (cimientos e
+importador de Excel, con el reparto entre cuentas de la fase 5 incluido) y la
+fase 1 de la parte 2 (rotación, calentamiento y contabilidad de cupos).
+
+Ya sirve para lo que pedía el criterio de la parte 1: **cargar y ordenar la base
+de clientes**. Se cargan las cuentas emisoras, se importa un Excel de 1.000+
+filas con normalización y deduplicación, y los contactos quedan repartidos entre
+los números. Todavía falta la tabla de contactos con filtros, las plantillas y
+todo el envío.
+
+---
+
+## Arrancar
+
+### 1. Base de datos
+
+La app solo mira `DATABASE_URL`, así que sirve cualquiera de las tres:
+
+**a. Docker** (lo esperable en cualquier máquina con Docker):
+
+```bash
+docker compose up -d db redis
+```
+
+**b. Postgres portable** (lo que está configurado hoy, porque este equipo no
+tiene Docker ni Postgres instalado). Los binarios viven en `.pgdev/`, no hay
+nada instalado a nivel sistema y se borra con `Remove-Item .pgdev -Recurse`:
+
+```powershell
+.\scripts\pg-local.ps1 init     # una sola vez: crea el cluster y la base
+.\scripts\pg-local.ps1 start    # cada vez que prendés la máquina
+.\scripts\pg-local.ps1 stop
+.\scripts\pg-local.ps1 status
+```
+
+**c. Supabase u otro Postgres administrado.** Cambiá `DATABASE_URL` en
+`.env.local` y poné `DATABASE_SSL=true`. El esquema es portable: no usa nada
+propio de Supabase.
+
+### 2. Entorno
+
+```bash
+cp .env.example .env.local
+node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"   # → AUTH_SECRET
+```
+
+`.env.local` no se versiona. Ninguna de sus variables lleva prefijo
+`NEXT_PUBLIC_`: son todas secretos de servidor.
+
+### 3. Migraciones y primer usuario
+
+```bash
+npm install
+npm run db:migrate
+npm run user:create        # pregunta email, nombre y contraseña
+npm run dev                # http://localhost:3000
+```
+
+No hay registro público: las cuentas se crean solo desde la terminal. Si el
+email ya existe, `user:create` le cambia la contraseña.
+
+---
+
+## Comandos
+
+| Comando | Qué hace |
+| --- | --- |
+| `npm run dev` | Servidor de desarrollo |
+| `npm run build` | Build de producción |
+| `npm run typecheck` | TypeScript sin emitir |
+| `npm test` | Tests (vitest) |
+| `npm run db:generate` | Genera una migración a partir del esquema Drizzle |
+| `npm run db:migrate` | Aplica las migraciones pendientes |
+| `npm run db:studio` | Explorador visual de la base |
+| `npm run user:create` | Da de alta (o repone la contraseña de) un usuario |
+
+Para pasarle argumentos a `user:create` usá `npx tsx` directo, porque npm se
+come los flags que empiezan con `--`:
+
+```bash
+npx tsx scripts/create-user.ts --email vos@ejemplo.com --name Vos --password "..."
+```
+
+---
+
+## Cómo está armado
+
+```
+src/
+  db/
+    enums.ts        Enums de Postgres + sus etiquetas de UI (fuente de verdad única)
+    schema.ts       Esquema completo en Drizzle: 12 tablas
+    index.ts        Pool de conexiones (uno por proceso)
+  lib/
+    env.ts          Validación del entorno con Zod: si falta algo, no arranca
+    tz.ts           Conversión UTC ↔ zona operativa y formatos de fecha
+    form-state.ts   Estado compartido entre formularios y server actions
+    validation/     Esquemas Zod de todo lo que entra
+  server/
+    accounts.ts     Consultas de cuentas (incluida la vista de distribución)
+    contacts.ts     Consultas de contactos
+    actions/        Server actions (mutaciones)
+  components/
+    cap-meter.tsx   El medidor de cupo
+    ui/             Base de componentes re-estilada
+  app/
+    ingresar/       Login
+    (consola)/      Todo lo que exige sesión
+drizzle/            Migraciones versionadas
+scripts/            Migrar, crear usuarios, Postgres portable
+```
+
+### Decisiones que conviene saber
+
+**Todo se guarda en UTC.** La zona operativa (`OPS_TIMEZONE`, por defecto
+`America/Argentina/Catamarca`) se aplica al leer, en `src/lib/tz.ts`. El
+contador diario de cada cuenta se reinicia solo: `sent_today` únicamente cuenta
+si `counter_date` es la fecha operativa de hoy, así que no hace falta ningún
+job de medianoche.
+
+**La asignación de contacto a cuenta es pegada y por canal.** Hay dos columnas,
+`assigned_wa_account_id` y `assigned_ig_account_id`, no una sola: un contacto
+con los dos canales tiene una cuenta de WhatsApp *y* una de Instagram. El
+cliente vio ese número, tiene que seguir viendo ese número.
+
+**`has_whatsapp` significa "el teléfono tiene formato válido", no "tiene
+WhatsApp".** En Argentina un fijo y un celular son indistinguibles mirando el
+número. La verificación real se hace contra Evolution API en la parte 2 y se
+anota en `wa_verified_at`.
+
+**La deduplicación de contactos no depende solo de `dedupe_key`.** Hay índices
+únicos parciales sobre `phone_e164` y sobre `lower(ig_username)` por separado,
+para que el mismo negocio no entre dos veces cuando un import trae solo
+Instagram y el siguiente trae teléfono + Instagram.
+
+**En los archivos `'use server'` solo se exportan funciones async.** Las
+constantes y los tipos compartidos van en `src/lib/form-state.ts`: exportar un
+objeto desde un módulo de server actions lo deja en `undefined` del lado del
+cliente.
+
+**Los errores de Postgres vienen envueltos por Drizzle.** El `code` y la
+`constraint` están en `err.cause`, no en `err`. `errorPg()` en
+`src/server/actions/accounts.ts` los desenvuelve para poder mostrar "ya hay una
+cuenta con ese número" en vez de un error genérico.
+
+**El migrador es propio, no el de Drizzle.** El de Drizzle envuelve todas las
+migraciones pendientes en una sola transacción, y eso hace imposible
+`ALTER TYPE ... ADD VALUE` seguido de un uso del valor nuevo: Postgres no deja
+usarlo hasta que la transacción que lo creó confirmó. `scripts/migrate.ts`
+aplica cada archivo en su propia transacción. Los archivos y el journal los
+sigue generando `drizzle-kit generate`.
+
+**`messages` es la autoridad del cupo; `sent_today` es caché.** El recuento se
+hace dentro de la transacción de reserva, después de tomar el lock de la cuenta,
+y sobre un rango UTC precalculado (no `AT TIME ZONE` sobre la columna, que no
+usaría el índice). Si la caché difiere, gana `messages` y queda un evento
+`cupo_corregido`. Ver `src/server/rotation/reserve.ts`.
+
+**Elegir cuenta y reservar cupo usan locks distintos, y la diferencia importa.**
+Elegir usa `FOR UPDATE SKIP LOCKED` (cualquier cuenta elegible sirve, saltear
+una tomada es correcto). Reservar usa `FOR UPDATE` a secas sobre la cuenta ya
+decidida (saltear sería perder el envío).
+
+**El calentamiento cuenta días de uso, no del almanaque.** Si un número no mandó
+el martes, el miércoles sigue en el mismo día de la escala. Por eso hay
+`warmup_day` y `warmup_last_advanced_on`, y no alcanzaba con `warmup_started_on`.
+
+**Con Chatwoot hay dos emisores, y eso limita la garantía del cupo.** Los
+mensajes que manda la consola siguen bajo garantía transaccional: no pueden
+pasarse ni por uno. Pero un mensaje escrito a mano dentro de Chatwoot se cuenta
+recién cuando llega el webhook, y en esa ventana la consola cuenta de menos.
+Por eso existe `colchonParaRespuestas`: la consola se frena unos mensajes antes
+del tope (`techoParaLaConsola()`) y deja lugar para las respuestas a mano. El
+cupo real del número sigue siendo `cupoEfectivo()`.
+
+**El `15` de los celulares no se puede borrar a ciegas.** El código de área
+argentino tiene 2, 3 o 4 dígitos, así que la posición del `15` es variable. El
+invariante que usa `src/lib/phone-ar.ts` es que el número nacional son siempre
+10 dígitos (12 si trae el `15`), y prueba los tres largos de área hasta dar con
+el que tiene el `15` en el lugar correcto. Hay una ambigüedad real que no se
+puede resolver (383 es prefijo de 3837) pero no afecta el E.164, solo lo que se
+muestra.
+
+**El parseo del Excel corre en un Web Worker.** 1.000 filas normalizadas en el
+hilo principal congelan la pantalla varios segundos. El worker
+(`src/workers/parse-sheet.worker.ts`) hace parseo, normalización y dedupe, y va
+reportando progreso; el servidor recibe las filas ya listas de a 200.
+
+**SheetJS viene del CDN oficial, no de npm.** El paquete `xlsx` publicado en npm
+quedó en 0.18.5 con vulnerabilidades conocidas; las versiones mantenidas se
+distribuyen fuera de npm. Por eso `package.json` apunta a un tarball de
+`cdn.sheetjs.com`.
+
+**Las credenciales se cifran con AES-256-GCM** (`src/lib/crypto.ts`) usando
+`ENCRYPTION_KEY` del entorno. GCM además autentica: si alguien edita el valor en
+la base, el descifrado falla en vez de devolver basura. Si perdés la clave, hay
+que volver a cargar las credenciales desde Configuración.
+
+---
+
+## Sistema visual
+
+Consola de despacho, no landing de SaaS. Los tokens están en
+`src/app/globals.css` y no se improvisan colores fuera de ahí.
+
+| | |
+| --- | --- |
+| Fondo · Superficie · Elevada | `#141A22` · `#1E2732` · `#26313E` |
+| Bordes · Texto · Texto secundario | `#33404F` · `#E6EAF0` · `#8D9BAB` |
+| Ámbar señal | `#E8A33D` — acción principal, cupos, abrir canal |
+| Verde agua | `#4FB3A6` — respondió, cerrado, positivo |
+| Rojo | `#D2544B` — bloqueado, perdido, límite alcanzado |
+
+Títulos en **Chivo** 700 con seguimiento negativo, interfaz en **Inter**,
+**JetBrains Mono** para todo dato de instrumento (teléfonos, usuarios, cupos,
+contadores, marcas de tiempo) con la clase `.dato`.
+
+Sin degradados. Sin sombras difusas grandes. Radios de 4–6 px, nunca cápsulas.
+Animación solo funcional, 150–200 ms, y respetando `prefers-reduced-motion`.
+
+El **medidor de cupo** (`src/components/cap-meter.tsx`) es la única pieza
+decorativa permitida, y es informativa: una barra segmentada por cuenta, que se
+llena en ámbar, pasa a rojo al tope y se atenúa si la cuenta está pausada o
+bloqueada.
+
+---
+
+## Qué falta
+
+**Parte 1** (cargar y ordenar la base):
+
+| Fase | Qué entra |
+| --- | --- |
+| ~~2~~ | ~~Importador de Excel~~ — **hecho** |
+| 3 | Tabla de contactos virtualizada, filtros guardables, ficha lateral con línea de tiempo |
+| 4 | Plantillas con variables, variantes rotativas, vista previa con contacto real |
+| ~~5~~ | ~~Reparto entre cuentas~~ — **hecho**, va dentro del importador |
+
+**Parte 2** (mandar, seguir y medir):
+
+| Fase | Qué entra |
+| --- | --- |
+| 2 | Modo piloto: tanda de un número, ventana de 24 h, semáforo, comparación de variantes |
+| 3 | Despachador Instagram: bloques por cuenta, portapapeles + link, cambio de cuenta con confirmación |
+| 4 | Despachador WhatsApp: envío por la API de **Chatwoot**, prioridad de cola, modo lote, respaldo directo a Evolution si Chatwoot no responde |
+| 5 | Etapas y secuencias con corte absoluto al responder |
+| 6 | Respuestas por el webhook de **Chatwoot**: bandeja, clasificación, score con desglose, indicador de sincronización |
+| 7 | Métricas por cuenta, plantilla, variante y rubro |
+| 8 | Calendario y reuniones |
+| 9 | Configuración: mapeo cuenta ↔ inbox, credenciales cifradas, exportaciones |
+
+**Chatwoot es la bandeja; la consola es el cerebro.** Evolution habla solo con
+Chatwoot, y la consola habla solo con Chatwoot: si los dos escucharan a
+Evolution, cada mensaje entraría dos veces. La rotación, los cupos y el
+calentamiento se siguen decidiendo en la consola, que elige el inbox
+correspondiente a la cuenta asignada.
+
+---
+
+## Chatwoot embebido: qué tocar en el servidor
+
+La sección **Mensajes** muestra Chatwoot completo dentro de un iframe. Para que
+cargue hay que hacer dos cosas en tu servidor de Chatwoot. La consola detecta
+sola si falta alguna y te lo dice en pantalla con el valor exacto.
+
+### 1. Permitir el iframe
+
+Chatwoot manda `X-Frame-Options: SAMEORIGIN`, que le prohíbe al navegador
+mostrarlo dentro de otra página. **Esa cabecera no admite excepciones por
+dominio**: hay que sacarla y reemplazarla por `frame-ancestors`, que sí permite
+autorizar un dominio puntual.
+
+No hay variable de entorno de Chatwoot para esto: la cabecera la pone el reverse
+proxy que tenés adelante.
+
+**nginx** — en el bloque `server` de Chatwoot:
+
+```nginx
+# Sacar cualquier línea que diga:
+#   add_header X-Frame-Options SAMEORIGIN;
+proxy_hide_header X-Frame-Options;
+add_header Content-Security-Policy "frame-ancestors 'self' https://crm.tudominio.com" always;
+```
+
+**Caddy**:
+
+```
+header {
+  -X-Frame-Options
+  Content-Security-Policy "frame-ancestors 'self' https://crm.tudominio.com"
+}
+```
+
+**Traefik** — en el middleware de headers del router de Chatwoot:
+
+```yaml
+customResponseHeaders:
+  X-Frame-Options: ""
+  Content-Security-Policy: "frame-ancestors 'self' https://crm.tudominio.com"
+```
+
+Si Chatwoot corre en Docker con su propio nginx adelante, el cambio va en **ese**
+nginx, no en el contenedor de Rails. Después recargá el proxy
+(`nginx -s reload`) y volvé a la sección Mensajes.
+
+> En **Chatwoot Cloud** esto no se puede cambiar. Ahí el iframe no es viable y la
+> consola te ofrece abrirlo en una pestaña, con el webhook funcionando igual.
+
+### 2. Servir todo bajo el mismo dominio raíz
+
+Si la consola y Chatwoot están en dominios raíz distintos, el navegador puede
+bloquear la cookie de sesión de Chatwoot dentro del iframe y vas a tener que
+loguearte una y otra vez.
+
+```
+crm.tudominio.com     → la consola
+chat.tudominio.com    → Chatwoot
+```
+
+Con eso la cookie viaja bien. La consola detecta si los dominios no coinciden y
+te avisa arriba de la bandeja.
+
+### 3. El webhook, que es obligatorio
+
+**Un iframe no le cuenta nada a la página que lo contiene.** Chatwoot adentro de
+la consola no avisa cuándo llega una respuesta, así que la sincronización va por
+atrás igual — y sin ella el sistema se rompe: la consola creería que nadie
+contestó y seguiría mandando seguimientos a gente que ya respondió.
+
+En Chatwoot: **Configuración → Integraciones → Webhooks**, y agregá la URL que
+te muestra la pantalla de Configuración de la consola (ya viene con el secreto),
+con los eventos `message_created` y `conversation_status_changed`.
+
+El indicador del encabezado de Mensajes se pone verde si llegó algo en los
+últimos 15 minutos y rojo si hace más de una hora que no llega nada habiendo
+mensajes enviados.

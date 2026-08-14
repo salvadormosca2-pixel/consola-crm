@@ -1,0 +1,18 @@
+﻿node_modules/
+.next/
+out/
+build/
+.env
+.env.local
+.env*.local
+next-env.d.ts
+*.tsbuildinfo
+.DS_Store
+coverage/
+
+# Postgres portable de desarrollo (no hay Docker en este equipo)
+.pgdev/
+
+# Excel de ejemplo que genera npm run demo:cargar
+ejemplo-clientes.xlsx
+.next-verify/
