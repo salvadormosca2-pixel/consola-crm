@@ -10,6 +10,12 @@ const nextConfig: NextConfig = {
    * se puede verificar que el build pasa sin voltear el dev que está corriendo.
    */
   distDir: process.env.NEXT_DIST_DIR ?? '.next',
+  /*
+   * Empaqueta el servidor con solo los modulos que Next rastrea que usa, en
+   * <distDir>/standalone. Es lo que copia la etapa runner del Dockerfile: sin
+   * esto la imagen tendria que arrastrar node_modules entero.
+   */
+  output: 'standalone',
   reactStrictMode: true,
   typedRoutes: true,
   serverExternalPackages: ['pg', '@node-rs/argon2'],

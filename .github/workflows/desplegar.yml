@@ -1,0 +1,151 @@
+# Construye la imagen de la Consola y avisa a Coolify para que la descargue.
+#
+# El build corre acá y no en el VPS a propósito: `next build` pega un pico de
+# más de 2 GB, y en un KVM 2 de 8 GB eso compite con Chatwoot y Evolution hasta
+# que el kernel mata alguno. El servidor solo baja la imagen ya hecha.
+
+name: Construir y desplegar
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+env:
+  IMAGEN: ghcr.io/${{ github.repository }}
+
+jobs:
+  # Si esto falla, no se construye nada. Es la red que evita subir algo roto.
+  verificar:
+    name: Tipos, lint y tests
+    runs-on: ubuntu-latest
+
+    # Los tests de cupo corren contra Postgres de verdad, no contra mocks: lo
+    # que prueban son los locks y las transacciones, que un mock no reproduce.
+    # Sin esta base, 35 tests fallan por no poder conectarse.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: crm
+          POSTGRES_PASSWORD: crm_ci
+          POSTGRES_DB: crm
+          TZ: UTC
+          PGTZ: UTC
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U crm -d crm"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgres://crm:crm_ci@localhost:5432/crm
+      DATABASE_SSL: 'false'
+      # Solo para que los módulos que validan el entorno al importarse no
+      # revienten. No son secretos: nada de esto sale del contenedor del CI.
+      AUTH_SECRET: relleno-de-ci-no-usar-en-produccion-0000000000
+      ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      OPS_TIMEZONE: America/Argentina/Catamarca
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      # `xlsx` viene de cdn.sheetjs.com, no de npm: este paso necesita internet.
+      - run: npm ci
+
+      - name: Tipos
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      # `urlDeTest()` deriva `<base>_test` de DATABASE_URL, así que la base de
+      # test tiene que existir y tener el esquema aplicado antes de los tests.
+      - name: Preparar la base de tests
+        run: |
+          PGPASSWORD=crm_ci psql -h localhost -U crm -d crm -c 'create database crm_test'
+          DATABASE_URL=postgres://crm:crm_ci@localhost:5432/crm_test npm run db:migrate
+
+      - name: Tests
+        run: npm test
+
+  imagen:
+    name: Construir imagen
+    needs: verificar
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Entrar al registro de GitHub
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Etiquetas
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGEN }}
+          tags: |
+            type=raw,value=latest
+            type=sha,format=long
+
+      - name: Construir y publicar
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: runner
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # La caché vive en GitHub: sin esto cada build reinstala todo npm.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Imagen con tsx y las dependencias de desarrollo, para correr las
+      # migraciones y dar de alta usuarios dentro del servidor.
+      - name: Construir imagen de operaciones
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: ops
+          push: true
+          tags: ${{ env.IMAGEN }}:ops
+          cache-from: type=gha
+
+  desplegar:
+    name: Avisar a Coolify
+    needs: imagen
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'push' }}
+    steps:
+      # Sin el webhook cargado el paso se saltea en vez de fallar: así el CI
+      # sirve igual mientras el servidor todavía no está configurado.
+      - name: Disparar el despliegue
+        env:
+          WEBHOOK: ${{ secrets.COOLIFY_WEBHOOK }}
+          TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+        run: |
+          if [ -z "$WEBHOOK" ]; then
+            echo "COOLIFY_WEBHOOK todavía no está cargado."
+            echo "La imagen quedó publicada; el despliegue se hace a mano desde Coolify."
+            exit 0
+          fi
+          curl --fail --silent --show-error \
+               --request GET "$WEBHOOK" \
+               --header "Authorization: Bearer $TOKEN"
+          echo "Despliegue disparado."

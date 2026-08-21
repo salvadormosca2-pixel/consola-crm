@@ -1,0 +1,29 @@
+# Todo lo que no tiene por qué entrar en la imagen. Cada archivo que se cuela
+# invalida la caché de capas y alarga el build.
+
+node_modules/
+.next/
+.next-verify/
+out/
+build/
+coverage/
+*.tsbuildinfo
+
+.git/
+.github/
+
+# Secretos: en el contenedor las variables las inyecta Coolify, nunca un archivo.
+.env
+.env.local
+.env*.local
+
+# Postgres portable de desarrollo (300 MB, solo sirve en Windows).
+.pgdev/
+
+# Solo aplica a la máquina de desarrollo.
+scripts/pg-local.ps1
+docker-compose.yml
+
+ejemplo-clientes.xlsx
+README.md
+.DS_Store

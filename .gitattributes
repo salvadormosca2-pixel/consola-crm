@@ -1,0 +1,15 @@
+# Estos archivos los lee Linux, no Windows. Con finales de línea CRLF, el
+# `\r` queda pegado al final de cada comando y el contenedor falla con errores
+# que no se entienden ("command not found" sobre comandos que existen).
+#
+# Solo se fijan los archivos del despliegue: el resto del repo se deja como
+# está para no reescribir el historial de todo.
+
+Dockerfile      text eol=lf
+.dockerignore   text eol=lf
+*.yml           text eol=lf
+*.yaml          text eol=lf
+*.sh            text eol=lf
+
+# Este solo corre en Windows.
+*.ps1           text eol=crlf
