@@ -5,9 +5,9 @@ import { revalidatePath } from 'next/cache'
 
 import { auth } from '@/auth'
 import { db } from '@/db'
+import type { ContactOrigen } from '@/db/enums'
 import { contacts, events, importBatchItems, importBatches, messages } from '@/db/schema'
 import type { EstadoAccion } from '@/lib/form-state'
-import { repartir, resumirReparto, type CuentaParaReparto } from '@/lib/import/distribute'
 import type { FilaPreparada } from '@/lib/import/rows'
 import { canalPreferido } from '@/lib/import/rows'
 
@@ -17,7 +17,7 @@ import { canalPreferido } from '@/lib/import/rows'
  * El parseo, la normalización y la deduplicación pasan en el navegador (Web
  * Worker) para no congelar la pantalla con 1.000 filas. Acá llegan las filas ya
  * preparadas, de a lotes, y esto se ocupa de lo que solo puede hacer el
- * servidor: deduplicar contra la base, repartir entre cuentas y escribir.
+ * servidor: deduplicar contra la base y escribir.
  *
  * Cada lote es una transacción. Si un lote falla, se revierte entero y la
  * importación queda marcada como parcial, con el número de fila exacto.
@@ -64,45 +64,10 @@ export async function abrirImportacion(
   }
 }
 
-/** Cuentas disponibles con su carga real, para balancear el reparto. */
-async function leerCuentasParaReparto(): Promise<CuentaParaReparto[]> {
-  const filas = await db.execute(sql`
-    select a.id, a.code, a.label, a.channel, a.phone_e164, a.ig_username, a.status,
-           (select count(*) from contacts c
-             where (c.assigned_wa_account_id = a.id or c.assigned_ig_account_id = a.id)
-               and c.discarded_at is null
-               and c.sent_count = 0)::int as carga
-      from messaging_accounts a
-     order by a.code asc
-  `)
-
-  return (filas.rows as Array<{
-    id: string
-    code: string
-    label: string
-    channel: 'whatsapp' | 'instagram'
-    phone_e164: string | null
-    ig_username: string | null
-    status: string
-    carga: number
-  }>).map((a) => ({
-    id: a.id,
-    code: a.code,
-    label: a.label,
-    channel: a.channel,
-    phoneE164: a.phone_e164,
-    igUsername: a.ig_username,
-    cargaActual: a.carga,
-    operativa: a.status === 'activa' || a.status === 'calentando',
-  }))
-}
-
 export interface ResultadoLote {
   ok: boolean
   error?: string
   resumen: ResumenLote
-  /** Cuántos quedaron en cada cuenta, para el resumen final. */
-  porCuenta: Array<{ code: string; label: string; channel: string; asignados: number }>
 }
 
 /**
@@ -116,14 +81,14 @@ export async function importarLote(
   batchId: string,
   filas: FilaPreparada[],
   completarVacios: boolean,
+  origen: ContactOrigen = 'cliente',
 ): Promise<ResultadoLote> {
-  if (filas.length === 0) return { ok: true, resumen: LOTE_VACIO, porCuenta: [] }
+  if (filas.length === 0) return { ok: true, resumen: LOTE_VACIO }
 
-  const cuentas = await leerCuentasParaReparto()
   const resumen: ResumenLote = { ...LOTE_VACIO }
 
   try {
-    const asignaciones = await db.transaction(async (tx) => {
+    await db.transaction(async (tx) => {
       // ── 1. Buscar cuáles ya existen, por teléfono O por Instagram ──────
       const telefonos = filas.map((f) => f.phoneE164).filter((x): x is string => x !== null)
       const usuarios = filas.map((f) => f.igUsername).filter((x): x is string => x !== null)
@@ -143,8 +108,6 @@ export async function importarLote(
                 notes: contacts.notes,
                 hasWhatsapp: contacts.hasWhatsapp,
                 hasInstagram: contacts.hasInstagram,
-                assignedWaAccountId: contacts.assignedWaAccountId,
-                assignedIgAccountId: contacts.assignedIgAccountId,
               })
               .from(contacts)
               .where(
@@ -176,24 +139,9 @@ export async function importarLote(
         else nuevas.push(fila)
       }
 
-      // ── 3. Repartir entre cuentas solo las nuevas ──────────────────────
-      // Las que ya existían conservan su cuenta: la asignación es pegada.
-      const reparto = repartir(
-        nuevas.map((f) => ({
-          clave: String(f.rowNumber),
-          tienePhone: f.phoneE164 !== null,
-          tieneInstagram: f.igUsername !== null,
-          accountRaw: f.accountRaw,
-        })),
-        cuentas,
-      )
-      const porClave = new Map(reparto.map((r) => [r.clave, r]))
-
       // ── 4. Insertar las nuevas ─────────────────────────────────────────
       for (const fila of nuevas) {
-        const asignacion = porClave.get(String(fila.rowNumber))
         const avisos = [...fila.avisos]
-        if (asignacion?.aviso) avisos.push(asignacion.aviso)
 
         const [creado] = await tx
           .insert(contacts)
@@ -210,8 +158,7 @@ export async function importarLote(
             city: fila.city,
             notes: fila.notes,
             preferredChannel: canalPreferido(fila),
-            assignedWaAccountId: asignacion?.waAccountId ?? null,
-            assignedIgAccountId: asignacion?.igAccountId ?? null,
+            origen,
             importBatchId: batchId,
             dedupeKey: fila.dedupeKey,
           })
@@ -275,22 +222,6 @@ export async function importarLote(
           continue
         }
 
-        // Si el contacto gana un canal nuevo, se le asigna cuenta de ese canal.
-        if (cambios.phoneE164 && !actual.assignedWaAccountId) {
-          const [nueva] = repartir(
-            [{ clave: 'x', tienePhone: true, tieneInstagram: false, accountRaw: fila.accountRaw }],
-            cuentas,
-          )
-          if (nueva?.waAccountId) cambios.assignedWaAccountId = nueva.waAccountId
-        }
-        if (cambios.igUsername && !actual.assignedIgAccountId) {
-          const [nueva] = repartir(
-            [{ clave: 'x', tienePhone: false, tieneInstagram: true, accountRaw: fila.accountRaw }],
-            cuentas,
-          )
-          if (nueva?.igAccountId) cambios.assignedIgAccountId = nueva.igAccountId
-        }
-
         cambios.updatedAt = new Date()
         await tx.update(contacts).set(cambios).where(eq(contacts.id, actual.id))
         resumen.actualizados++
@@ -332,10 +263,10 @@ export async function importarLote(
         })
         .where(eq(importBatches.id, batchId))
 
-      return reparto
+      return
     })
 
-    return { ok: true, resumen, porCuenta: resumirReparto(asignaciones, cuentas) }
+    return { ok: true, resumen }
   } catch (err) {
     console.error('Error al importar el lote:', err)
     const primera = filas[0]?.rowNumber ?? 0
@@ -344,7 +275,6 @@ export async function importarLote(
       ok: false,
       error: `Falló el lote de las filas ${primera} a ${ultima}. No se importó ninguna de ellas; las anteriores sí quedaron.`,
       resumen,
-      porCuenta: [],
     }
   }
 }

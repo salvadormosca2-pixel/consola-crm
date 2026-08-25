@@ -1,0 +1,688 @@
+'use server'
+
+import { hash } from '@node-rs/argon2'
+import { sql } from 'drizzle-orm'
+import { headers } from 'next/headers'
+import { revalidatePath } from 'next/cache'
+import { z } from 'zod'
+
+import { db } from '@/db'
+import type { EstadoAccion } from '@/lib/form-state'
+import {
+  NOTIFICACIONES_CONFIG_KEY,
+  notificacionesConfigSchema,
+} from '@/lib/notificaciones-config'
+import { generarPasswordTemporal, tarjetaDeAcceso } from '@/lib/password'
+import { SETTERS_CONFIG_DEFAULT } from '@/lib/setters-config'
+import { ErrorDePermiso, exigirAdmin, exigirAdminMadre } from '@/server/session'
+import { devolverLead, devolverPendientes, reasignarLead } from '@/server/setters/asignacion'
+import { repartirAhora } from '@/server/setters/reparto'
+
+/**
+ * Alta, baja y mantenimiento del equipo.
+ *
+ * Dos niveles de permiso, y la diferencia es deliberada:
+ *
+ *   · **admin_madre** — todo lo que toca una cuenta de acceso: crearla,
+ *     restablecer su contraseña, darla de baja, cambiar un rol. Es lo que
+ *     decide quién entra al sistema.
+ *   · **admin** — todo lo operativo: pausar, reasignar leads, devolver al pozo,
+ *     tomar un lead. Es lo que decide quién trabaja qué.
+ *
+ * La cuenta madre además está protegida por un disparador en la base: aunque
+ * alguien llame a estas acciones con su id, la base rechaza el cambio.
+ */
+
+function alFallar(err: unknown, generico: string): EstadoAccion {
+  if (err instanceof ErrorDePermiso) return { ok: false, error: err.message }
+  console.error(generico, err)
+  return { ok: false, error: generico }
+}
+
+function refrescarPanel(setterId?: string): void {
+  revalidatePath('/equipo')
+  revalidatePath('/equipo/seguimientos')
+  revalidatePath('/equipo/leads')
+  if (setterId) revalidatePath(`/equipo/${setterId}`)
+}
+
+/** La URL con la que el setter entra. Sale del pedido, sin configurar nada. */
+async function urlDeLaApp(): Promise<string> {
+  const h = await headers()
+  const host = h.get('x-forwarded-host') ?? h.get('host') ?? 'localhost:3000'
+  const protocolo = h.get('x-forwarded-proto') ?? (host.startsWith('localhost') ? 'http' : 'https')
+  return `${protocolo}://${host}/ingresar`
+}
+
+async function hashear(password: string): Promise<string> {
+  return hash(password, { memoryCost: 19_456, timeCost: 2, parallelism: 1 })
+}
+
+/* ── Alta ─────────────────────────────────────────────────────────────── */
+
+const cuentaSchema = z.object({
+  usuario: z
+    .string()
+    .trim()
+    .min(1, 'Escribí el usuario de Instagram.')
+    .max(60)
+    .transform((v) => v.replace(/^@/, '').toLowerCase()),
+  cupo: z.coerce.number().int().min(1).max(100),
+})
+
+const altaSchema = z.object({
+  nombre: z.string().trim().min(2, 'Escribí el nombre.').max(80),
+  email: z.string().trim().toLowerCase().email('Ese email no tiene formato válido.'),
+  tanda: z.coerce.number().int().min(1).max(500),
+  cuentas: z.array(cuentaSchema).min(1, 'Cargá al menos una cuenta de Instagram.').max(5),
+})
+
+export interface TarjetaDeAlta {
+  ok: true
+  setterId: string
+  nombre: string
+  email: string
+  password: string
+  url: string
+  /** El texto completo, listo para copiar y pegar por WhatsApp. */
+  tarjeta: string
+}
+
+export type ResultadoAlta = TarjetaDeAlta | { ok: false; error: string }
+
+/**
+ * Crea un setter y devuelve su tarjeta de acceso.
+ *
+ * La contraseña temporal **se ve una sola vez**: se guarda con hash y no se
+ * puede recuperar. Si se pierde, se genera otra. Es la única forma de que
+ * "guardada con hash" signifique algo.
+ */
+export async function crearSetter(datos: unknown): Promise<ResultadoAlta> {
+  try {
+    const sesion = await exigirAdminMadre()
+    const parsed = altaSchema.safeParse(datos)
+    if (!parsed.success) {
+      return { ok: false, error: parsed.error.issues[0]?.message ?? 'Revisá los datos.' }
+    }
+
+    const { nombre, email, tanda, cuentas } = parsed.data
+    const usuarios = cuentas.map((c) => c.usuario)
+    if (new Set(usuarios).size !== usuarios.length) {
+      return { ok: false, error: 'Repetiste una cuenta de Instagram.' }
+    }
+
+    const password = generarPasswordTemporal()
+    const passwordHash = await hashear(password)
+    const url = await urlDeLaApp()
+
+    const setterId = await db.transaction(async (tx) => {
+      const yaEsta = await tx.execute(sql`
+        select 1 from users where lower(email) = ${email} limit 1
+      `)
+      if (yaEsta.rows.length > 0) throw new Error('EMAIL_REPETIDO')
+
+      const usuarios = await tx.execute(sql`
+        insert into users (email, name, password_hash, role, status,
+                           must_change_password, created_by, sessions_valid_from)
+        values (${email}, ${nombre}, ${passwordHash}, 'setter', 'activo',
+                true, ${sesion.userId}::uuid, now())
+        returning id
+      `)
+      const userId = (usuarios.rows[0] as { id: string }).id
+
+      /*
+       * Cada setter recibe una variante distinta del mensaje de apertura. Se
+       * reparten por orden de alta: mil DMs con el mismo texto exacto es lo
+       * que dispara las restricciones de Instagram.
+       */
+      const cuantos = await tx.execute(sql`select count(*)::int as n from setters`)
+      const variante = (cuantos.rows[0] as { n: number }).n
+
+      const setters = await tx.execute(sql`
+        insert into setters (user_id, tanda_diaria, variante, hora_recordatorio)
+        values (${userId}::uuid, ${tanda}, ${variante},
+                ${SETTERS_CONFIG_DEFAULT.horaRecordatorioDefault}::time)
+        returning id
+      `)
+      const id = (setters.rows[0] as { id: string }).id
+
+      for (const [i, cuenta] of cuentas.entries()) {
+        await tx.execute(sql`
+          insert into setter_accounts (setter_id, ig_username, cupo_diario, orden)
+          values (${id}::uuid, ${cuenta.usuario}, ${cuenta.cupo}, ${i + 1})
+        `)
+      }
+
+      await tx.execute(sql`
+        insert into events (type, actor_user_id, payload_jsonb)
+        values ('setter_creado', ${sesion.userId}::uuid,
+                ${JSON.stringify({ nombre, email, cuentas: cuentas.length })}::jsonb)
+      `)
+
+      return id
+    })
+
+    refrescarPanel()
+    return {
+      ok: true,
+      setterId,
+      nombre,
+      email,
+      password,
+      url,
+      tarjeta: tarjetaDeAcceso({ nombre, email, password, url }),
+    }
+  } catch (err) {
+    if (err instanceof Error && err.message === 'EMAIL_REPETIDO') {
+      return { ok: false, error: 'Ya hay una cuenta con ese email.' }
+    }
+    if (
+      err instanceof Error &&
+      /setter_accounts_ig_uq/.test((err as { message?: string }).message ?? '')
+    ) {
+      return { ok: false, error: 'Alguna de esas cuentas de Instagram ya está cargada.' }
+    }
+    const r = alFallar(err, 'No se pudo crear el setter.')
+    return { ok: false, error: r.error ?? 'No se pudo crear el setter.' }
+  }
+}
+
+export type ResultadoRestablecer =
+  | { ok: true; nombre: string; email: string; password: string; url: string; tarjeta: string }
+  | { ok: false; error: string }
+
+/**
+ * Contraseña nueva en un click, con la misma tarjeta para reenviar. Es lo que
+ * va a pasar seguido, así que tiene que ser rápido.
+ */
+export async function restablecerPassword(setterId: string): Promise<ResultadoRestablecer> {
+  try {
+    const sesion = await exigirAdminMadre()
+
+    const filas = await db.execute(sql`
+      select u.id, u.name, u.email from setters s join users u on u.id = s.user_id
+       where s.id = ${setterId}::uuid limit 1
+    `)
+    const u = filas.rows[0] as { id: string; name: string; email: string } | undefined
+    if (!u) return { ok: false, error: 'Ese setter ya no existe.' }
+
+    const password = generarPasswordTemporal()
+    const passwordHash = await hashear(password)
+    const url = await urlDeLaApp()
+
+    await db.transaction(async (tx) => {
+      await tx.execute(sql`
+        update users
+           set password_hash = ${passwordHash}, must_change_password = true,
+               failed_attempts = 0, locked_until = null,
+               -- Restablecer también cierra las sesiones abiertas: si alguien
+               -- se metió con la contraseña vieja, deja de estar adentro.
+               sessions_valid_from = now()
+         where id = ${u.id}::uuid
+      `)
+      await tx.execute(sql`
+        insert into events (type, actor_user_id, payload_jsonb)
+        values ('password_restablecida', ${sesion.userId}::uuid,
+                ${JSON.stringify({ setterId })}::jsonb)
+      `)
+    })
+
+    refrescarPanel(setterId)
+    return {
+      ok: true,
+      nombre: u.name,
+      email: u.email,
+      password,
+      url,
+      tarjeta: tarjetaDeAcceso({ nombre: u.name, email: u.email, password, url }),
+    }
+  } catch (err) {
+    const r = alFallar(err, 'No se pudo restablecer la contraseña.')
+    return { ok: false, error: r.error ?? 'No se pudo restablecer la contraseña.' }
+  }
+}
+
+/* ── Edición ──────────────────────────────────────────────────────────── */
+
+const edicionSchema = z.object({
+  setterId: z.string().uuid(),
+  nombre: z.string().trim().min(2).max(80),
+  tanda: z.coerce.number().int().min(1).max(500),
+  recordatorioAutomatico: z.boolean(),
+  horaRecordatorio: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
+  cuentas: z
+    .array(
+      cuentaSchema.extend({
+        id: z.string().uuid().nullable(),
+        activa: z.boolean(),
+      }),
+    )
+    .max(5),
+})
+
+export async function guardarSetter(datos: unknown): Promise<EstadoAccion> {
+  try {
+    const sesion = await exigirAdmin()
+    const parsed = edicionSchema.safeParse(datos)
+    if (!parsed.success) {
+      return { ok: false, error: parsed.error.issues[0]?.message ?? 'Revisá los datos.' }
+    }
+    const d = parsed.data
+
+    await db.transaction(async (tx) => {
+      const filas = await tx.execute(sql`
+        select user_id from setters where id = ${d.setterId}::uuid limit 1
+      `)
+      const userId = (filas.rows[0] as { user_id: string } | undefined)?.user_id
+      if (!userId) throw new Error('NO_EXISTE')
+
+      await tx.execute(sql`update users set name = ${d.nombre} where id = ${userId}::uuid`)
+      await tx.execute(sql`
+        update setters
+           set tanda_diaria = ${d.tanda},
+               recordatorio_automatico = ${d.recordatorioAutomatico},
+               hora_recordatorio = ${d.horaRecordatorio}::time
+         where id = ${d.setterId}::uuid
+      `)
+
+      for (const [i, cuenta] of d.cuentas.entries()) {
+        if (cuenta.id) {
+          await tx.execute(sql`
+            update setter_accounts
+               set ig_username = ${cuenta.usuario}, cupo_diario = ${cuenta.cupo},
+                   activa = ${cuenta.activa}, orden = ${i + 1}
+             where id = ${cuenta.id}::uuid and setter_id = ${d.setterId}::uuid
+          `)
+        } else {
+          await tx.execute(sql`
+            insert into setter_accounts (setter_id, ig_username, cupo_diario, orden, activa)
+            values (${d.setterId}::uuid, ${cuenta.usuario}, ${cuenta.cupo}, ${i + 1}, ${cuenta.activa})
+          `)
+        }
+      }
+
+      await tx.execute(sql`
+        insert into events (type, actor_user_id, payload_jsonb)
+        values ('setter_editado', ${sesion.userId}::uuid,
+                ${JSON.stringify({ setterId: d.setterId })}::jsonb)
+      `)
+    })
+
+    refrescarPanel(d.setterId)
+    return { ok: true, error: null }
+  } catch (err) {
+    if (err instanceof Error && err.message === 'NO_EXISTE') {
+      return { ok: false, error: 'Ese setter ya no existe.' }
+    }
+    if (/setter_accounts_ig_uq/.test((err as { message?: string }).message ?? '')) {
+      return { ok: false, error: 'Esa cuenta de Instagram ya está cargada en otro setter.' }
+    }
+    return alFallar(err, 'No se pudieron guardar los cambios.')
+  }
+}
+
+/* ── Pausar, reactivar, dar de baja ───────────────────────────────────── */
+
+/**
+ * Pausar: deja de recibir leads nuevos, sus pendientes vuelven al pozo, y no
+ * puede entrar. Conserva el historial y la atribución de comisión.
+ */
+export async function pausarSetter(setterId: string): Promise<EstadoAccion> {
+  try {
+    const sesion = await exigirAdmin()
+    const userId = await usuarioDelSetter(setterId)
+    if (!userId) return { ok: false, error: 'Ese setter ya no existe.' }
+
+    await db.execute(sql`update users set status = 'pausado' where id = ${userId}::uuid`)
+    const devueltos = await devolverPendientes(
+      setterId,
+      'El setter quedó pausado.',
+      sesion.userId,
+    )
+    await db.execute(sql`
+      insert into events (type, actor_user_id, payload_jsonb)
+      values ('setter_pausado', ${sesion.userId}::uuid,
+              ${JSON.stringify({ setterId, devueltos })}::jsonb)
+    `)
+
+    refrescarPanel(setterId)
+    return { ok: true, error: null }
+  } catch (err) {
+    return alFallar(err, 'No se pudo pausar.')
+  }
+}
+
+export async function reactivarSetter(setterId: string): Promise<EstadoAccion> {
+  try {
+    const sesion = await exigirAdmin()
+    const userId = await usuarioDelSetter(setterId)
+    if (!userId) return { ok: false, error: 'Ese setter ya no existe.' }
+
+    await db.execute(sql`update users set status = 'activo' where id = ${userId}::uuid`)
+    await db.execute(sql`
+      insert into events (type, actor_user_id, payload_jsonb)
+      values ('setter_reactivado', ${sesion.userId}::uuid, ${JSON.stringify({ setterId })}::jsonb)
+    `)
+    refrescarPanel(setterId)
+    return { ok: true, error: null }
+  } catch (err) {
+    return alFallar(err, 'No se pudo reactivar.')
+  }
+}
+
+/**
+ * Dar de baja.
+ *
+ * No borra el registro: lo desactiva. Los leads sin contactar vuelven al pozo
+ * solos, y el historial y la atribución quedan intactos para poder liquidar lo
+ * que ya trabajó. Borrar la fila sería perder de quién fue cada venta.
+ */
+export async function darDeBaja(setterId: string): Promise<EstadoAccion> {
+  try {
+    const sesion = await exigirAdminMadre()
+    const userId = await usuarioDelSetter(setterId)
+    if (!userId) return { ok: false, error: 'Ese setter ya no existe.' }
+
+    await db.execute(sql`
+      update users set status = 'baja', sessions_valid_from = now() where id = ${userId}::uuid
+    `)
+    const devueltos = await devolverPendientes(
+      setterId,
+      'El setter fue dado de baja.',
+      sesion.userId,
+    )
+    await db.execute(sql`
+      insert into events (type, actor_user_id, payload_jsonb)
+      values ('setter_baja', ${sesion.userId}::uuid,
+              ${JSON.stringify({ setterId, devueltos })}::jsonb)
+    `)
+
+    refrescarPanel(setterId)
+    return { ok: true, error: null }
+  } catch (err) {
+    return alFallar(err, 'No se pudo dar de baja.')
+  }
+}
+
+/** Por si pierde el celular: se cierran todas sus sesiones abiertas. */
+export async function cerrarSesiones(setterId: string): Promise<EstadoAccion> {
+  try {
+    const sesion = await exigirAdmin()
+    const userId = await usuarioDelSetter(setterId)
+    if (!userId) return { ok: false, error: 'Ese setter ya no existe.' }
+
+    await db.execute(sql`update users set sessions_valid_from = now() where id = ${userId}::uuid`)
+    await db.execute(sql`
+      insert into events (type, actor_user_id, payload_jsonb)
+      values ('sesiones_cerradas', ${sesion.userId}::uuid, ${JSON.stringify({ setterId })}::jsonb)
+    `)
+    refrescarPanel(setterId)
+    return { ok: true, error: null }
+  } catch (err) {
+    return alFallar(err, 'No se pudieron cerrar las sesiones.')
+  }
+}
+
+async function usuarioDelSetter(setterId: string): Promise<string | null> {
+  const filas = await db.execute(sql`
+    select user_id from setters where id = ${setterId}::uuid limit 1
+  `)
+  return (filas.rows[0] as { user_id: string } | undefined)?.user_id ?? null
+}
+
+/* ── Leads: reasignar, devolver, tomar ────────────────────────────────── */
+
+export async function reasignar(assignmentId: string, destinoId: string): Promise<EstadoAccion> {
+  try {
+    const sesion = await exigirAdmin()
+    const r = await reasignarLead(assignmentId, destinoId, sesion.userId)
+    if (!r.ok) return { ok: false, error: r.error ?? 'No se pudo reasignar.' }
+    refrescarPanel()
+    return { ok: true, error: null }
+  } catch (err) {
+    return alFallar(err, 'No se pudo reasignar.')
+  }
+}
+
+export async function devolverAlPozo(assignmentId: string): Promise<EstadoAccion> {
+  try {
+    const sesion = await exigirAdmin()
+    const ok = await devolverLead(assignmentId, 'Devuelto al pozo a mano.', sesion.userId)
+    if (!ok) return { ok: false, error: 'Ese lead ya no está sin trabajar.' }
+    refrescarPanel()
+    return { ok: true, error: null }
+  } catch (err) {
+    return alFallar(err, 'No se pudo devolver al pozo.')
+  }
+}
+
+/**
+ * Tomar un lead yo mismo: sale de la cola del setter y pasa a la mía. El
+ * contacto queda en el Despachador, con su canal de Instagram.
+ */
+export async function tomarLead(assignmentId: string): Promise<EstadoAccion> {
+  try {
+    const sesion = await exigirAdmin()
+
+    const filas = await db.execute(sql`
+      update lead_assignments
+         set estado = 'devuelto', devuelto_at = now(),
+             devuelto_motivo = 'Lo tomó el administrador.',
+             marcado_por = ${sesion.userId}::uuid
+       where id = ${assignmentId}::uuid and estado not in ('vencido', 'devuelto')
+      returning contact_id, setter_id
+    `)
+    const f = filas.rows[0] as { contact_id: string; setter_id: string } | undefined
+    if (!f) return { ok: false, error: 'Ese lead ya no está asignado.' }
+
+    /*
+     * Pasa a la cola del Despachador: se lo marca como cliente propio para que
+     * salga del pozo de los setters y entre al circuito normal.
+     */
+    await db.execute(sql`
+      update contacts set origen = 'cliente', updated_at = now()
+       where id = ${f.contact_id}::uuid
+    `)
+
+    await db.execute(sql`
+      insert into events (type, contact_id, actor_user_id, payload_jsonb)
+      values ('lead_tomado_por_admin', ${f.contact_id}::uuid, ${sesion.userId}::uuid,
+              ${JSON.stringify({ setterId: f.setter_id })}::jsonb)
+    `)
+
+    refrescarPanel()
+    revalidatePath('/despachador')
+    return { ok: true, error: null }
+  } catch (err) {
+    return alFallar(err, 'No se pudo tomar el lead.')
+  }
+}
+
+/* ── Roles ────────────────────────────────────────────────────────────── */
+
+const rolSchema = z.enum(['admin', 'setter'])
+
+/**
+ * Convertir a alguien en admin. Solo la cuenta madre puede, y la cuenta madre
+ * misma no se puede degradar: lo impide un disparador en la base.
+ */
+export async function cambiarRol(userId: string, rol: string): Promise<EstadoAccion> {
+  try {
+    const sesion = await exigirAdminMadre()
+    const parsed = rolSchema.safeParse(rol)
+    if (!parsed.success) return { ok: false, error: 'Ese rol no existe.' }
+
+    if (userId === sesion.userId) {
+      return { ok: false, error: 'No podés cambiarte el rol a vos mismo.' }
+    }
+
+    await db.execute(sql`
+      update users set role = ${parsed.data}::user_role where id = ${userId}::uuid
+    `)
+    await db.execute(sql`
+      insert into events (type, actor_user_id, payload_jsonb)
+      values ('setter_editado', ${sesion.userId}::uuid,
+              ${JSON.stringify({ userId, rol: parsed.data })}::jsonb)
+    `)
+    refrescarPanel()
+    return { ok: true, error: null }
+  } catch (err) {
+    if (/admin madre/i.test((err as { message?: string }).message ?? '')) {
+      return { ok: false, error: 'La cuenta principal no se puede degradar.' }
+    }
+    return alFallar(err, 'No se pudo cambiar el rol.')
+  }
+}
+
+/* ── Reparto del pozo ─────────────────────────────────────────────────── */
+
+export interface ResultadoDeReparto extends EstadoAccion {
+  entregados?: number
+  porSetter?: Array<{ nombre: string; cantidad: number }>
+  pozoRestante?: number
+}
+
+/**
+ * Reparte los leads del pozo entre los setters, respetando el cupo de cada uno.
+ *
+ * Es lo que se aprieta después de importar una lista: entrega hasta donde
+ * llegan las cuentas de cada uno y deja el resto en el pozo para mañana.
+ */
+export async function repartirLeads(): Promise<ResultadoDeReparto> {
+  try {
+    const sesion = await exigirAdmin()
+    const r = await repartirAhora(sesion.userId)
+
+    if (r.entregados === 0) {
+      return {
+        ok: false,
+        error:
+          'No se entregó nada: o no quedan leads en el pozo, o ninguna cuenta tiene cupo hoy.',
+      }
+    }
+
+    refrescarPanel()
+    return { ok: true, error: null, ...r }
+  } catch (err) {
+    return alFallar(err, 'No se pudieron repartir los leads.')
+  }
+}
+
+/* ── Recuperar los que nunca contestaron ──────────────────────────────── */
+
+export interface ResultadoRecuperar extends EstadoAccion {
+  recuperados?: number
+}
+
+/**
+ * Devuelve al pozo leads que recibieron los dos mensajes y nunca contestaron.
+ *
+ * No es lo mismo que un "no": un "no" es alguien que vio la oferta y dijo que
+ * no. Estos nunca dijeron nada — se les pasó, no estaban, no era el momento. En
+ * un mes vuelven a ser leads.
+ *
+ * Vuelven al pozo como si fueran nuevos y se reparten de cero, así que les
+ * puede tocar otro setter y arrancan otra vez por el mensaje de entrada. El
+ * historial de lo que ya se les mandó queda intacto en la asignación vieja.
+ */
+export async function recuperarLeads(ids: string[]): Promise<ResultadoRecuperar> {
+  try {
+    const sesion = await exigirAdmin()
+
+    const validos = ids.filter((i) => z.string().uuid().safeParse(i).success)
+    if (validos.length === 0) return { ok: false, error: 'No elegiste ninguno.' }
+
+    const recuperados = await db.transaction(async (tx) => {
+      const filas = await tx.execute(sql`
+        update lead_assignments
+           set estado = 'devuelto', devuelto_at = now(),
+               devuelto_motivo = 'Nunca contestó: se recupera para volver a intentar.',
+               marcado_por = ${sesion.userId}::uuid
+         where id = any(${validos}::uuid[])
+           and estado = 'segundo_enviado'
+           and respondido_at is null
+        returning contact_id
+      `)
+
+      const contactos = (filas.rows as Array<{ contact_id: string }>).map((f) => f.contact_id)
+      if (contactos.length === 0) return 0
+
+      /*
+       * El contacto vuelve a 'nuevo' para poder entrar de nuevo al pozo, pero
+       * `sent_count` no se toca: es el registro de que ya recibió dos mensajes,
+       * y sirve para no volver a intentarlo eternamente.
+       */
+      await tx.execute(sql`
+        update contacts
+           set stage = 'nuevo', next_followup_at = null, updated_at = now()
+         where id = any(${contactos}::uuid[])
+      `)
+
+      await tx.execute(sql`
+        insert into events (type, actor_user_id, payload_jsonb)
+        values ('lead_devuelto', ${sesion.userId}::uuid,
+                ${JSON.stringify({ recuperados: contactos.length, motivo: 'nunca_contesto' })}::jsonb)
+      `)
+
+      return contactos.length
+    })
+
+    if (recuperados === 0) {
+      return { ok: false, error: 'Ninguno de esos se puede recuperar: revisá que sigan sin respuesta.' }
+    }
+
+    refrescarPanel()
+    return { ok: true, error: null, recuperados }
+  } catch (err) {
+    return alFallar(err, 'No se pudieron recuperar los leads.')
+  }
+}
+
+/* ── Notificaciones ───────────────────────────────────────────────────── */
+
+/**
+ * Qué avisos quiero y por dónde. Se guarda entero: es una sola fila de
+ * `settings` y sobrescribirla es más simple que llevar parches por tipo.
+ */
+export async function guardarAvisosQueQuiero(datos: unknown): Promise<EstadoAccion> {
+  try {
+    await exigirAdmin()
+    const parsed = notificacionesConfigSchema.safeParse(datos)
+    if (!parsed.success) return { ok: false, error: 'Esa configuración no es válida.' }
+
+    await db.execute(sql`
+      insert into settings (key, value_jsonb, updated_at)
+      values (${NOTIFICACIONES_CONFIG_KEY}, ${JSON.stringify(parsed.data)}::jsonb, now())
+      on conflict (key) do update
+        set value_jsonb = excluded.value_jsonb, updated_at = now()
+    `)
+
+    revalidatePath('/equipo')
+    return { ok: true, error: null }
+  } catch (err) {
+    return alFallar(err, 'No se pudieron guardar los avisos.')
+  }
+}
+
+export async function marcarNotificacionesLeidas(ids?: string[]): Promise<EstadoAccion> {
+  try {
+    const sesion = await exigirAdmin()
+    if (ids && ids.length > 0) {
+      const validos = ids.filter((i) => z.string().uuid().safeParse(i).success)
+      if (validos.length === 0) return { ok: true, error: null }
+      await db.execute(sql`
+        update notificaciones set leida = true
+         where id = any(${validos}::uuid[])
+           and (para_usuario_id is null or para_usuario_id = ${sesion.userId}::uuid)
+      `)
+    } else {
+      await db.execute(sql`
+        update notificaciones set leida = true
+         where not leida and (para_usuario_id is null or para_usuario_id = ${sesion.userId}::uuid)
+      `)
+    }
+    return { ok: true, error: null }
+  } catch (err) {
+    return alFallar(err, 'No se pudieron marcar como leídas.')
+  }
+}

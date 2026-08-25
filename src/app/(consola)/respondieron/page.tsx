@@ -1,83 +1,61 @@
-import Link from 'next/link'
 import type { Metadata } from 'next'
 
-import { AvisoDemo } from '@/components/aviso-demo'
 import { Panel } from '@/components/ui/panel'
-import { listarRespondieron } from '@/server/contacts'
+import { esRespuesta, type Respuesta } from '@/lib/respuestas-vistas'
+import { requerirAdmin } from '@/server/session'
+import { generalDeRespuestas, respuestasDetalladas } from '@/server/setters/respuestas'
 
 import { Bandeja } from './bandeja'
+import { Clasificaciones } from './clasificaciones'
+import { ListaDeSetters } from './lista-de-setters'
 
-export const metadata: Metadata = { title: 'Respondieron · Consola' }
+export const metadata: Metadata = { title: 'Respondieron · Ecosystem' }
 export const dynamic = 'force-dynamic'
 
+/**
+ * Los que contestaron, separados por setter.
+ *
+ * Arriba los números del equipo y abajo los nombres. El detalle de cada
+ * persona está en su propia pantalla: amontonar doscientas respuestas de tres
+ * setters en una lista obliga a leerlas todas para encontrar las de uno.
+ */
 export default async function PaginaRespondieron({
   searchParams,
 }: {
   searchParams: Promise<{ ver?: string }>
 }) {
+  await requerirAdmin()
   const { ver } = await searchParams
-  const soloSinClasificar = ver !== 'todos'
+  const abierta: Respuesta | null = esRespuesta(ver) ? ver : null
 
-  const filas = await listarRespondieron(soloSinClasificar)
+  const general = await generalDeRespuestas()
+  const filas = abierta ? await respuestasDetalladas(abierta) : []
 
   return (
-    <div className="space-y-3">
-      <AvisoDemo />
-
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h1 className="text-[20px]">Respondieron</h1>
-          <p className="mt-0.5 text-[12.5px] text-texto-2">
-            Los que contestaron y todavía no clasificaste, ordenados por el que hace más que espera.
-          </p>
-        </div>
-        <span className="dato text-[13px] text-texto">
-          {filas.length}
-          <span className="text-texto-2"> {soloSinClasificar ? 'sin clasificar' : 'con respuesta'}</span>
-        </span>
+    <div className="space-y-4">
+      <div>
+        <h1 className="text-[20px]">Respondieron</h1>
+        <p className="mt-0.5 max-w-[720px] text-[12.5px] leading-relaxed text-texto-2">
+          Todo lo que contestó el equipo, etiquetado: quién lo contactó, a qué mensaje contestó y
+          qué dijo. Tocá un número para verlos, o un nombre para entrar a lo de esa persona.
+        </p>
       </div>
 
-      <nav className="flex gap-0.5 border-b border-borde" aria-label="Qué mostrar">
-        <Solapa href="/respondieron" activa={soloSinClasificar} texto="Sin clasificar" />
-        <Solapa href="/respondieron?ver=todos" activa={!soloSinClasificar} texto="Todos los que respondieron" />
-      </nav>
+      <Clasificaciones conteos={general.conteos} abierta={abierta} base="/respondieron" />
 
-      {filas.length > 0 ? (
-        <Bandeja filas={filas} />
-      ) : (
+      {abierta ? <Bandeja vista={abierta} filas={filas} base="/respondieron" /> : null}
+
+      {general.setters.length === 0 ? (
         <Panel className="px-6 py-12 text-center">
-          <h2 className="text-[15px]">
-            {soloSinClasificar ? 'No hay nada sin clasificar' : 'Todavía no contestó nadie'}
-          </h2>
+          <h2 className="text-[15px]">Todavía no contestó nadie</h2>
           <p className="mt-1.5 text-[12.5px] text-texto-2">
-            {soloSinClasificar ? (
-              <>
-                Cuando alguien conteste, aparece acá.{' '}
-                <Link href="/respondieron?ver=todos" className="text-ambar underline underline-offset-2">
-                  Ver todos los que respondieron
-                </Link>
-              </>
-            ) : (
-              'Las respuestas entran solas por el webhook de Chatwoot, o las marcás a mano desde la lista de contactos.'
-            )}
+            Los setters marcan las respuestas desde el celular. Cuando alguien conteste, aparece
+            acá con el nombre de quien lo trajo.
           </p>
         </Panel>
+      ) : (
+        <ListaDeSetters setters={general.setters} sinSetter={general.sinSetter} />
       )}
     </div>
-  )
-}
-
-function Solapa({ href, activa, texto }: { href: string; activa: boolean; texto: string }) {
-  return (
-    <Link
-      href={href as never}
-      aria-current={activa ? 'page' : undefined}
-      className={
-        'border-b-2 px-3 py-1.5 text-[12.5px] font-medium transition-colors duration-150 ' +
-        (activa ? 'border-ambar text-texto' : 'border-transparent text-texto-2 hover:text-texto')
-      }
-    >
-      {texto}
-    </Link>
   )
 }

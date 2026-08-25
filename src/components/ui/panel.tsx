@@ -2,11 +2,11 @@ import * as React from 'react'
 
 import { cn } from '@/lib/utils'
 
-/** Superficie base de la consola. Sin sombras difusas, borde de 1 px, radio 6. */
+/** Tarjeta blanca sobre el gris del fondo. Es lo único que agrupa contenido. */
 export function Panel({ className, ...props }: React.ComponentProps<'div'>) {
   return (
     <div
-      className={cn('rounded-[6px] border border-borde bg-superficie', className)}
+      className={cn('rounded-[10px] border border-borde bg-superficie', className)}
       {...props}
     />
   )
@@ -26,13 +26,15 @@ export function PanelHeader({
   return (
     <div
       className={cn(
-        'flex items-center justify-between gap-3 border-b border-borde px-3 py-2',
+        'flex flex-wrap items-center justify-between gap-3 border-b border-borde px-4 py-3',
         className,
       )}
     >
       <div className="min-w-0">
-        <div className="rotulo">{titulo}</div>
-        {descripcion ? <p className="mt-0.5 text-[11.5px] text-texto-2">{descripcion}</p> : null}
+        <div className="text-[14px] font-semibold text-texto">{titulo}</div>
+        {descripcion ? (
+          <p className="mt-0.5 text-[12.5px] leading-relaxed text-texto-2">{descripcion}</p>
+        ) : null}
       </div>
       {acciones ? <div className="flex shrink-0 items-center gap-1.5">{acciones}</div> : null}
     </div>
@@ -41,14 +43,14 @@ export function PanelHeader({
 
 const TONOS = {
   neutral: 'border-borde bg-elevada text-texto-2',
-  activo: 'border-ambar/35 bg-ambar/12 text-ambar',
-  positivo: 'border-verde/35 bg-verde/12 text-verde',
-  negativo: 'border-rojo/35 bg-rojo/12 text-rojo',
+  activo: 'border-ambar/25 bg-ambar-tenue text-ambar',
+  positivo: 'border-verde/25 bg-verde-tenue text-verde',
+  negativo: 'border-rojo/25 bg-rojo-tenue text-rojo',
 } as const
 
 export type Tono = keyof typeof TONOS
 
-/** Etiqueta de estado. Radio 4, nunca cápsula. */
+/** Etiqueta de estado. Es lo único que lleva color además de los botones. */
 export function Chip({
   tono = 'neutral',
   className,
@@ -57,7 +59,7 @@ export function Chip({
   return (
     <span
       className={cn(
-        'inline-flex items-center gap-1 rounded-[4px] border px-1.5 py-px text-[10.5px] font-medium leading-4',
+        'inline-flex items-center gap-1 rounded-[5px] border px-1.5 py-0.5 text-[11.5px] font-medium leading-4',
         TONOS[tono],
         className,
       )}
@@ -66,7 +68,7 @@ export function Chip({
   )
 }
 
-/** Un número con su rótulo. La unidad de lectura del panel de instrumentos. */
+/** Un número grande con su rótulo abajo. */
 export function Metrica({
   rotulo,
   valor,
@@ -81,14 +83,20 @@ export function Metrica({
   className?: string
 }) {
   const color =
-    tono === 'ambar' ? 'text-ambar' : tono === 'verde' ? 'text-verde' : tono === 'rojo' ? 'text-rojo' : 'text-texto'
+    tono === 'ambar'
+      ? 'text-ambar'
+      : tono === 'verde'
+        ? 'text-verde'
+        : tono === 'rojo'
+          ? 'text-rojo'
+          : 'text-texto'
   return (
     <div className={cn('min-w-0', className)}>
-      <div className="rotulo truncate">{rotulo}</div>
-      <div className={cn('dato mt-0.5 text-[19px] font-medium leading-none', color)}>
+      <div className={cn('dato text-[24px] font-semibold leading-none', color)}>
         {valor}
-        {sufijo ? <span className="ml-0.5 text-[11px] text-texto-2">{sufijo}</span> : null}
+        {sufijo ? <span className="ml-0.5 text-[13px] text-texto-2">{sufijo}</span> : null}
       </div>
+      <div className="mt-1 truncate text-[12px] text-texto-2">{rotulo}</div>
     </div>
   )
 }

@@ -6,6 +6,7 @@ import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
 import { Panel, PanelHeader } from '@/components/ui/panel'
+import { CONTACT_ORIGENES, ORIGEN_META, type ContactOrigen } from '@/db/enums'
 import { CAMPOS, CAMPO_META, mapeoCompleto, type Campo, type Mapeo } from '@/lib/import/columns'
 import type { FilaPreparada } from '@/lib/import/rows'
 import { cn } from '@/lib/utils'
@@ -23,7 +24,6 @@ type Etapa = 'vacio' | 'leyendo' | 'mapeando' | 'importando' | 'listo'
 
 interface Resumen extends ResumenLote {
   duplicadasEnArchivo: number
-  porCuenta: Array<{ code: string; label: string; channel: string; asignados: number }>
   batchId: string
   filename: string
 }
@@ -36,6 +36,7 @@ export function Importador({ mapeoPrevio }: { mapeoPrevio: Mapeo | null }) {
   const [totalFilas, setTotalFilas] = React.useState(0)
   const [mapeo, setMapeo] = React.useState<Mapeo>({})
   const [completarVacios, setCompletarVacios] = React.useState(true)
+  const [origen, setOrigen] = React.useState<ContactOrigen>('cliente')
   const [progreso, setProgreso] = React.useState({ etapa: '', hechas: 0, total: 0 })
   const [resumen, setResumen] = React.useState<Resumen | null>(null)
   const [error, setError] = React.useState<string | null>(null)
@@ -148,7 +149,6 @@ export function Importador({ mapeoPrevio }: { mapeoPrevio: Mapeo | null }) {
       paraRevisar: 0,
       errores: 0,
     }
-    const porCuenta = new Map<string, { code: string; label: string; channel: string; asignados: number }>()
 
     for (let i = 0; i < filas.filas.length; i += TAMANO_LOTE) {
       const lote = filas.filas.slice(i, i + TAMANO_LOTE)
@@ -158,17 +158,12 @@ export function Importador({ mapeoPrevio }: { mapeoPrevio: Mapeo | null }) {
         total: filas.filas.length,
       })
 
-      const r = await importarLote(apertura.batchId, lote, completarVacios)
+      const r = await importarLote(apertura.batchId, lote, completarVacios, origen)
       total.insertados += r.resumen.insertados
       total.actualizados += r.resumen.actualizados
       total.duplicados += r.resumen.duplicados
       total.paraRevisar += r.resumen.paraRevisar
       total.errores += r.resumen.errores
-
-      for (const c of r.porCuenta) {
-        const previo = porCuenta.get(c.code)
-        porCuenta.set(c.code, previo ? { ...c, asignados: previo.asignados + c.asignados } : c)
-      }
 
       if (!r.ok) {
         setError(r.error ?? 'Falló un lote.')
@@ -181,7 +176,6 @@ export function Importador({ mapeoPrevio }: { mapeoPrevio: Mapeo | null }) {
     setResumen({
       ...total,
       duplicadasEnArchivo: filas.duplicadasEnArchivo,
-      porCuenta: [...porCuenta.values()].sort((a, b) => b.asignados - a.asignados),
       batchId: apertura.batchId,
       filename: archivo.nombre,
     })
@@ -212,13 +206,13 @@ export function Importador({ mapeoPrevio }: { mapeoPrevio: Mapeo | null }) {
           }}
           className={cn(
             'flex flex-col items-center justify-center px-6 py-16 transition-colors duration-150',
-            arrastrando && 'bg-ambar/5',
+            arrastrando && 'bg-ambar-tenue',
           )}
         >
           <div
             className={cn(
               'mb-3 flex h-10 w-10 items-center justify-center rounded-[5px] border',
-              arrastrando ? 'border-ambar bg-ambar/12' : 'border-borde bg-elevada',
+              arrastrando ? 'border-ambar bg-ambar-tenue' : 'border-borde bg-elevada',
             )}
           >
             {etapa === 'leyendo' ? (
@@ -262,7 +256,7 @@ export function Importador({ mapeoPrevio }: { mapeoPrevio: Mapeo | null }) {
           )}
 
           {error ? (
-            <p role="alert" className="mt-4 rounded-[4px] border border-rojo/35 bg-rojo/10 px-2 py-1.5 text-[11.5px] text-rojo">
+            <p role="alert" className="mt-4 rounded-[4px] border border-rojo/35 bg-rojo-tenue px-2 py-1.5 text-[11.5px] text-rojo">
               {error}
             </p>
           ) : null}
@@ -292,7 +286,7 @@ export function Importador({ mapeoPrevio }: { mapeoPrevio: Mapeo | null }) {
             No cierres esta pestaña hasta que termine.
           </p>
           {error ? (
-            <p role="alert" className="mt-3 rounded-[4px] border border-rojo/35 bg-rojo/10 px-2 py-1.5 text-[11.5px] text-rojo">
+            <p role="alert" className="mt-3 rounded-[4px] border border-rojo/35 bg-rojo-tenue px-2 py-1.5 text-[11.5px] text-rojo">
               {error}
             </p>
           ) : null}
@@ -344,7 +338,7 @@ export function Importador({ mapeoPrevio }: { mapeoPrevio: Mapeo | null }) {
                           setMapeo(nuevo)
                         }}
                         className={cn(
-                          'h-6 w-full rounded-[4px] border bg-fondo px-1 text-[11px] focus:border-ambar focus:outline-none',
+                          'h-6 w-full rounded-[4px] border bg-fondo px-1 text-[11px] focus:border-acento focus:outline-none',
                           campo ? 'border-ambar/40 text-ambar' : 'border-borde text-texto-2',
                         )}
                       >
@@ -380,12 +374,36 @@ export function Importador({ mapeoPrevio }: { mapeoPrevio: Mapeo | null }) {
       </Panel>
 
       <Panel className="p-3">
+        <div className="mb-3 border-b border-borde pb-3">
+          <span className="rotulo">De dónde salió esta lista</span>
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
+            {CONTACT_ORIGENES.map((o) => (
+              <button
+                key={o}
+                type="button"
+                onClick={() => setOrigen(o)}
+                className={
+                  'h-7.5 rounded-[5px] border px-3 text-[12.5px] font-medium ' +
+                  (origen === o
+                    ? 'border-acento/40 bg-acento-tenue text-acento'
+                    : 'border-borde bg-elevada text-texto-2 hover:text-texto')
+                }
+              >
+                {ORIGEN_META[o].label}
+              </button>
+            ))}
+          </div>
+          <p className="mt-1.5 text-[11px] leading-relaxed text-texto-2">
+            {ORIGEN_META[origen].detalle}
+          </p>
+        </div>
+
         <label className="flex cursor-pointer items-start gap-2">
           <input
             type="checkbox"
             checked={completarVacios}
             onChange={(e) => setCompletarVacios(e.target.checked)}
-            className="mt-0.5 h-3 w-3 accent-[#e8a33d]"
+            className="mt-0.5 h-3 w-3 accent-[#0066FF]"
           />
           <span className="text-[12.5px]">
             Completar los campos vacíos de los contactos que ya existan
@@ -397,12 +415,12 @@ export function Importador({ mapeoPrevio }: { mapeoPrevio: Mapeo | null }) {
         </label>
 
         {!check.ok ? (
-          <p className="mt-3 rounded-[4px] border border-ambar/35 bg-ambar/10 px-2 py-1.5 text-[11.5px] text-ambar">
+          <p className="mt-3 rounded-[4px] border border-ambar/35 bg-ambar-tenue px-2 py-1.5 text-[11.5px] text-ambar">
             Falta indicar: {check.falta.join(', ')}.
           </p>
         ) : null}
         {error ? (
-          <p role="alert" className="mt-3 rounded-[4px] border border-rojo/35 bg-rojo/10 px-2 py-1.5 text-[11.5px] text-rojo">
+          <p role="alert" className="mt-3 rounded-[4px] border border-rojo/35 bg-rojo-tenue px-2 py-1.5 text-[11.5px] text-rojo">
             {error}
           </p>
         ) : null}
@@ -472,23 +490,6 @@ function ResumenImportacion({
           </p>
         ) : null}
       </Panel>
-
-      {resumen.porCuenta.length > 0 ? (
-        <Panel>
-          <PanelHeader titulo="Cómo quedaron repartidos" />
-          <div className="divide-y divide-borde/60">
-            {resumen.porCuenta.map((c) => (
-              <div key={c.code} className="flex items-center justify-between px-3 py-1.5">
-                <span className="text-[12.5px]">
-                  <span className="dato text-texto-2">{c.code}</span>{' '}
-                  <span className="text-texto">{c.label}</span>
-                </span>
-                <span className="dato text-[12.5px]">{c.asignados}</span>
-              </div>
-            ))}
-          </div>
-        </Panel>
-      ) : null}
 
       <div className="flex flex-wrap items-center gap-2">
         {resumen.paraRevisar > 0 || resumen.errores > 0 ? (

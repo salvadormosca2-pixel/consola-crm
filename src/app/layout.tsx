@@ -25,12 +25,12 @@ const mono = JetBrains_Mono({
 })
 
 export const metadata: Metadata = {
-  title: 'Consola',
-  description: 'Consola de operaciones de seguimiento de clientes',
+  title: 'Ecosystem',
+  description: 'Ecosystem — captación y seguimiento de clientes por Instagram',
 }
 
 export const viewport: Viewport = {
-  themeColor: '#141a22',
+  themeColor: '#000000',
   width: 'device-width',
   initialScale: 1,
 }
@@ -45,11 +45,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           duration={2600}
           toastOptions={{
             style: {
-              background: '#26313e',
-              border: '1px solid #33404f',
-              color: '#e6eaf0',
-              borderRadius: '5px',
-              fontSize: '12.5px',
+              background: '#141414',
+              border: '1px solid #2A2A2A',
+              color: '#ffffff',
+              borderRadius: '8px',
+              fontSize: '13px',
             },
           }}
         />

@@ -239,7 +239,272 @@ export const EVENT_TYPES = [
   'envio_sin_sincronizar',
   'seguimientos_bloqueados',
 ] as const
-export type EventType = (typeof EVENT_TYPES)[number]
+export type EventType = (typeof EVENT_TYPES)[number] | (typeof EVENT_TYPES_SETTERS)[number]
+
+/* ── Módulo de setters ─────────────────────────────────────────────────── */
+
+/**
+ * Quién es cada persona que entra.
+ *
+ *   admin_madre  yo. Ve todo, crea y borra cuentas, ve las credenciales.
+ *                Protegida a nivel base: no se puede borrar ni degradar.
+ *   admin        todo lo operativo. Sin credenciales, sin crear admins.
+ *   setter       solo su cola, sus leads, sus avisos y sus números.
+ */
+export const USER_ROLES = ['admin_madre', 'admin', 'setter'] as const
+export const userRoleEnum = pgEnum('user_role', USER_ROLES)
+export type UserRole = (typeof USER_ROLES)[number]
+
+export const ROL_META: Record<UserRole, { label: string; detalle: string }> = {
+  admin_madre: {
+    label: 'Admin madre',
+    detalle: 'Ve todo, incluidas las credenciales. Es la única que crea y borra cuentas.',
+  },
+  admin: {
+    label: 'Admin',
+    detalle: 'Todo lo operativo: leads, setters, bandeja, reuniones y recordatorios.',
+  },
+  setter: {
+    label: 'Setter',
+    detalle: 'Su cola del día, sus leads y sus avisos. No ve la base ni a los demás.',
+  },
+}
+
+/** Los dos roles que entran al panel. */
+export const ROLES_ADMIN: readonly UserRole[] = ['admin_madre', 'admin']
+
+export function esAdmin(rol: UserRole | null | undefined): boolean {
+  return rol === 'admin_madre' || rol === 'admin'
+}
+
+/**
+ * 'pausado': no puede entrar, pero conserva historial y comisión.
+ * 'baja': no puede entrar, sus leads sin contactar vuelven al pozo, y el
+ * registro se desactiva en lugar de borrarse para poder liquidar lo trabajado.
+ */
+export const USER_STATUSES = ['activo', 'pausado', 'baja'] as const
+export const userStatusEnum = pgEnum('user_status', USER_STATUSES)
+export type UserStatus = (typeof USER_STATUSES)[number]
+
+export const USER_STATUS_META: Record<UserStatus, { label: string; tone: Tono }> = {
+  activo: { label: 'Activo', tone: 'positivo' },
+  pausado: { label: 'Pausado', tone: 'neutral' },
+  baja: { label: 'De baja', tone: 'negativo' },
+}
+
+/** Igual que el `Tono` de la UI, replicado acá para no importar componentes. */
+type Tono = 'neutral' | 'activo' | 'positivo' | 'negativo'
+
+export const LEAD_ESTADOS = [
+  'asignado',
+  'abierto',
+  'saltado',
+  'contactado',
+  'segundo_enviado',
+  'respondido',
+  'cuenta_inexistente',
+  'vencido',
+  'devuelto',
+] as const
+export const leadAssignmentEstadoEnum = pgEnum('lead_assignment_estado', LEAD_ESTADOS)
+export type LeadEstado = (typeof LEAD_ESTADOS)[number]
+
+export const LEAD_ESTADO_META: Record<LeadEstado, { label: string; tone: Tono }> = {
+  asignado: { label: 'Por contactar', tone: 'neutral' },
+  abierto: { label: 'Chat abierto', tone: 'activo' },
+  saltado: { label: 'Salteado', tone: 'neutral' },
+  contactado: { label: 'Contactado', tone: 'activo' },
+  segundo_enviado: { label: 'Segundo enviado', tone: 'activo' },
+  respondido: { label: 'Respondió', tone: 'positivo' },
+  cuenta_inexistente: { label: 'Cuenta inexistente', tone: 'negativo' },
+  vencido: { label: 'Vencido', tone: 'negativo' },
+  devuelto: { label: 'Devuelto al pozo', tone: 'neutral' },
+}
+
+/**
+ * Estados en los que el lead sigue tomado por el setter. Solo 'vencido' y
+ * 'devuelto' quedan afuera, y son exactamente los que devuelven el lead al pozo.
+ */
+export const ESTADOS_TOMADOS: readonly LeadEstado[] = [
+  'asignado',
+  'abierto',
+  'saltado',
+  'contactado',
+  'segundo_enviado',
+  'respondido',
+  'cuenta_inexistente',
+]
+
+/** Estados que todavía esperan una acción del setter dentro de su cola. */
+export const ESTADOS_EN_COLA: readonly LeadEstado[] = ['asignado', 'abierto', 'saltado']
+
+/** Estados que cuentan el lead como no trabajado a efectos del vencimiento. */
+export const ESTADOS_SIN_TRABAJAR: readonly LeadEstado[] = ['asignado', 'abierto', 'saltado']
+
+/**
+ * Los dos mensajes, que hacen cosas distintas:
+ *
+ *   primero  el gancho. No dice a qué nos dedicamos, solo abre conversación.
+ *   segundo  la oferta. Acá sí le contamos qué le estamos ofreciendo.
+ */
+export const SETTER_SEND_TIPOS = ['primero', 'segundo'] as const
+export const setterSendTipoEnum = pgEnum('setter_send_tipo', SETTER_SEND_TIPOS)
+export type SetterSendTipo = (typeof SETTER_SEND_TIPOS)[number]
+
+export const MENSAJE_META: Record<SetterSendTipo, { label: string; detalle: string }> = {
+  primero: {
+    label: 'Primer mensaje',
+    detalle: 'El de entrada. Abre conversación, no ofrece nada todavía.',
+  },
+  segundo: {
+    label: 'Segundo mensaje',
+    detalle: 'La oferta: qué hacemos y qué le proponemos.',
+  },
+}
+
+/**
+ * Qué contestó cuando ya vio la oferta.
+ *
+ * Solo existe para el segundo mensaje: un "me interesa" antes de saber qué le
+ * estamos ofreciendo no significa nada.
+ */
+export const LEAD_INTERESES = ['interesa', 'no_interesa'] as const
+export const leadInteresEnum = pgEnum('lead_interes', LEAD_INTERESES)
+export type LeadInteres = (typeof LEAD_INTERESES)[number]
+
+export const INTERES_META: Record<LeadInteres, { label: string; tone: Tono; detalle: string }> = {
+  interesa: {
+    label: 'Le interesa',
+    detalle: 'Vio la oferta y dijo que sí. Es el mejor lead que hay: pasa primero.',
+    tone: 'positivo',
+  },
+  no_interesa: {
+    label: 'No le interesa',
+    detalle: 'Vio la oferta y dijo que no. Sale de la cola, pero cuenta como respuesta.',
+    tone: 'negativo',
+  },
+}
+
+/**
+ * Cómo se lee una respuesta según a qué mensaje llegó. Son dos hechos
+ * distintos y se atienden distinto, por eso no comparten etiqueta.
+ */
+export const RESPUESTA_META: Record<SetterSendTipo, { label: string; detalle: string }> = {
+  primero: {
+    label: 'Respondió el 1er mensaje',
+    detalle: 'Abrió conversación y todavía no sabe qué le ofrecemos. Entramos nosotros.',
+  },
+  segundo: {
+    label: 'Respondió el 2do mensaje',
+    detalle: 'Ya sabe qué le ofrecemos y contestó que sí o que no.',
+  },
+}
+
+export const CONTACT_ORIGENES = ['cliente', 'scrapeado'] as const
+export const contactOrigenEnum = pgEnum('contact_origen', CONTACT_ORIGENES)
+export type ContactOrigen = (typeof CONTACT_ORIGENES)[number]
+
+export const ORIGEN_META: Record<ContactOrigen, { label: string; detalle: string }> = {
+  cliente: {
+    label: 'Cliente propio',
+    detalle: 'Gente que ya me conoce o me compró. La trabaja el Despachador.',
+  },
+  scrapeado: {
+    label: 'Lead scrapeado',
+    detalle: 'Contacto frío sacado de una lista. Lo trabaja el equipo de setters por Instagram.',
+  },
+}
+
+export const NOTIFICACION_TIPOS = [
+  'respondio',
+  'reunion_agendada',
+  'setter_inactivo',
+  'leads_por_vencer',
+  'seguimientos_atrasados',
+  'cuenta_baja_respuesta',
+  'mensaje_sin_leer',
+  'respuesta_de_setter',
+  'recordatorio',
+] as const
+export const notificacionTipoEnum = pgEnum('notificacion_tipo', NOTIFICACION_TIPOS)
+export type NotificacionTipo = (typeof NOTIFICACION_TIPOS)[number]
+
+export const NOTIFICACION_META: Record<NotificacionTipo, { label: string; tone: Tono }> = {
+  respondio: { label: 'Respondió', tone: 'positivo' },
+  reunion_agendada: { label: 'Reunión agendada', tone: 'positivo' },
+  setter_inactivo: { label: 'Setter sin actividad', tone: 'negativo' },
+  leads_por_vencer: { label: 'Leads por vencer', tone: 'activo' },
+  seguimientos_atrasados: { label: 'Seguimientos atrasados', tone: 'negativo' },
+  cuenta_baja_respuesta: { label: 'Cuenta con baja respuesta', tone: 'negativo' },
+  mensaje_sin_leer: { label: 'Mensaje sin leer', tone: 'activo' },
+  respuesta_de_setter: { label: 'Respuesta de un setter', tone: 'activo' },
+  recordatorio: { label: 'Recordatorio', tone: 'activo' },
+}
+
+/**
+ * Cuánto interrumpe un mensaje al equipo.
+ *
+ *   aviso       aparece en la campana y en la pestaña Avisos.
+ *   importante  cartel al abrir la app, con "Entendido". Se puede cerrar.
+ *   bloqueante  cartel que no se cierra sin confirmar. La cola no se habilita.
+ */
+export const MENSAJE_NIVELES = ['aviso', 'importante', 'bloqueante'] as const
+export const mensajeEquipoNivelEnum = pgEnum('mensaje_equipo_nivel', MENSAJE_NIVELES)
+export type MensajeNivel = (typeof MENSAJE_NIVELES)[number]
+
+export const NIVEL_META: Record<MensajeNivel, { label: string; detalle: string; tone: Tono }> = {
+  aviso: {
+    label: 'Aviso',
+    detalle: 'Le aparece en la campana y en su pestaña de avisos. No lo interrumpe.',
+    tone: 'neutral',
+  },
+  importante: {
+    label: 'Importante',
+    detalle: 'Cartel al abrir la app. Lo cierra con "Entendido" y sigue trabajando.',
+    tone: 'activo',
+  },
+  bloqueante: {
+    label: 'Bloqueante',
+    detalle: 'La cola no se habilita hasta que confirme que lo leyó. Para cambios de guion.',
+    tone: 'negativo',
+  },
+}
+
+export const RECORDATORIO_TIPOS = ['seguimientos', 'sin_contactar'] as const
+export const recordatorioTipoEnum = pgEnum('recordatorio_tipo', RECORDATORIO_TIPOS)
+export type RecordatorioTipo = (typeof RECORDATORIO_TIPOS)[number]
+
+/** Tipos de evento del módulo de setters. Se suman a los de la bitácora. */
+export const EVENT_TYPES_SETTERS = [
+  'setter_creado',
+  'setter_editado',
+  'setter_pausado',
+  'setter_reactivado',
+  'setter_baja',
+  'password_restablecida',
+  'password_cambiada',
+  'sesiones_cerradas',
+  'ingreso',
+  'ingreso_fallido',
+  'leads_asignados',
+  'lead_abierto',
+  'lead_contactado',
+  'lead_segundo_enviado',
+  'lead_respondio',
+  'lead_salteado',
+  'lead_cuenta_inexistente',
+  'lead_vencido',
+  'lead_devuelto',
+  'lead_reasignado',
+  'lead_tomado_por_admin',
+  'envio_setter_deshecho',
+  'cuenta_setter_cambiada',
+  'cuenta_setter_al_tope',
+  'recordatorio_enviado',
+  'mensaje_equipo_enviado',
+  'mensaje_equipo_leido',
+  'mensaje_equipo_respondido',
+] as const
 
 /**
  * Motivos por los que una reserva de cupo puede rechazarse. Son los que ve el

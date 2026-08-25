@@ -28,4 +28,15 @@ if (process.env.NODE_ENV !== 'production') globalForDb.__crmPool = pool
 export const db = drizzle(pool, { schema, casing: 'snake_case' })
 
 export type Db = typeof db
+
+/**
+ * Lo mínimo que necesita una función para hablar con la base.
+ *
+ * Sirve tanto para el pool como para una transacción. Una transacción de
+ * Drizzle no es un `Db` completo —le falta el cliente de abajo—, así que sin
+ * este tipo ninguna función podría correr adentro y afuera de una transacción,
+ * que es justo lo que hace falta para repartir leads sin condiciones de carrera.
+ */
+export type Ejecutor = Pick<Db, 'execute'>
+
 export { schema }

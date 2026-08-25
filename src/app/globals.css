@@ -1,42 +1,61 @@
 @import 'tailwindcss';
 
 /* ─────────────────────────────────────────────────────────────────────────
-   Consola de despacho. Panel de instrumentos, no landing de SaaS.
-   Paleta fija de la spec: sin degradados, sin sombras difusas grandes,
-   radios de 4–6 px, nunca cápsulas.
+   ECOSYSTEM — oscuro, con un solo azul.
+
+   Los neutros arman la jerarquía: negro de base y superficies que suben
+   (#0A0A0A → #141414 → #1F1F1F) para separar lo apilado **sin sombras**. El
+   azul eléctrico es el único acento y se reserva para lo que se puede tocar:
+   botones principales, links, estados activos y detalles de marca. Nunca en
+   bloques grandes de fondo, ahí pierde el impacto.
+
+   El resto del color es señal de estado: verde bien, ámbar atención, rojo mal.
+   Si todo grita, no se entiende nada.
    ───────────────────────────────────────────────────────────────────────── */
 
 @theme {
-  /* Superficies */
-  --color-fondo: #141a22;
-  --color-superficie: #1e2732;
-  --color-elevada: #26313e;
-  --color-borde: #33404f;
-  --color-borde-fuerte: #43526580;
+  /* Superficies apiladas. Cada nivel es un escalón, no una sombra. */
+  --color-fondo: #000000;
+  --color-superficie: #0a0a0a;
+  --color-elevada: #141414;
+  --color-elevada-2: #1f1f1f;
+  --color-borde: #2a2a2a;
+  /* Único valor fuera de la paleta dada: el borde al pasar por encima. */
+  --color-borde-fuerte: #3a3a3a;
 
-  /* Texto */
-  --color-texto: #e6eaf0;
-  --color-texto-2: #8d9bab;
+  /* Jerarquía tipográfica: blanco lo que importa, gris lo que acompaña. */
+  --color-texto: #ffffff;
+  --color-texto-2: #999999;
+  --color-texto-3: #666666;
 
-  /* Señales */
-  --color-ambar: #e8a33d;
-  --color-ambar-tenue: #e8a33d1f;
-  --color-verde: #4fb3a6;
-  --color-verde-tenue: #4fb3a61f;
-  --color-rojo: #d2544b;
-  --color-rojo-tenue: #d2544b1f;
+  /* Azul eléctrico: el acento, y nada más que el acento. */
+  --color-acento: #0066ff;
+  --color-acento-hover: #3385ff;
+  --color-acento-activo: #0052cc;
+  /* Profundidad y fondos suaves, para casos puntuales. */
+  --color-acento-profundo: #003d99;
+  --color-acento-claro: #e6f0ff;
+  /* El lavado azul de las pastillas y pestañas activas. Transparente para que
+     se apoye en la superficie que tenga debajo, sea cual sea el escalón. */
+  --color-acento-tenue: rgba(0, 102, 255, 0.14);
 
-  /* Tipografía */
-  --font-titulo: var(--fuente-chivo), ui-sans-serif, system-ui, sans-serif;
+  /* Señales de estado, en su versión para fondo oscuro. */
+  --color-ambar: #f5a524;
+  --color-ambar-tenue: rgba(245, 165, 36, 0.14);
+  --color-verde: #22c55e;
+  --color-verde-tenue: rgba(34, 197, 94, 0.14);
+  --color-rojo: #ef4444;
+  --color-rojo-tenue: rgba(239, 68, 68, 0.14);
+
+  /* Tipografía: una sola familia para todo, y mono solo para números. */
   --font-sans: var(--fuente-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-titulo: var(--fuente-inter), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--fuente-mono), ui-monospace, SFMono-Regular, monospace;
 
-  /* Radios: 4–6 px y nada más */
-  --radius-sm: 4px;
-  --radius-md: 5px;
-  --radius-lg: 6px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
 
-  /* Animación funcional: 150–200 ms */
   --ease-consola: cubic-bezier(0.2, 0, 0, 1);
 }
 
@@ -53,80 +72,69 @@
     background-color: var(--color-fondo);
     color: var(--color-texto);
     font-family: var(--font-sans);
-    font-size: 13px;
-    line-height: 1.45;
+    font-size: 14px;
+    line-height: 1.5;
     -webkit-font-smoothing: antialiased;
-    text-rendering: optimizeLegibility;
   }
 
-  /* Títulos: Chivo 700, apretada, con seguimiento negativo en los grandes. */
   h1,
   h2,
   h3 {
     font-family: var(--font-titulo);
-    font-weight: 700;
-    letter-spacing: -0.02em;
-    line-height: 1.1;
-  }
-  h1 {
-    letter-spacing: -0.035em;
+    font-weight: 600;
+    letter-spacing: -0.011em;
+    line-height: 1.25;
   }
 
-  /* Foco de teclado siempre visible. */
   :focus-visible {
-    outline: 2px solid var(--color-ambar);
+    outline: 2px solid var(--color-acento);
     outline-offset: 2px;
-    border-radius: 3px;
+    border-radius: 4px;
   }
 
   ::selection {
-    background: var(--color-ambar);
-    color: var(--color-fondo);
+    background: var(--color-acento-profundo);
+    color: var(--color-acento-claro);
   }
 
-  /* Barras de scroll acordes a la consola. */
   ::-webkit-scrollbar {
-    width: 10px;
-    height: 10px;
+    width: 12px;
+    height: 12px;
   }
   ::-webkit-scrollbar-track {
-    background: var(--color-fondo);
+    background: transparent;
   }
   ::-webkit-scrollbar-thumb {
-    background: var(--color-borde);
-    border-radius: 5px;
-    border: 2px solid var(--color-fondo);
+    background: #2a2a2a;
+    border-radius: 6px;
+    border: 3px solid var(--color-fondo);
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: #4a5a6d;
+    background: #3a3a3a;
   }
 }
 
 @layer components {
   /*
-   * Dato de instrumento: teléfonos, usuarios de IG, contadores, cupos,
-   * porcentajes y marcas de tiempo. El contraste con el texto de interfaz
-   * es lo que le da el carácter de instrumento — no usar en párrafos.
+   * Números: cupos, contadores, horas, usuarios de Instagram. En monoespaciada
+   * y con cifras de ancho fijo para que dos filas seguidas se puedan comparar
+   * de un vistazo sin leerlas.
    */
   .dato {
     font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
-    font-feature-settings: 'zero' 1;
     letter-spacing: -0.01em;
   }
 
-  /* Encabezado de sección: versalitas chicas, para rotular grupos de datos. */
+  /* Rótulo de sección. Chico y gris: acompaña, no compite. */
   .rotulo {
-    font-family: var(--font-sans);
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 600;
-    letter-spacing: 0.09em;
-    text-transform: uppercase;
-    color: var(--color-texto-2);
+    letter-spacing: 0.02em;
+    color: var(--color-texto-3);
   }
 }
 
-/* Animación solo funcional, y desactivable. */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

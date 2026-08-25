@@ -2,8 +2,7 @@
 
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { toast } from 'sonner'
-import { Instagram, MessageCircle, MessageSquare, Search, X } from 'lucide-react'
-import Link from 'next/link'
+import { Instagram, MessageCircle, Search, X } from 'lucide-react'
 import * as React from 'react'
 
 import { Button } from '@/components/ui/button'
@@ -15,7 +14,7 @@ import { haceCuanto } from '@/lib/tz'
 import { cn } from '@/lib/utils'
 import type { FilaContacto } from '@/server/contacts'
 import { clasificar } from '@/server/actions/contacts'
-import { BotonContesto } from '@/app/(consola)/respondieron/bandeja'
+import { BotonContesto } from '@/components/boton-contesto'
 
 /** Alto de fila en píxeles. Fijo, que es lo que permite virtualizar. */
 const ALTO = 34
@@ -23,7 +22,6 @@ const ALTO = 34
 interface Opciones {
   rubros: string[]
   ciudades: string[]
-  cuentas: Array<{ id: string; code: string; label: string }>
 }
 
 export function TablaContactos({
@@ -38,7 +36,6 @@ export function TablaContactos({
   const [canal, setCanal] = React.useState('')
   const [rubro, setRubro] = React.useState('')
   const [ciudad, setCiudad] = React.useState('')
-  const [cuenta, setCuenta] = React.useState('')
   const [respondieron, setRespondieron] = React.useState('')
   const [seleccionado, setSeleccionado] = React.useState<FilaContacto | null>(null)
 
@@ -55,7 +52,6 @@ export function TablaContactos({
       if (canal === 'instagram' && !c.igUsername) return false
       if (rubro && c.niche !== rubro) return false
       if (ciudad && c.city !== ciudad) return false
-      if (cuenta && c.cuentaCode !== cuenta) return false
       if (respondieron === 'si' && c.receivedCount === 0) return false
       if (respondieron === 'no' && c.receivedCount > 0) return false
       if (q) {
@@ -64,7 +60,7 @@ export function TablaContactos({
       }
       return true
     })
-  }, [contactos, busqueda, etapa, canal, rubro, ciudad, cuenta, respondieron])
+  }, [contactos, busqueda, etapa, canal, rubro, ciudad, respondieron])
 
   const contenedor = React.useRef<HTMLDivElement>(null)
   const virtual = useVirtualizer({
@@ -74,7 +70,7 @@ export function TablaContactos({
     overscan: 12,
   })
 
-  const hayFiltros = Boolean(busqueda || etapa || canal || rubro || ciudad || cuenta || respondieron)
+  const hayFiltros = Boolean(busqueda || etapa || canal || rubro || ciudad || respondieron)
 
   function limpiar() {
     setBusqueda('')
@@ -82,7 +78,6 @@ export function TablaContactos({
     setCanal('')
     setRubro('')
     setCiudad('')
-    setCuenta('')
     setRespondieron('')
   }
 
@@ -133,13 +128,6 @@ export function TablaContactos({
           ))}
         </Selector>
 
-        <Selector valor={cuenta} onCambio={setCuenta} etiqueta="Cuenta">
-          {opciones.cuentas.map((c) => (
-            <option key={c.id} value={c.code}>
-              {c.code}
-            </option>
-          ))}
-        </Selector>
 
         <Selector valor={respondieron} onCambio={setRespondieron} etiqueta="Respuesta">
           <option value="si">Contestaron</option>
@@ -171,13 +159,12 @@ export function TablaContactos({
           <Encabezado className="text-right">Env.</Encabezado>
           <Encabezado className="text-right">Rec.</Encabezado>
           <Encabezado>Último</Encabezado>
-          <Encabezado>Cuenta</Encabezado>
         </div>
 
         {filtrados.length === 0 ? (
           <p className="px-4 py-10 text-center text-[12.5px] text-texto-2">
             Ningún contacto coincide con esos filtros.{' '}
-            <button onClick={limpiar} className="text-ambar underline underline-offset-2">
+            <button onClick={limpiar} className="text-acento underline underline-offset-2">
               Limpiar filtros
             </button>
           </p>
@@ -232,7 +219,6 @@ export function TablaContactos({
                     <Celda className="text-texto-2">
                       {haceCuanto(c.lastInboundAt ?? c.lastOutboundAt)}
                     </Celda>
-                    <Celda className="dato text-texto-2">{c.cuentaCode ?? '—'}</Celda>
                   </button>
                 )
               })}
@@ -279,8 +265,8 @@ function Selector({
       aria-label={etiqueta}
       className={cn(
         'h-7.5 rounded-[4px] border bg-fondo px-1.5 text-[12px] transition-colors duration-150',
-        'focus:border-ambar focus:outline-none',
-        valor ? 'border-ambar/45 bg-ambar/10 text-ambar' : 'border-borde text-texto-2',
+        'focus:border-acento focus:outline-none',
+        valor ? 'border-ambar/45 bg-ambar-tenue text-ambar' : 'border-borde text-texto-2',
       )}
     >
       <option value="">{etiqueta}</option>
@@ -330,9 +316,6 @@ function Ficha({ contacto, onCerrar }: { contacto: FilaContacto; onCerrar: () =>
         <Dato rotulo="Rubro">{contacto.niche ?? '—'}</Dato>
         <Dato rotulo="Ciudad">{contacto.city ?? '—'}</Dato>
         <Dato rotulo="Qué compró">{contacto.bought ?? '—'}</Dato>
-        <Dato rotulo="Cuenta asignada">
-          <span className="dato">{contacto.cuentaCode ?? '—'}</span>
-        </Dato>
         <Dato rotulo="Mensajes">
           <span className="dato">
             {contacto.sentCount} enviados · {contacto.receivedCount} recibidos
@@ -346,16 +329,6 @@ function Ficha({ contacto, onCerrar }: { contacto: FilaContacto; onCerrar: () =>
         </Dato>
       </dl>
 
-      {contacto.chatwootConversationId !== null ? (
-        <div className="border-t border-borde p-3">
-          <Button asChild variant="secundaria" size="sm" className="w-full">
-            <Link href={`/mensajes?conversacion=${contacto.chatwootConversationId}` as never}>
-              <MessageSquare aria-hidden />
-              Ver conversación
-            </Link>
-          </Button>
-        </div>
-      ) : null}
 
       {/* Clasificar sin salir de la lista: es la acción que más se repite. */}
       <div className="border-t border-borde p-3">

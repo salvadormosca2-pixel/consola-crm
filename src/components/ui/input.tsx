@@ -2,24 +2,17 @@ import * as React from 'react'
 
 import { cn } from '@/lib/utils'
 
+const BASE =
+  'w-full rounded-[6px] border border-borde bg-fondo text-[13.5px] text-texto ' +
+  'placeholder:text-texto-2/60 ' +
+  'transition-colors duration-150 hover:border-borde-fuerte ' +
+  'focus:border-acento focus:outline-none focus:ring-2 focus:ring-acento/15 ' +
+  'disabled:cursor-not-allowed disabled:bg-elevada disabled:opacity-60 ' +
+  'aria-[invalid=true]:border-rojo aria-[invalid=true]:ring-rojo/15'
+
 export const Input = React.forwardRef<HTMLInputElement, React.ComponentProps<'input'>>(
   function Input({ className, type, ...props }, ref) {
-    return (
-      <input
-        type={type}
-        ref={ref}
-        className={cn(
-          'h-7.5 w-full rounded-[4px] border border-borde bg-fondo px-2 text-[12.5px] text-texto',
-          'placeholder:text-texto-2/70',
-          'transition-colors duration-150 hover:border-[#42525f]',
-          'focus:border-ambar focus:outline-none focus:ring-1 focus:ring-ambar/40',
-          'disabled:cursor-not-allowed disabled:opacity-40',
-          'aria-[invalid=true]:border-rojo aria-[invalid=true]:ring-rojo/30',
-          className,
-        )}
-        {...props}
-      />
-    )
+    return <input type={type} ref={ref} className={cn(BASE, 'h-8.5 px-2.5', className)} {...props} />
   },
 )
 
@@ -28,14 +21,7 @@ export const Textarea = React.forwardRef<HTMLTextAreaElement, React.ComponentPro
     return (
       <textarea
         ref={ref}
-        className={cn(
-          'w-full rounded-[4px] border border-borde bg-fondo px-2 py-1.5 text-[12.5px] text-texto',
-          'placeholder:text-texto-2/70 resize-y',
-          'transition-colors duration-150 hover:border-[#42525f]',
-          'focus:border-ambar focus:outline-none focus:ring-1 focus:ring-ambar/40',
-          'disabled:cursor-not-allowed disabled:opacity-40',
-          className,
-        )}
+        className={cn(BASE, 'resize-y px-2.5 py-2 leading-relaxed', className)}
         {...props}
       />
     )
@@ -45,7 +31,7 @@ export const Textarea = React.forwardRef<HTMLTextAreaElement, React.ComponentPro
 export function Label({ className, ...props }: React.ComponentProps<'label'>) {
   return (
     <label
-      className={cn('mb-1 block text-[11px] font-medium text-texto-2', className)}
+      className={cn('mb-1 block text-[12px] font-medium text-texto', className)}
       {...props}
     />
   )
@@ -69,9 +55,9 @@ export function Field({
       <Label>{label}</Label>
       {children}
       {error ? (
-        <p className="mt-1 text-[11px] text-rojo">{error}</p>
+        <p className="mt-1 text-[12px] text-rojo">{error}</p>
       ) : hint ? (
-        <p className="mt-1 text-[11px] text-texto-2/80">{hint}</p>
+        <p className="mt-1 text-[12px] leading-relaxed text-texto-2">{hint}</p>
       ) : null}
     </div>
   )

@@ -15,12 +15,19 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx scripts/migrate.ts",
     "db:studio": "drizzle-kit studio",
+    "db:migrate:test": "tsx scripts/migrate-test.ts",
     "user:create": "tsx scripts/create-user.ts",
+    "iconos": "tsx scripts/iconos.ts",
+    "push:claves": "tsx scripts/push-claves.ts",
     "demo:cargar": "tsx scripts/demo.ts",
     "audit": "tsx scripts/auditoria.ts",
     "audit:evolution": "node --conditions=react-server --import tsx scripts/evo-prueba.mts",
     "demo:historial": "tsx scripts/demo.ts --historial",
-    "demo:limpiar": "tsx scripts/demo.ts --limpiar"
+    "demo:setters": "tsx scripts/demo.ts --setters",
+    "demo:humo": "node --conditions=react-server --import tsx scripts/humo-setters.mts",
+    "demo:limpiar": "tsx scripts/demo.ts --limpiar",
+    "demo:lead-real": "tsx scripts/lead-real.ts",
+    "verificar": "tsx scripts/verificar.mts"
   },
   "dependencies": {
     "@node-rs/argon2": "^2.0.2",
@@ -44,6 +51,7 @@
     "server-only": "^0.0.1",
     "sonner": "^2.0.3",
     "tailwind-merge": "^3.3.0",
+    "web-push": "^3.6.7",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
     "zod": "^3.25.42"
   },
@@ -54,6 +62,7 @@
     "@types/pg": "^8.15.2",
     "@types/react": "^19.1.6",
     "@types/react-dom": "^19.1.5",
+    "@types/web-push": "^3.6.4",
     "cross-env": "^7.0.3",
     "dotenv": "^16.5.0",
     "drizzle-kit": "^0.31.1",

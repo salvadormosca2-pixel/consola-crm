@@ -22,7 +22,7 @@ export function Revisar({ filas }: { filas: FilaParaRevisar[] }) {
   if (visibles.length === 0) {
     return (
       <Panel className="px-6 py-14 text-center">
-        <div className="mx-auto mb-3 flex h-9 w-9 items-center justify-center rounded-[5px] border border-verde/35 bg-verde/10">
+        <div className="mx-auto mb-3 flex h-9 w-9 items-center justify-center rounded-[5px] border border-verde/35 bg-verde-tenue">
           <Check className="h-4 w-4 text-verde" aria-hidden />
         </div>
         <h2 className="text-[15px]">No hay nada para revisar</h2>

@@ -93,12 +93,28 @@ async function main(): Promise<void> {
     if (existing.length > 0) {
       await db
         .update(users)
-        .set({ passwordHash, name: parsed.data.name })
+        .set({ passwordHash, name: parsed.data.name, mustChangePassword: false })
         .where(sql`lower(${users.email}) = ${email}`)
       console.log(`Contraseña actualizada para ${email}.`)
     } else {
-      await db.insert(users).values({ email, name: parsed.data.name, passwordHash })
-      console.log(`Usuario creado: ${email}. Ya podés entrar en /ingresar.`)
+      /*
+       * El primero que se crea es la cuenta madre: la que ve todo, la única que
+       * crea y borra cuentas, y la que la base protege de ser borrada o
+       * degradada. Los siguientes son admins comunes. Los setters NO se crean
+       * desde acá: se dan de alta desde el panel, que además genera su tarjeta
+       * de acceso.
+       */
+      const [conteo] = await db
+        .select({ n: sql<number>`count(*)::int` })
+        .from(users)
+        .where(sql`role = 'admin_madre'`)
+
+      const role = (conteo?.n ?? 0) === 0 ? 'admin_madre' : 'admin'
+      await db.insert(users).values({ email, name: parsed.data.name, passwordHash, role })
+      console.log(
+        `Usuario creado: ${email} (${role === 'admin_madre' ? 'cuenta principal' : 'admin'}).` +
+          ' Ya podés entrar en /ingresar.',
+      )
     }
   } finally {
     await pool.end()

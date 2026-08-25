@@ -1,24 +1,38 @@
 'use client'
 
-import { CalendarPlus, Flame, HelpCircle, MessageSquare, ThumbsDown, Wallet } from 'lucide-react'
+import {
+  CalendarPlus,
+  ExternalLink,
+  Flame,
+  HelpCircle,
+  MessageSquare,
+  ThumbsDown,
+  Wallet,
+  X,
+} from 'lucide-react'
+import { useRouter } from 'next/navigation'
 import * as React from 'react'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
-import { Chip, Panel } from '@/components/ui/panel'
-import { STAGE_META, type ContactStage } from '@/db/enums'
+import { Chip, Panel, PanelHeader } from '@/components/ui/panel'
+import { INTERES_META, STAGE_META, type ContactStage } from '@/db/enums'
 import { formatearTelefono } from '@/lib/phone-ar'
+import { RESPUESTA_VISTA_META, type Respuesta } from '@/lib/respuestas-vistas'
 import { haceCuanto } from '@/lib/tz'
 import { cn } from '@/lib/utils'
-import type { FilaRespondio } from '@/server/contacts'
 import { clasificar } from '@/server/actions/contacts'
+import type { RespuestaDetallada } from '@/server/setters/respuestas'
 
 /**
- * Bandeja de los que contestaron.
+ * El detalle de cada respuesta.
  *
- * Un click por contacto y listo. Es la acción que más se repite en el día, así
- * que no pide confirmación ni abre diálogos: clasificás y desaparece de la
- * lista.
+ * Acá está todo etiquetado: quién lo contactó y cuándo, a qué mensaje contestó,
+ * qué dijo exactamente —lo que anotó el setter, que es obligatorio al responder
+ * la oferta— y si está interesado de verdad. Es la pantalla del detalle; el
+ * vistazo de arriba es el control de seguimientos.
+ *
+ * Clasificar es un click y sin confirmación: es lo que más se repite en el día.
  */
 
 const CLASIFICACIONES: Array<{
@@ -72,13 +86,26 @@ const CLASIFICACIONES: Array<{
   },
 ]
 
-export function Bandeja({ filas }: { filas: FilaRespondio[] }) {
+export function Bandeja({
+  vista,
+  filas,
+  base,
+  /** En la pantalla de un setter el nombre ya está en el título. */
+  conNombreDelSetter = true,
+}: {
+  vista: Respuesta
+  filas: RespuestaDetallada[]
+  base: string
+  conNombreDelSetter?: boolean
+}) {
+  const router = useRouter()
   const [ocultos, setOcultos] = React.useState<Set<string>>(new Set())
   const [pendiente, iniciar] = React.useTransition()
 
+  const meta = RESPUESTA_VISTA_META[vista]
   const visibles = filas.filter((f) => !ocultos.has(f.id))
 
-  function aplicar(f: FilaRespondio, etapa: ContactStage, label: string) {
+  function aplicar(f: RespuestaDetallada, etapa: ContactStage, label: string): void {
     // 'Duda' y 'Precio' dejan el contacto en la bandeja a propósito: todavía
     // hay algo que contestar.
     const quedaEnBandeja = etapa === 'respondido'
@@ -98,141 +125,141 @@ export function Bandeja({ filas }: { filas: FilaRespondio[] }) {
     })
   }
 
-  if (visibles.length === 0) {
-    return (
-      <Panel className="px-6 py-14 text-center">
-        <div className="mx-auto mb-3 flex h-9 w-9 items-center justify-center rounded-[5px] border border-verde/35 bg-verde/10">
-          <MessageSquare className="h-4 w-4 text-verde" aria-hidden />
-        </div>
-        <h2 className="text-[15px]">
-          {filas.length > 0 ? 'Clasificaste todo' : 'Nadie está esperando respuesta'}
-        </h2>
-        <p className="mt-1.5 text-[12.5px] text-texto-2">
-          {filas.length > 0
-            ? 'No quedó ninguno sin clasificar.'
-            : 'Cuando alguien conteste, aparece acá para que lo clasifiques en un click.'}
-        </p>
-      </Panel>
-    )
-  }
-
   return (
-    <div className="space-y-2">
-      {visibles.map((f) => (
-        <Panel key={f.id} className="overflow-hidden">
-          <div className="flex flex-wrap items-start justify-between gap-3 px-3 py-2">
-            <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-center gap-1.5">
-                <span className="truncate text-[14px] font-medium">{f.businessName}</span>
-                <Chip tono={STAGE_META[f.stage].tone}>{STAGE_META[f.stage].label}</Chip>
-                {f.esperandoHoras >= 24 ? (
-                  <Chip tono="negativo">esperando {Math.floor(f.esperandoHoras / 24)} d</Chip>
-                ) : f.esperandoHoras >= 4 ? (
-                  <Chip tono="activo">esperando {f.esperandoHoras} h</Chip>
-                ) : null}
-              </div>
-              <p className="mt-0.5 text-[12px] text-texto-2">
-                {f.contactName ?? 'Sin nombre'}
-                {f.niche ? ` · ${f.niche}` : ''}
-                {f.city ? ` · ${f.city}` : ''}
-                {' · '}
-                <span className="dato">{formatearTelefono(f.phoneE164)}</span>
-              </p>
-            </div>
-            <div className="text-right text-[11px] text-texto-2">
-              <div className="dato text-[16px] leading-none text-texto">{f.score}</div>
-              <div className="mt-0.5">contestó {haceCuanto(f.lastInboundAt)}</div>
-            </div>
-          </div>
-
-          {f.ultimoMensaje ? (
-            <blockquote className="mx-3 mb-2 border-l-2 border-verde/50 bg-verde/5 px-2.5 py-1.5 text-[12.5px] leading-relaxed text-texto">
-              {f.ultimoMensaje}
-            </blockquote>
-          ) : (
-            <p className="mx-3 mb-2 text-[11.5px] text-texto-2">
-              Contestó, pero no quedó registrado qué dijo.
-            </p>
-          )}
-
-          <div className="flex flex-wrap items-center gap-1 border-t border-borde bg-elevada/30 px-3 py-1.5">
-            <span className="rotulo mr-1">Clasificar</span>
-            {CLASIFICACIONES.map((c) => (
-              <Button
-                key={c.label}
-                variant={c.variante}
-                size="sm"
-                disabled={pendiente}
-                title={c.ayuda}
-                onClick={() => aplicar(f, c.etapa, c.label)}
-              >
-                <c.icono aria-hidden />
-                {c.label}
-              </Button>
-            ))}
-          </div>
-        </Panel>
-      ))}
-    </div>
-  )
-}
-
-/** Botón para marcar a mano que alguien contestó, desde cualquier lista. */
-export function BotonContesto({
-  contactId,
-  nombre,
-  onHecho,
-}: {
-  contactId: string
-  nombre: string
-  onHecho?: () => void
-}) {
-  const [pendiente, iniciar] = React.useTransition()
-  const [abierto, setAbierto] = React.useState(false)
-  const [texto, setTexto] = React.useState('')
-
-  if (!abierto) {
-    return (
-      <Button variant="positiva" size="sm" onClick={() => setAbierto(true)}>
-        <MessageSquare aria-hidden />
-        Contestó
-      </Button>
-    )
-  }
-
-  return (
-    <form
-      className="flex items-center gap-1"
-      onSubmit={(e) => {
-        e.preventDefault()
-        iniciar(async () => {
-          const { marcarQueContesto } = await import('@/server/actions/contacts')
-          const r = await marcarQueContesto(contactId, texto)
-          if (r.ok) {
-            toast.success(`${nombre} pasó a Respondió — se cortó la secuencia`)
-            setAbierto(false)
-            setTexto('')
-            onHecho?.()
-          } else toast.error(r.error ?? 'No se pudo registrar.')
-        })
-      }}
-    >
-      <input
-        value={texto}
-        onChange={(e) => setTexto(e.target.value)}
-        placeholder="Qué dijo (opcional)"
-        autoFocus
-        className={cn(
-          'h-6 w-48 rounded-[4px] border border-borde bg-fondo px-1.5 text-[11.5px]',
-          'focus:border-ambar focus:outline-none',
-        )}
+    <Panel className="border-acento/35">
+      <PanelHeader
+        titulo={meta.label}
+        descripcion={meta.detalle}
+        acciones={
+          <button
+            onClick={() => router.push(base as never, { scroll: false })}
+            aria-label="Cerrar la lista"
+            className="flex h-7 w-7 items-center justify-center rounded-[5px] text-texto-2 hover:bg-elevada hover:text-texto"
+          >
+            <X className="h-4 w-4" aria-hidden />
+          </button>
+        }
       />
-      <Button type="submit" variant="positiva" size="sm" disabled={pendiente}>
-        Guardar
-      </Button>
-      <Button type="button" variant="fantasma" size="sm" onClick={() => setAbierto(false)}>
-        Cancelar
-      </Button>
-    </form>
+
+      {visibles.length === 0 ? (
+        <p className="px-4 py-10 text-center text-[13px] text-texto-2">
+          {filas.length > 0 ? 'Clasificaste todo.' : meta.vacio}
+        </p>
+      ) : (
+        <div className="divide-y divide-borde">
+          {visibles.map((f) => (
+            <div key={f.id} className="px-3 py-2.5">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="truncate text-[14px] font-medium">{f.businessName}</span>
+
+                    {/* Una sola etiqueta y solo cuando dice algo: el sí o el no
+                        a la oferta. Sin etiqueta = contestó la entrada. */}
+                    {f.respondioA === 'segundo' && f.interes ? (
+                      <Chip tono={INTERES_META[f.interes].tone}>
+                        {INTERES_META[f.interes].label}
+                      </Chip>
+                    ) : f.stage !== 'respondido' ? (
+                      <Chip tono={STAGE_META[f.stage].tone}>{STAGE_META[f.stage].label}</Chip>
+                    ) : null}
+
+                    {f.esperandoHoras >= 24 ? (
+                      <Chip tono="negativo">
+                        esperando {Math.floor(f.esperandoHoras / 24)} d
+                      </Chip>
+                    ) : f.esperandoHoras >= 4 ? (
+                      <Chip tono="activo">esperando {f.esperandoHoras} h</Chip>
+                    ) : null}
+                  </div>
+
+                  <p className="mt-0.5 text-[12px] text-texto-2">
+                    {f.contactName ?? 'Sin nombre'}
+                    {f.niche ? ` · ${f.niche}` : ''}
+                    {f.city ? ` · ${f.city}` : ''}
+                    {f.phoneE164 ? (
+                      <>
+                        {' · '}
+                        <span className="dato">{formatearTelefono(f.phoneE164)}</span>
+                      </>
+                    ) : null}
+                    {f.respondioA === 'primero' ? (
+                      <span className="text-ambar"> · le falta la oferta</span>
+                    ) : null}
+                  </p>
+
+                  {/* Quién lo contactó y cuándo: es el dato de la comisión. */}
+                  <p className="mt-0.5 text-[11.5px] text-texto-2">
+                    {conNombreDelSetter && f.setterNombre
+                      ? `Lo contactó ${f.setterNombre}`
+                      : 'Contactado'}
+                    {f.contactadoAt ? ` ${haceCuanto(f.contactadoAt)}` : ''}
+                    {f.respondidoAt ? ` · contestó ${haceCuanto(f.respondidoAt)}` : ''}
+                  </p>
+                </div>
+
+                <div className="flex shrink-0 items-center gap-2">
+                  <div className="text-right text-[11px] text-texto-2">
+                    <div className="dato text-[16px] leading-none text-texto">{f.score}</div>
+                    <div className="mt-0.5">puntaje</div>
+                  </div>
+                  {f.igUsername ? (
+                    <a
+                      href={`https://ig.me/m/${f.igUsername}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      aria-label={`Abrir el chat con ${f.businessName}`}
+                      className="flex h-7 w-7 items-center justify-center rounded-[5px] text-texto-2 hover:bg-elevada hover:text-texto"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" aria-hidden />
+                    </a>
+                  ) : null}
+                </div>
+              </div>
+
+              {/* Lo que anotó el setter al marcar la respuesta a la oferta. Es
+                  obligatorio, así que en esos casos siempre hay algo. */}
+              {f.notaDelSetter ? (
+                <blockquote className="mt-2 border-l-2 border-acento/50 bg-acento-tenue px-2.5 py-1.5 text-[12.5px] leading-relaxed text-texto">
+                  {f.notaDelSetter}
+                  {f.setterNombre ? (
+                    <span className="ml-1 text-texto-2">— anotó {f.setterNombre}</span>
+                  ) : null}
+                </blockquote>
+              ) : null}
+
+              {f.ultimoMensaje ? (
+                <blockquote className="mt-2 border-l-2 border-verde/50 bg-verde-tenue px-2.5 py-1.5 text-[12.5px] leading-relaxed text-texto">
+                  {f.ultimoMensaje}
+                </blockquote>
+              ) : null}
+
+              <div className="mt-2 flex flex-wrap items-center gap-1">
+                <span className="rotulo mr-1">Clasificar</span>
+                {CLASIFICACIONES.map((c) => (
+                  <Button
+                    key={c.label}
+                    variant={c.variante}
+                    size="sm"
+                    disabled={pendiente}
+                    title={c.ayuda}
+                    onClick={() => aplicar(f, c.etapa, c.label)}
+                  >
+                    <c.icono aria-hidden />
+                    {c.label}
+                  </Button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {filas.length >= 500 ? (
+        <p className={cn('border-t border-borde px-4 py-2 text-[11.5px] text-texto-2')}>
+          Se muestran los primeros 500.
+        </p>
+      ) : null}
+    </Panel>
   )
 }

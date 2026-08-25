@@ -43,6 +43,41 @@
       "when": 1786700004000,
       "tag": "0005_indices_seguimiento",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1787500000000,
+      "tag": "0006_setters",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1787600000000,
+      "tag": "0007_respuesta_a_la_oferta",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1787700000000,
+      "tag": "0008_seguimientos_por_situacion",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1787700001000,
+      "tag": "0009_paso_en_envios",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1787700002000,
+      "tag": "0010_referencias",
+      "breakpoints": true
     }
   ]
 }

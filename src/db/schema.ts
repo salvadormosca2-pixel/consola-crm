@@ -1,5 +1,6 @@
 import { relations, sql } from 'drizzle-orm'
 import {
+  type AnyPgColumn,
   boolean,
   check,
   date,
@@ -19,16 +20,25 @@ import {
   accountModeEnum,
   accountStatusEnum,
   channelEnum,
+  contactOrigenEnum,
   contactStageEnum,
   importActionEnum,
+  leadAssignmentEstadoEnum,
+  leadInteresEnum,
   meetingOutcomeEnum,
   meetingStatusEnum,
   meetingTypeEnum,
+  mensajeEquipoNivelEnum,
   msgDirectionEnum,
   msgSendModeEnum,
   msgStatusEnum,
+  notificacionTipoEnum,
+  recordatorioTipoEnum,
+  setterSendTipoEnum,
   syncStatusEnum,
   templateChannelEnum,
+  userRoleEnum,
+  userStatusEnum,
 } from './enums'
 
 const id = () => uuid('id').primaryKey().defaultRandom()
@@ -36,15 +46,46 @@ const createdAt = () => timestamp('created_at', { withTimezone: true }).notNull(
 const updatedAt = () => timestamp('updated_at', { withTimezone: true }).notNull().defaultNow()
 
 /* ── Usuarios ──────────────────────────────────────────────────────────────
-   1–3 personas, sin registro público. Se crean con `npm run user:create`.   */
+   Un solo padrón de personas para toda la app: yo, los admins y los setters.
+   Sin registro público: la admin madre se crea con `npm run user:create` y el
+   resto desde el panel.                                                      */
 
 export const users = pgTable('users', {
   id: id(),
   email: text('email').notNull(),
   passwordHash: text('password_hash').notNull(),
   name: text('name').notNull(),
+
+  role: userRoleEnum('role').notNull().default('admin'),
+  status: userStatusEnum('status').notNull().default('activo'),
+
+  /** Entró con la contraseña temporal y todavía no eligió una propia. */
+  mustChangePassword: boolean('must_change_password').notNull().default(false),
+
+  lastLoginAt: timestamp('last_login_at', { withTimezone: true }),
+  lastLoginIp: text('last_login_ip'),
+  lastLoginAgent: text('last_login_agent'),
+
+  /** Intentos fallidos seguidos. Con varios, la cuenta se bloquea un rato. */
+  failedAttempts: smallint('failed_attempts').notNull().default(0),
+  lockedUntil: timestamp('locked_until', { withTimezone: true }),
+
+  /**
+   * Cerrar sesión en todos los dispositivos: se adelanta esta marca y todo
+   * token emitido antes deja de valer. Es lo que se usa cuando alguien pierde
+   * el celular.
+   */
+  sessionsValidFrom: timestamp('sessions_valid_from', { withTimezone: true }).notNull().defaultNow(),
+
+  createdBy: uuid('created_by'),
   createdAt: createdAt(),
-}, (t) => [uniqueIndex('users_email_uq').on(sql`lower(${t.email})`)])
+}, (t) => [
+  uniqueIndex('users_email_uq').on(sql`lower(${t.email})`),
+  // Hay una sola admin madre. El disparador de la base impide además borrarla
+  // o degradarla, incluso desde otra sesión de psql.
+  uniqueIndex('users_admin_madre_uq').on(t.role).where(sql`${t.role} = 'admin_madre'`),
+  index('users_role_idx').on(t.role, t.status),
+])
 
 /* ── Cuentas emisoras ─────────────────────────────────────────────────────
    Las 10 de WhatsApp y las de Instagram. Es lo único que se carga a mano.   */
@@ -177,6 +218,20 @@ export const contacts = pgTable('contacts', {
   bought: text('bought'),
   city: text('city'),
   notes: text('notes'),
+
+  /**
+   * De dónde salió. Los leads fríos scrapeados los trabaja el equipo de setters
+   * por Instagram; los clientes propios, el Despachador. No se tratan igual y
+   * nunca se mezclan en la misma cola.
+   */
+  origen: contactOrigenEnum('origen').notNull().default('cliente'),
+  /**
+   * Qué setter lo trabajó. Se sella al contactarlo y NO se borra al darlo de
+   * baja: es la base con la que se liquida la comisión.
+   */
+  setterId: uuid('setter_id').references((): AnyPgColumn => setters.id, {
+    onDelete: 'set null',
+  }),
 
   stage: contactStageEnum('stage').notNull().default('nuevo'),
   score: smallint('score').notNull().default(0),
@@ -480,10 +535,15 @@ export const meetings = pgTable('meetings', {
   status: meetingStatusEnum('status').notNull().default('agendada'),
   outcome: meetingOutcomeEnum('outcome'),
   reminderAt: timestamp('reminder_at', { withTimezone: true }),
+  /** Qué setter la consiguió. La reunión la manejo yo, la comisión es de él. */
+  setterId: uuid('setter_id').references((): AnyPgColumn => setters.id, {
+    onDelete: 'set null',
+  }),
   createdAt: createdAt(),
 }, (t) => [
   index('meetings_scheduled_idx').on(t.scheduledAt),
   index('meetings_contact_idx').on(t.contactId, sql`${t.scheduledAt} desc`),
+  index('meetings_setter_idx').on(t.setterId).where(sql`${t.setterId} is not null`),
 ])
 
 /* ── Bitácora ─────────────────────────────────────────────────────────────*/
@@ -518,6 +578,295 @@ export const settings = pgTable('settings', {
   value: jsonb('value_jsonb').notNull(),
   updatedAt: updatedAt(),
 })
+
+/* ══ Módulo de setters ═══════════════════════════════════════════════════
+   Un equipo que contacta leads fríos por DM de Instagram desde el celular.
+   No cierra ventas: manda el primer mensaje, manda el segundo a las 24 h, y
+   cuando el lead contesta lo pasa a la bandeja del admin.
+
+   Todo el módulo gira alrededor de dos reglas duras: nunca dos setters al
+   mismo negocio, y nunca más de 30 mensajes por cuenta de Instagram por día.
+   Las dos están garantizadas por la base, no por la pantalla.               */
+
+export const setters = pgTable('setters', {
+  id: id(),
+  userId: uuid('user_id')
+    .notNull()
+    .references(() => users.id, { onDelete: 'cascade' }),
+  /** Cuántos leads se le entregan por día. Por defecto el cupo de sus cuentas. */
+  tandaDiaria: smallint('tanda_diaria').notNull().default(60),
+  /**
+   * Qué variante del mensaje de apertura le toca. Mil DMs con el mismo texto
+   * exacto es lo que dispara las restricciones de Instagram, así que cada
+   * setter manda una redacción distinta.
+   */
+  variante: smallint('variante').notNull().default(0),
+  /**
+   * Con qué cuenta está trabajando ahora. Al llegar al cupo, la pantalla se
+   * bloquea hasta que confirme el cambio a la siguiente.
+   */
+  cuentaActivaId: uuid('cuenta_activa_id').references((): AnyPgColumn => setterAccounts.id, {
+    onDelete: 'set null',
+  }),
+  cuentaActivaDesde: timestamp('cuenta_activa_desde', { withTimezone: true }),
+  recordatorioAutomatico: boolean('recordatorio_automatico').notNull().default(false),
+  horaRecordatorio: time('hora_recordatorio').notNull().default('10:00'),
+  createdAt: createdAt(),
+}, (t) => [
+  uniqueIndex('setters_user_uq').on(t.userId),
+  check('setters_tanda', sql`${t.tandaDiaria} between 1 and 500`),
+])
+
+export const setterAccounts = pgTable('setter_accounts', {
+  id: id(),
+  setterId: uuid('setter_id')
+    .notNull()
+    .references(() => setters.id, { onDelete: 'cascade' }),
+  /** En minúsculas y sin '@'. */
+  igUsername: text('ig_username').notNull(),
+  cupoDiario: smallint('cupo_diario').notNull().default(30),
+  /**
+   * Caché de presentación. NO es la autoridad del cupo: la autoridad es
+   * `setter_sends`, que se recuenta dentro de la transacción de cada envío.
+   */
+  enviadosHoy: smallint('enviados_hoy').notNull().default(0),
+  contadorFecha: date('contador_fecha'),
+  orden: smallint('orden').notNull().default(1),
+  activa: boolean('activa').notNull().default(true),
+  ultimoEnvioAt: timestamp('ultimo_envio_at', { withTimezone: true }),
+  createdAt: createdAt(),
+}, (t) => [
+  // Una cuenta pertenece a un solo setter: compartida, el cupo de 30 se contaría
+  // dos veces y la cuenta se quema.
+  uniqueIndex('setter_accounts_ig_uq').on(sql`lower(${t.igUsername})`),
+  index('setter_accounts_setter_idx').on(t.setterId, t.orden),
+  check('setter_accounts_cupo', sql`${t.cupoDiario} between 1 and 100`),
+])
+
+export const leadAssignments = pgTable('lead_assignments', {
+  id: id(),
+  contactId: uuid('contact_id')
+    .notNull()
+    .references(() => contacts.id, { onDelete: 'cascade' }),
+  setterId: uuid('setter_id')
+    .notNull()
+    .references(() => setters.id, { onDelete: 'cascade' }),
+  /** Con qué cuenta salió el primer mensaje. Se sella al contactar. */
+  setterAccountId: uuid('setter_account_id').references(() => setterAccounts.id, {
+    onDelete: 'set null',
+  }),
+  asignadoAt: timestamp('asignado_at', { withTimezone: true }).notNull().defaultNow(),
+  /** A las 48 h sin trabajarlo vuelve solo al pozo y se reasigna. */
+  venceAt: timestamp('vence_at', { withTimezone: true }).notNull(),
+  estado: leadAssignmentEstadoEnum('estado').notNull().default('asignado'),
+  abiertoAt: timestamp('abierto_at', { withTimezone: true }),
+  /** Salteado: va al final de la cola de hoy, no sale de la cola. */
+  pospuestoAt: timestamp('pospuesto_at', { withTimezone: true }),
+  contactadoAt: timestamp('contactado_at', { withTimezone: true }),
+  /**
+   * Cuándo le toca el segundo mensaje. Se calcula al contactar y se pone en
+   * null si el lead responde: nunca un segundo mensaje a alguien que contestó.
+   */
+  segundoProgramadoAt: timestamp('segundo_programado_at', { withTimezone: true }),
+  segundoMensajeAt: timestamp('segundo_mensaje_at', { withTimezone: true }),
+  /**
+   * Qué mensaje le toca la próxima vez y cuándo. Reemplaza al par fijo de
+   * "segundo mensaje": con cinco situaciones, una columna por paso no escala.
+   * `proximoPaso` en null significa que ya no se le manda nada más.
+   */
+  proximoPaso: smallint('proximo_paso'),
+  proximoSeguimientoAt: timestamp('proximo_seguimiento_at', { withTimezone: true }),
+  respondidoAt: timestamp('respondido_at', { withTimezone: true }),
+  /**
+   * A cuál de los dos mensajes contestó. Se deduce del estado al marcar y se
+   * sella acá, porque después el estado sigue cambiando.
+   *
+   * Contestar el primero es abrir una conversación; contestar el segundo es
+   * responder a la oferta. La primera la sigue el equipo, la segunda ya es un
+   * sí o un no.
+   */
+  respondioA: setterSendTipoEnum('respondio_a'),
+  /** Solo con `respondioA = 'segundo'`: si le interesa o no. */
+  interes: leadInteresEnum('interes'),
+  devueltoAt: timestamp('devuelto_at', { withTimezone: true }),
+  devueltoMotivo: text('devuelto_motivo'),
+  /** Si lo marcó el admin en lugar del setter, queda quién fue. */
+  marcadoPor: uuid('marcado_por').references(() => users.id, { onDelete: 'set null' }),
+  nota: text('nota'),
+  createdAt: createdAt(),
+}, (t) => [
+  /*
+   * La regla que no se negocia: nunca dos setters al mismo lead. Un negocio
+   * puede tener muchas asignaciones a lo largo del tiempo, pero como máximo
+   * una que no haya vuelto al pozo. Lo garantiza el índice, no la pantalla.
+   */
+  uniqueIndex('lead_assignments_activo_uq')
+    .on(t.contactId)
+    .where(sql`${t.estado} not in ('vencido', 'devuelto')`),
+  index('lead_assignments_cola_idx').on(t.setterId, t.estado),
+  index('lead_assignments_vencimiento_idx')
+    .on(t.venceAt)
+    .where(sql`${t.estado} in ('asignado', 'abierto', 'saltado')`),
+  index('lead_assignments_segundo_idx')
+    .on(t.segundoProgramadoAt)
+    .where(sql`${t.estado} = 'contactado' and ${t.segundoProgramadoAt} is not null`),
+  index('lead_assignments_contacto_idx').on(t.contactId, sql`${t.createdAt} desc`),
+  index('lead_assignments_proximo_idx')
+    .on(t.setterId, t.proximoSeguimientoAt)
+    .where(sql`${t.proximoSeguimientoAt} is not null`),
+  index('lead_assignments_respuesta_idx')
+    .on(t.respondioA, sql`${t.respondidoAt} desc`)
+    .where(sql`${t.respondioA} is not null`),
+  index('lead_assignments_oferta_idx')
+    .on(t.setterId, sql`${t.segundoMensajeAt} desc`)
+    .where(sql`${t.estado} = 'segundo_enviado'`),
+  check('lead_interes_solo_con_oferta', sql`${t.interes} is null or ${t.respondioA} = 'segundo'`),
+])
+
+/**
+ * La autoridad del cupo de cada cuenta de Instagram.
+ *
+ * Una fila por mensaje efectivamente mandado. El 30 del día se recuenta desde
+ * acá dentro de la transacción, igual que el cupo de las cuentas de la consola
+ * se recuenta desde `messages`: un contador guardado se desincroniza, un
+ * recuento no. Deshacer sella `undoneAt` en vez de borrar, así el cupo se
+ * libera solo sin decrementar nada a mano.
+ */
+export const setterSends = pgTable('setter_sends', {
+  id: id(),
+  assignmentId: uuid('assignment_id')
+    .notNull()
+    .references(() => leadAssignments.id, { onDelete: 'cascade' }),
+  setterId: uuid('setter_id')
+    .notNull()
+    .references(() => setters.id, { onDelete: 'cascade' }),
+  setterAccountId: uuid('setter_account_id')
+    .notNull()
+    .references(() => setterAccounts.id, { onDelete: 'restrict' }),
+  contactId: uuid('contact_id')
+    .notNull()
+    .references(() => contacts.id, { onDelete: 'cascade' }),
+  tipo: setterSendTipoEnum('tipo').notNull(),
+  /** Cuál de las cinco situaciones se mandó. 1 entrada … 5 reenganche. */
+  paso: smallint('paso').notNull(),
+  /** Fecha operativa ya resuelta: el cupo es por día en Catamarca, no en UTC. */
+  opsDate: date('ops_date').notNull(),
+  sentAt: timestamp('sent_at', { withTimezone: true }).notNull().defaultNow(),
+  undoneAt: timestamp('undone_at', { withTimezone: true }),
+  messageId: uuid('message_id').references(() => messages.id, { onDelete: 'set null' }),
+  createdAt: createdAt(),
+}, (t) => [
+  /*
+   * Un lead recibe el primer mensaje una vez y el segundo una vez. Es lo que
+   * absorbe el doble toque, el reintento de red y la marca que se sincronizó
+   * dos veces desde un celular que estaba sin señal.
+   */
+  uniqueIndex('setter_sends_unico').on(t.assignmentId, t.paso).where(sql`${t.undoneAt} is null`),
+  index('setter_sends_cupo_idx').on(t.setterAccountId, t.opsDate).where(sql`${t.undoneAt} is null`),
+  index('setter_sends_setter_idx').on(t.setterId, t.opsDate).where(sql`${t.undoneAt} is null`),
+])
+
+export const notificaciones = pgTable('notificaciones', {
+  id: id(),
+  tipo: notificacionTipoEnum('tipo').notNull(),
+  /** null = para todos los admins. Con destinatario = para esa persona. */
+  paraUsuarioId: uuid('para_usuario_id').references(() => users.id, { onDelete: 'cascade' }),
+  setterId: uuid('setter_id').references(() => setters.id, { onDelete: 'set null' }),
+  contactId: uuid('contact_id').references(() => contacts.id, { onDelete: 'cascade' }),
+  meetingId: uuid('meeting_id').references(() => meetings.id, { onDelete: 'cascade' }),
+  texto: text('texto').notNull(),
+  /** A dónde lleva el click. Siempre a la ficha concreta, nunca a una lista. */
+  enlace: text('enlace'),
+  /**
+   * Clave de deduplicación, normalmente con la fecha adentro. Evita que el
+   * barrido repita el mismo aviso cada vez que alguien abre el tablero.
+   */
+  clave: text('clave'),
+  leida: boolean('leida').notNull().default(false),
+  createdAt: createdAt(),
+}, (t) => [
+  uniqueIndex('notificaciones_clave_uq').on(t.clave).where(sql`${t.clave} is not null`),
+  index('notificaciones_bandeja_idx').on(t.paraUsuarioId, sql`${t.createdAt} desc`),
+  index('notificaciones_sin_leer_idx').on(sql`${t.createdAt} desc`).where(sql`not ${t.leida}`),
+])
+
+/**
+ * Cada aviso que le mando a un setter: cuándo, por qué y con qué números.
+ * Si le mandé cinco en la semana y no hizo nada, eso es una conversación
+ * distinta, y quiero tener el dato para tenerla.
+ */
+export const recordatorios = pgTable('recordatorios', {
+  id: id(),
+  setterId: uuid('setter_id')
+    .notNull()
+    .references(() => setters.id, { onDelete: 'cascade' }),
+  tipo: recordatorioTipoEnum('tipo').notNull(),
+  automatico: boolean('automatico').notNull().default(false),
+  pendientes: smallint('pendientes').notNull().default(0),
+  atrasados: smallint('atrasados').notNull().default(0),
+  diasAtraso: smallint('dias_atraso').notNull().default(0),
+  texto: text('texto').notNull(),
+  enviadoPor: uuid('enviado_por').references(() => users.id, { onDelete: 'set null' }),
+  /** Cuándo lo vio. El aviso queda fijo en su pantalla hasta que lo cierra. */
+  vistoAt: timestamp('visto_at', { withTimezone: true }),
+  createdAt: createdAt(),
+}, (t) => [
+  index('recordatorios_setter_idx').on(t.setterId, sql`${t.createdAt} desc`),
+  index('recordatorios_pendiente_idx').on(t.setterId).where(sql`${t.vistoAt} is null`),
+])
+
+export const mensajesEquipo = pgTable('mensajes_equipo', {
+  id: id(),
+  autorAdmin: uuid('autor_admin').references(() => users.id, { onDelete: 'set null' }),
+  nivel: mensajeEquipoNivelEnum('nivel').notNull().default('aviso'),
+  titulo: text('titulo').notNull(),
+  cuerpo: text('cuerpo').notNull(),
+  /** Un guion nuevo va con su botón de copiar. Es el caso más común. */
+  textoParaCopiar: text('texto_para_copiar'),
+  /** Anuncio clavado arriba de la pantalla del setter hasta que lo saque. */
+  fijado: boolean('fijado').notNull().default(false),
+  createdAt: createdAt(),
+}, (t) => [
+  index('mensajes_equipo_idx').on(sql`${t.createdAt} desc`),
+  index('mensajes_equipo_fijado_idx').on(sql`${t.createdAt} desc`).where(sql`${t.fijado}`),
+])
+
+export const mensajesDestinatarios = pgTable('mensajes_destinatarios', {
+  id: id(),
+  mensajeId: uuid('mensaje_id')
+    .notNull()
+    .references(() => mensajesEquipo.id, { onDelete: 'cascade' }),
+  setterId: uuid('setter_id')
+    .notNull()
+    .references(() => setters.id, { onDelete: 'cascade' }),
+  leidoAt: timestamp('leido_at', { withTimezone: true }),
+  respuesta: text('respuesta'),
+  respondidoAt: timestamp('respondido_at', { withTimezone: true }),
+  /** Ya avisé que este bloqueante lleva 24 h sin leer. No se avisa dos veces. */
+  alertadoAt: timestamp('alertado_at', { withTimezone: true }),
+  createdAt: createdAt(),
+}, (t) => [
+  uniqueIndex('mensajes_destinatarios_uq').on(t.mensajeId, t.setterId),
+  index('mensajes_destinatarios_setter_idx').on(t.setterId, t.leidoAt),
+])
+
+export const pushSubscriptions = pgTable('push_subscriptions', {
+  id: id(),
+  userId: uuid('user_id')
+    .notNull()
+    .references(() => users.id, { onDelete: 'cascade' }),
+  endpoint: text('endpoint').notNull(),
+  p256dh: text('p256dh').notNull(),
+  auth: text('auth').notNull(),
+  userAgent: text('user_agent'),
+  lastOkAt: timestamp('last_ok_at', { withTimezone: true }),
+  /** A los 3 rechazos seguidos se borra: el celular se formateó o desinstaló. */
+  fallos: smallint('fallos').notNull().default(0),
+  createdAt: createdAt(),
+}, (t) => [
+  uniqueIndex('push_subscriptions_endpoint_uq').on(t.endpoint),
+  index('push_subscriptions_user_idx').on(t.userId),
+])
 
 /* ── Relaciones ───────────────────────────────────────────────────────────*/
 
@@ -572,3 +921,32 @@ export type Meeting = typeof meetings.$inferSelect
 export type ImportBatch = typeof importBatches.$inferSelect
 export type ImportBatchItem = typeof importBatchItems.$inferSelect
 export type AppUser = typeof users.$inferSelect
+
+export const settersRelations = relations(setters, ({ one, many }) => ({
+  usuario: one(users, { fields: [setters.userId], references: [users.id] }),
+  cuentas: many(setterAccounts),
+  asignaciones: many(leadAssignments),
+}))
+
+export const setterAccountsRelations = relations(setterAccounts, ({ one }) => ({
+  setter: one(setters, { fields: [setterAccounts.setterId], references: [setters.id] }),
+}))
+
+export const leadAssignmentsRelations = relations(leadAssignments, ({ one }) => ({
+  contacto: one(contacts, { fields: [leadAssignments.contactId], references: [contacts.id] }),
+  setter: one(setters, { fields: [leadAssignments.setterId], references: [setters.id] }),
+  cuenta: one(setterAccounts, {
+    fields: [leadAssignments.setterAccountId],
+    references: [setterAccounts.id],
+  }),
+}))
+
+export type Setter = typeof setters.$inferSelect
+export type SetterAccount = typeof setterAccounts.$inferSelect
+export type LeadAssignment = typeof leadAssignments.$inferSelect
+export type SetterSend = typeof setterSends.$inferSelect
+export type Notificacion = typeof notificaciones.$inferSelect
+export type Recordatorio = typeof recordatorios.$inferSelect
+export type MensajeEquipo = typeof mensajesEquipo.$inferSelect
+export type MensajeDestinatario = typeof mensajesDestinatarios.$inferSelect
+export type PushSubscription = typeof pushSubscriptions.$inferSelect

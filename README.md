@@ -1,6 +1,6 @@
-# Consola
+# ECOSYSTEM
 
-Consola de operaciones para hacerle seguimiento a clientes que ya compraron:
+Captación y seguimiento de clientes por Instagram, y seguimiento de los que ya compraron:
 importar la lista, ordenarla, repartirla entre las cuentas emisoras y —a partir
 de la parte 2— despachar los mensajes de a uno con un click.
 
@@ -62,8 +62,93 @@ npm run user:create        # pregunta email, nombre y contraseña
 npm run dev                # http://localhost:3000
 ```
 
-No hay registro público: las cuentas se crean solo desde la terminal. Si el
-email ya existe, `user:create` le cambia la contraseña.
+La primera cuenta que se crea es la **admin madre**: la que ve todo, la única
+que da de alta y de baja gente, y la que la base protege de ser borrada o
+degradada. Las siguientes son admins comunes. Los setters no se crean desde
+acá: se dan de alta desde el panel, en **Equipo → Nuevo setter**, que además
+genera su tarjeta de acceso.
+
+---
+
+## Módulo de setters
+
+Un equipo que contacta leads fríos por DM de Instagram desde el celular. No
+cierra ventas: manda el primer mensaje, manda el segundo a las 24 h, y cuando
+el lead contesta lo pasa a la bandeja del admin.
+
+### Las dos reglas que no se negocian
+
+Las dos están garantizadas por la base, no por la pantalla:
+
+- **Nunca dos setters al mismo lead.** Un índice único parcial sobre
+  `lead_assignments (contact_id)` que solo excluye los estados `vencido` y
+  `devuelto`. Dos setters escribiéndole al mismo negocio es exactamente lo que
+  hace que parezcas spam.
+- **Nunca más de 30 mensajes por cuenta de Instagram por día.** Cada marca
+  traba la cuenta (`for update`) y **recuenta** el cupo desde `setter_sends`
+  dentro de la transacción. El contador `enviados_hoy` de la ficha es caché de
+  presentación, no la autoridad.
+
+Los dos invariantes tienen tests de concurrencia contra Postgres real en
+`src/server/setters/setters.test.ts`.
+
+### Cómo empieza a haber leads
+
+El pozo de los setters son los contactos con `origen = 'scrapeado'`. Ese origen
+se elige **al importar**: en la pantalla de Importar hay un selector arriba de
+todo. Los leads scrapeados no entran nunca a la cola del Despachador, y los
+clientes propios no entran nunca al pozo de los setters.
+
+### La app del setter
+
+Es la misma app, en las rutas `/hoy`, `/mis-leads` y `/avisos`. Se instala como
+PWA desde el link: `manifest.webmanifest`, `sw.js` y los íconos se sirven sin
+sesión para que el navegador ofrezca instalarla.
+
+El envío es **semi-automático a propósito**: no existe forma de precargar el
+texto de un DM de Instagram, así que el mensaje va al portapapeles y se abre
+`ig.me/m/usuario`. No se automatiza con librerías no oficiales ni con
+automatización de navegador.
+
+Si el setter marca "Enviado" sin señal, la marca se guarda en el celular
+(`localStorage`) y se sincroniza sola al volver la conexión. Reintentar es
+gratis: el índice único `(assignment_id, tipo)` absorbe la marca repetida sin
+consumir cupo de nuevo.
+
+### Notificaciones push (opcional)
+
+```bash
+npm run push:claves     # imprime VAPID_PUBLIC_KEY y VAPID_PRIVATE_KEY
+```
+
+Sin esas claves el push queda apagado y **el botón de activar avisos no
+aparece**. Todo lo demás funciona igual: los recordatorios llegan como cartel
+al abrir la app. Si las claves se regeneran, cada setter tiene que volver a
+activar los avisos en su celular.
+
+### Tareas del reloj (opcional)
+
+El vencimiento de leads a las 48 h **no** depende de ninguna tarea programada:
+se resuelve al abrir la cola o el tablero, así que el sistema funciona igual en
+una máquina sin cron. Lo que sí necesita un programador son los avisos que
+llegan solos:
+
+```bash
+curl -H "Authorization: Bearer $TAREAS_SECRET" https://tu-dominio/api/tareas
+```
+
+Cada 10–15 minutos alcanza. Todo lo que hace es idempotente: cada aviso lleva
+una clave con la fecha adentro, así correrlo cinco veces no manda cinco
+notificaciones. Sin `TAREAS_SECRET` en el entorno, la ruta no atiende a nadie.
+
+### Probarlo sin datos reales
+
+```bash
+npm run demo:setters
+```
+
+Crea tres setters con sus cuentas, las dos plantillas de Instagram y 180 leads
+scrapeados en el pozo. Imprime los emails y la contraseña con la que entran.
 
 ---
 
@@ -125,8 +210,12 @@ npm run dev
 | `npm test` | Tests (vitest) |
 | `npm run db:generate` | Genera una migración a partir del esquema Drizzle |
 | `npm run db:migrate` | Aplica las migraciones pendientes |
+| `npm run db:migrate:test` | Lo mismo, sobre la base de los tests de integración |
 | `npm run db:studio` | Explorador visual de la base |
-| `npm run user:create` | Da de alta (o repone la contraseña de) un usuario |
+| `npm run user:create` | Da de alta (o repone la contraseña de) un admin |
+| `npm run iconos` | Regenera los íconos de la PWA |
+| `npm run push:claves` | Genera el par de claves VAPID para las notificaciones |
+| `npm run demo:setters` | Equipo de setters de prueba, plantillas de IG y pozo de leads |
 
 Para pasarle argumentos a `user:create` usá `npx tsx` directo, porque npm se
 come los flags que empiezan con `--`:
@@ -300,8 +389,14 @@ bloqueada.
 | 5 | Etapas y secuencias con corte absoluto al responder |
 | 6 | Respuestas por el webhook de **Chatwoot**: bandeja, clasificación, score con desglose, indicador de sincronización |
 | 7 | Métricas por cuenta, plantilla, variante y rubro |
-| 8 | Calendario y reuniones |
+| ~~8~~ | ~~Calendario y reuniones~~ — **hecho** con el módulo de setters |
 | 9 | Configuración: mapeo cuenta ↔ inbox, credenciales cifradas, exportaciones |
+
+**Módulo de setters** — lo único que quedó afuera:
+
+| Qué | Por qué |
+| --- | --- |
+| Avisos por correo | Mandar mails necesita un proveedor de envío (Resend, SES, un SMTP) que todavía no está elegido. La pantalla de "Avisos que quiero recibir" tiene campana y push; el correo se suma como un canal más cuando se decida. |
 
 **Chatwoot es la bandeja; la consola es el cerebro.** Evolution habla solo con
 Chatwoot, y la consola habla solo con Chatwoot: si los dos escucharan a

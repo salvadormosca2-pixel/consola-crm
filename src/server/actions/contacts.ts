@@ -6,9 +6,8 @@ import { revalidatePath } from 'next/cache'
 import { auth } from '@/auth'
 import { db } from '@/db'
 import type { ContactStage } from '@/db/enums'
-import { contacts, events, messages, settings } from '@/db/schema'
+import { contacts, events, messages } from '@/db/schema'
 import type { EstadoAccion } from '@/lib/form-state'
-import { voiceSchema, VOICE_KEY, type PerfilDeVoz } from '@/lib/voice'
 
 async function usuarioActual(): Promise<string | null> {
   const sesion = await auth()
@@ -47,6 +46,19 @@ export async function clasificar(
           updatedAt: new Date(),
         })
         .where(eq(contacts.id, contactId))
+
+      /*
+       * Y también cierra el reenganche del equipo de setters. Si ya lo cerraste,
+       * lo perdiste o le dijiste que no, que le llegue un "¿seguís interesado?"
+       * de un setter tres días después es peor que no mandar nada.
+       */
+      if (['cerrado', 'perdido', 'no_contactar', 'descartado'].includes(etapa)) {
+        await tx.execute(sql`
+          update lead_assignments
+             set proximo_paso = null, proximo_seguimiento_at = null
+           where contact_id = ${contactId}::uuid and proximo_seguimiento_at is not null
+        `)
+      }
 
       await tx.insert(events).values({
         type: 'etapa_cambiada',
@@ -180,27 +192,3 @@ export async function forzarCanal(
 
 /* ── Perfil de voz ────────────────────────────────────────────────────── */
 
-export async function guardarVoz(perfil: PerfilDeVoz): Promise<EstadoAccion> {
-  const parsed = voiceSchema.safeParse(perfil)
-  if (!parsed.success) {
-    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Revisá los datos.' }
-  }
-
-  try {
-    await db
-      .insert(settings)
-      .values({ key: VOICE_KEY, value: parsed.data })
-      .onConflictDoUpdate({
-        target: settings.key,
-        set: { value: parsed.data, updatedAt: new Date() },
-      })
-  } catch (err) {
-    console.error('Error al guardar la voz:', err)
-    return { ok: false, error: 'No se pudo guardar.' }
-  }
-
-  revalidatePath('/mi-voz')
-  revalidatePath('/plantillas')
-  revalidatePath('/despachador')
-  return { ok: true, error: null }
-}

@@ -1,7 +1,6 @@
 import { Users } from 'lucide-react'
 import type { Metadata } from 'next'
 
-import { AvisoDemo } from '@/components/aviso-demo'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Panel } from '@/components/ui/panel'
 import { STAGE_META, type ContactStage } from '@/db/enums'
@@ -9,7 +8,7 @@ import { contarPorEtapa, listarContactos, opcionesDeFiltro } from '@/server/cont
 
 import { TablaContactos } from './tabla'
 
-export const metadata: Metadata = { title: 'Contactos · Consola' }
+export const metadata: Metadata = { title: 'Contactos · Ecosystem' }
 export const dynamic = 'force-dynamic'
 
 export default async function PaginaContactos() {
@@ -52,7 +51,6 @@ export default async function PaginaContactos() {
 
   return (
     <div className="space-y-3">
-      <AvisoDemo />
 
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
