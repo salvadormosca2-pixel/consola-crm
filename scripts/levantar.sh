@@ -11,7 +11,7 @@
 # Crea su propia red, su propia base y levanta la app. Es idempotente: si algo
 # ya existe, lo reusa; si lo corrés dos veces, no rompe nada. Los secretos se
 # generan una sola vez y quedan guardados, así reiniciar no cierra las sesiones
-# abiertas.
+# abiertas ni deja ilegible lo que ya estaba cifrado.
 #
 # No toca nada de lo que ya tengas andando.
 
@@ -20,7 +20,6 @@ set -euo pipefail
 RED=ecosystem
 BASE=ecosystem-db
 APP=ecosystem-app
-PUERTO=${PUERTO:-3001}
 IMAGEN=ghcr.io/salvadormosca2-pixel/consola-crm:latest
 SECRETOS=/root/.ecosystem.env
 
@@ -28,17 +27,39 @@ echo
 echo "── ECOSYSTEM ─────────────────────────────────────────────"
 echo
 
+# ── Lo que tiene que estar ────────────────────────────────────────────────
+for programa in docker openssl curl; do
+  if ! command -v "$programa" >/dev/null 2>&1; then
+    echo "Falta $programa. Instalalo y volvé a correr esto."
+    exit 1
+  fi
+done
+
+# ── Un puerto libre ───────────────────────────────────────────────────────
+# Si 3001 está ocupado por otra cosa, docker falla con un error que no explica
+# nada. Mejor buscar uno libre y decirlo.
+PUERTO=${PUERTO:-3001}
+libre() { ! (docker ps --format '{{.Ports}}' | grep -q ":$1->"); }
+while ! libre "$PUERTO"; do
+  echo "El puerto $PUERTO está ocupado, pruebo el siguiente"
+  PUERTO=$((PUERTO + 1))
+  if [ "$PUERTO" -gt 3020 ]; then
+    echo "No encontré un puerto libre entre 3001 y 3020."
+    exit 1
+  fi
+done
+
 # ── Los secretos, una sola vez ────────────────────────────────────────────
-# Si se regeneraran en cada corrida, cada reinicio cerraría todas las sesiones
-# y dejaría ilegible lo que ya estaba cifrado en la base.
+# Van entre comillas simples porque base64 incluye / y +: sin comillas, el
+# shell los interpretaría al leer el archivo.
 if [ ! -f "$SECRETOS" ]; then
   echo "Generando secretos (una sola vez, quedan en $SECRETOS)"
   umask 077
   {
-    echo "CLAVE_BASE=$(openssl rand -hex 24)"
-    echo "AUTH_SECRET=$(openssl rand -base64 32)"
-    echo "ENCRYPTION_KEY=$(openssl rand -base64 32)"
-    echo "TAREAS_SECRET=$(openssl rand -hex 32)"
+    echo "CLAVE_BASE='$(openssl rand -hex 24)'"
+    echo "AUTH_SECRET='$(openssl rand -base64 32)'"
+    echo "ENCRYPTION_KEY='$(openssl rand -base64 32)'"
+    echo "TAREAS_SECRET='$(openssl rand -hex 32)'"
   } > "$SECRETOS"
 else
   echo "Secretos ya existentes: los reuso"
@@ -71,14 +92,22 @@ fi
 
 # La app arranca más rápido que Postgres y se encontraría la puerta cerrada.
 printf "Esperando a la base"
+listo=no
 for _ in $(seq 1 60); do
   if docker exec "$BASE" pg_isready -U ecosystem -d ecosystem >/dev/null 2>&1; then
+    listo=si
     echo " · lista"
     break
   fi
   printf "."
   sleep 2
 done
+if [ "$listo" = no ]; then
+  echo
+  echo "La base no llegó a aceptar conexiones. Qué dijo:"
+  docker logs --tail 20 "$BASE"
+  exit 1
+fi
 
 # ── La app ────────────────────────────────────────────────────────────────
 # Se reemplaza siempre, para que correr el script otra vez traiga la versión
@@ -86,9 +115,13 @@ done
 docker rm -f "$APP" >/dev/null 2>&1 || true
 
 echo "Bajando la última imagen"
-docker pull -q "$IMAGEN" >/dev/null
+docker pull "$IMAGEN" >/dev/null
 
-IP=$(hostname -I | awk '{print $1}')
+# La primera de `hostname -I` es la interfaz principal. Si el servidor está
+# detrás de NAT puede ser una dirección interna: no rompe nada —el login
+# confía en el host del pedido— pero la línea final mostraría esa.
+IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+[ -n "$IP" ] || IP=127.0.0.1
 
 echo "Levantando la app"
 docker run -d --name "$APP" --restart unless-stopped --network "$RED" \
@@ -110,12 +143,10 @@ for _ in $(seq 1 90); do
   if curl -fsS -m 3 "http://127.0.0.1:${PUERTO}/api/salud" >/dev/null 2>&1; then
     echo
     echo
-    echo "  Listo:  http://${IP}:${PUERTO}"
+    echo "  Andando:  http://${IP}:${PUERTO}"
     echo
-    echo "  El primer usuario, una sola vez:"
-    echo "    docker run --rm -it --network ${RED} --env-file ${SECRETOS} \\"
-    echo "      -e DATABASE_URL=\"postgres://ecosystem:\${CLAVE_BASE}@${BASE}:5432/ecosystem\" \\"
-    echo "      ghcr.io/salvadormosca2-pixel/consola-crm:ops npm run user:create"
+    echo "  Ahora creá tu usuario con:"
+    echo "    curl -fsSL https://raw.githubusercontent.com/salvadormosca2-pixel/consola-crm/master/scripts/crear-usuario.sh | bash"
     echo
     exit 0
   fi
@@ -126,5 +157,5 @@ done
 echo
 echo "No llegó a responder. Qué dijo:"
 echo
-docker logs --tail 30 "$APP"
+docker logs --tail 40 "$APP"
 exit 1
