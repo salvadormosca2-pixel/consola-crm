@@ -1,0 +1,83 @@
+# ECOSYSTEM en Coolify, en un solo recurso.
+#
+# La app y su base viajan juntas en el mismo compose. No es una preferencia de
+# estilo: cuando son dos recursos separados hay que conectarlos a mano por red,
+# y esa conexión es exactamente donde se rompe todo. Acá comparten red porque
+# están en el mismo archivo, y no hay nada que configurar.
+#
+# Cómo se usa:
+#   Coolify → + New → Docker Compose (Empty) → pegar este archivo → Deploy
+#
+# Coolify reemplaza solo las variables mágicas:
+#   SERVICE_FQDN_APP_3000  → el dominio, y arma las reglas del proxy
+#   SERVICE_PASSWORD_DB    → una contraseña generada, distinta en cada instalación
+#
+# Los secretos que faltan (AUTH_SECRET, ENCRYPTION_KEY) se cargan desde la
+# pantalla de variables de Coolify: no van escritos acá porque este archivo va
+# al repositorio.
+
+services:
+  app:
+    image: ghcr.io/salvadormosca2-pixel/consola-crm:latest
+    restart: unless-stopped
+    environment:
+      # El dominio. Coolify lo completa y de paso arma el enrutado.
+      - SERVICE_FQDN_APP_3000
+      - AUTH_URL=${SERVICE_FQDN_APP_3000}
+      - AUTH_TRUST_HOST=true
+
+      # La base se llama `db` y está en este mismo archivo: se resuelve sola.
+      - DATABASE_URL=postgres://ecosystem:${SERVICE_PASSWORD_DB}@db:5432/ecosystem
+      - DATABASE_SSL=false
+
+      # Estos dos se cargan en la pantalla de variables de Coolify.
+      - AUTH_SECRET=${AUTH_SECRET}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+
+      - OPS_TIMEZONE=America/Argentina/Catamarca
+      - TZ=UTC
+
+    # No arranca hasta que la base acepta conexiones. Sin esto, el primer
+    # arranque falla siempre: el contenedor de la app levanta más rápido que
+    # Postgres y se encuentra la puerta cerrada.
+    depends_on:
+      db:
+        condition: service_healthy
+
+    # El mismo chequeo que usa el proxy para decidir si mandarle tráfico.
+    # Consulta la base a propósito: un proceso que levantó pero no llega a
+    # Postgres está tan caído como uno que no arrancó.
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/api/salud').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      # Le da aire a las migraciones, que corren antes de levantar el servidor.
+      start_period: 40s
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=ecosystem
+      - POSTGRES_PASSWORD=${SERVICE_PASSWORD_DB}
+      - POSTGRES_DB=ecosystem
+      # El servidor guarda todo en UTC; la conversión a Catamarca se hace al
+      # consultar. Si la base corriera en otro huso, los cupos diarios y los
+      # vencimientos se correrían de día.
+      - TZ=UTC
+      - PGTZ=UTC
+    volumes:
+      - datos:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ecosystem -d ecosystem']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  datos:
