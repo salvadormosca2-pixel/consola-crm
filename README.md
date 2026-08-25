@@ -200,6 +200,82 @@ npm run user:create
 npm run dev
 ```
 
+## Desplegar en Hostinger (Coolify)
+
+El circuito es: **push a `master` → GitHub Actions verifica, construye y publica
+la imagen → le avisa a Coolify → Coolify la baja y la pone en servicio.**
+
+El build corre en GitHub y no en el VPS a propósito: `next build` pega un pico
+de más de 2 GB y en un KVM 2 eso compite con Chatwoot y Evolution hasta que el
+kernel mata alguno. El servidor solo baja la imagen ya hecha.
+
+### Las migraciones no hay que acordarse de correrlas
+
+El contenedor migra la base **antes** de levantar el servidor. Si la migración
+falla, el proceso muere, Coolify no lo pone en servicio y sigue andando la
+versión anterior. Un despliegue que no sale es mucho mejor que uno roto.
+
+No hace falta ningún comando previo ni acordarse de nada. Reiniciar el
+contenedor es gratis: cada migración se aplica una sola vez.
+
+### Qué hay que configurar una sola vez
+
+**En Coolify**, creando la aplicación:
+
+| Campo | Valor |
+| --- | --- |
+| Imagen | `ghcr.io/salvadormosca2-pixel/consola-crm:latest` |
+| Puerto | `3000` |
+| Health check | `/api/salud` |
+
+Y las variables de `.env.example`, con tres cuidados:
+
+- `AUTH_URL` es el dominio real con `https://`, no `localhost`.
+- `DATABASE_URL` apunta al Postgres del servidor. Si es gestionado y pide TLS,
+  además `DATABASE_SSL=true`.
+- **`MODO_PRUEBA` no va.** Es la pasarela que entra sin contraseña. El código no
+  la compila fuera de desarrollo, pero mejor que la variable ni exista.
+
+**En GitHub → Settings → Secrets and variables → Actions:**
+
+| Secreto | De dónde sale |
+| --- | --- |
+| `COOLIFY_WEBHOOK` | Coolify → la aplicación → Webhooks → Deploy |
+| `COOLIFY_TOKEN` | Coolify → Keys & Tokens → API tokens |
+
+Sin estos dos el CI igual construye y publica la imagen; solo se saltea el aviso
+final, y el despliegue se da a mano desde Coolify.
+
+### El primer administrador
+
+La base arranca sin nadie. Para crear la cuenta madre, una sola vez:
+
+```bash
+docker run --rm -it --env-file .env \
+  ghcr.io/salvadormosca2-pixel/consola-crm:ops npm run user:create
+```
+
+Los setters se dan de alta después desde el panel, en **Equipo → Nuevo setter**.
+
+### Antes del primer despliegue
+
+- Respaldar la base. Las migraciones no borran datos, pero un respaldo antes de
+  un cambio de esquema no se discute.
+- Revisar que `AUTH_SECRET` y `ENCRYPTION_KEY` sean los del servidor y no los de
+  desarrollo. Si `AUTH_SECRET` cambia, se cierran todas las sesiones abiertas.
+
+### Verificar que quedó bien
+
+Desde cualquier lado, contra el dominio real:
+
+```bash
+VERIFICAR_URL=https://tudominio npm run verificar
+```
+
+Abre todas las pantallas y comprueba que cada acción quede guardada. Ojo: el
+modo prueba no existe en producción, así que ahí solo corren los chequeos que no
+necesitan sesión. Para el resto, entrá y probá a mano.
+
 ## Comandos
 
 | Comando | Qué hace |
