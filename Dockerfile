@@ -67,6 +67,13 @@ RUN groupadd --system --gid 1001 nodejs \
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
+# El SQL y el migrador viajan con la imagen: el contenedor migra solo antes de
+# arrancar, así no hay forma de que el código nuevo corra contra una base vieja.
+# `pg` ya viene en la salida standalone, así que no hace falta nada más.
+COPY --from=builder --chown=nextjs:nodejs /app/drizzle ./drizzle
+COPY --from=builder --chown=nextjs:nodejs /app/scripts/migrar.mjs ./scripts/migrar.mjs
+COPY --from=builder --chown=nextjs:nodejs /app/scripts/arrancar.mjs ./scripts/arrancar.mjs
+
 USER nextjs
 EXPOSE 3000
 
@@ -76,4 +83,4 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:3000/api/salud').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
-CMD ["node", "server.js"]
+CMD ["node", "scripts/arrancar.mjs"]
