@@ -540,6 +540,49 @@ describe('la secuencia de cinco situaciones', () => {
   })
 })
 
+describe('un setter no puede tocar el lead de otro', () => {
+  /**
+   * Es la regla que sostiene todo lo demás. Si dos setters pudieran trabajar el
+   * mismo negocio, el lead recibiría dos conversaciones distintas desde dos
+   * cuentas distintas, y ninguna de las dos serviría.
+   *
+   * No alcanza con esconder el botón: el servidor vuelve a preguntar de quién
+   * es el lead en cada envío.
+   */
+  it('el envío rebota si el lead es de otro', async () => {
+    const a = await crearSetter(pool, { cupos: [30] })
+    const b = await crearSetter(pool, { cupos: [30] })
+    const suyo = await asignar(pool, await crearLeadScrapeado(pool, 1), a.setterId)
+
+    // B intenta mandarle al lead de A, con su propia cuenta.
+    const r = await marcar(suyo, b.setterId, b.cuentas[0]!, 1)
+
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.motivo).toBe('estado')
+    expect(await contarCupoDeSetter(pool, b.cuentas[0]!)).toBe(0)
+  })
+
+  it('tampoco puede seguir una conversación ajena', async () => {
+    const a = await crearSetter(pool, { cupos: [30] })
+    const b = await crearSetter(pool, { cupos: [30] })
+    const suyo = await asignar(pool, await crearLeadScrapeado(pool, 1), a.setterId)
+
+    await marcar(suyo, a.setterId, a.cuentas[0]!, 1)
+    await pool.query(
+      `update lead_assignments set proximo_seguimiento_at = now() - interval '1 hour'
+        where id = $1`,
+      [suyo],
+    )
+
+    const r = await marcar(suyo, b.setterId, b.cuentas[0]!, 2)
+    expect(r.ok).toBe(false)
+
+    // El envío de A sigue siendo el único, y desde su cuenta.
+    expect(await contarCupoDeSetter(pool, a.cuentas[0]!)).toBe(1)
+    expect(await contarCupoDeSetter(pool, b.cuentas[0]!)).toBe(0)
+  })
+})
+
 describe('el seguimiento sale de la cuenta que abrió la conversación', () => {
   /**
    * En Instagram el hilo vive en la cuenta que escribió primero. Un seguimiento
