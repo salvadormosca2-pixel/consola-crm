@@ -41,6 +41,18 @@ export interface ItemDeCola {
   estado: LeadEstado
   /** Ya tocó "Abrir Instagram": el botón de marcar está habilitado. */
   abierto: boolean
+  /**
+   * Desde qué cuenta hay que mandarlo.
+   *
+   * Un seguimiento **tiene que salir de la cuenta que abrió esa conversación**:
+   * en Instagram el hilo vive ahí, y mandarlo desde otra es escribirle de cero
+   * a alguien que ya te conoce. Null en los leads sin contactar, que salen de
+   * la cuenta que el setter tenga activa.
+   */
+  cuentaId: string | null
+  cuentaUsuario: string | null
+  /** Esa cuenta ya llegó a su cupo: el seguimiento tiene que esperar a mañana. */
+  cuentaSinCupo: boolean
   venceAt: Date
   /** Horas que le quedan antes de que el lead vuelva al pozo. */
   horasRestantes: number
@@ -76,6 +88,7 @@ interface FilaCola {
   abierto_at: Date | null
   proximo_paso: number | null
   proximo_seguimiento_at: Date | null
+  setter_account_id: string | null
   business_name: string
   contact_name: string | null
   ig_username: string
@@ -98,7 +111,7 @@ export async function armarColaDelSetter(setterId: string): Promise<ColaDelSette
 
   const filas = await db.execute(sql`
     select la.id, la.contact_id, la.estado, la.vence_at, la.abierto_at,
-           la.proximo_paso, la.proximo_seguimiento_at,
+           la.proximo_paso, la.proximo_seguimiento_at, la.setter_account_id,
            c.business_name, c.contact_name, c.ig_username, c.niche, c.city, c.bought,
            s.variante
       from lead_assignments la
@@ -124,6 +137,14 @@ export async function armarColaDelSetter(setterId: string): Promise<ColaDelSette
        la.vence_at asc
      limit 300
   `)
+
+  /*
+   * Qué cuenta es cuál, y cuáles ya no tienen lugar hoy. Se arma una vez y se
+   * consulta por lead: un seguimiento cuya cuenta llegó al tope no se puede
+   * mandar aunque el setter tenga otra libre, porque el hilo está en esa.
+   */
+  const porCuenta = new Map(cupo.cuentas.map((c) => [c.id, c.igUsername]))
+  const sinCupo = new Set(cupo.cuentas.filter((c) => c.restante <= 0).map((c) => c.id))
 
   const ahora = Date.now()
   const items: ItemDeCola[] = []
@@ -163,6 +184,9 @@ export async function armarColaDelSetter(setterId: string): Promise<ColaDelSette
       paso,
       estado: f.estado,
       abierto: f.abierto_at !== null,
+      cuentaId: f.setter_account_id,
+      cuentaUsuario: f.setter_account_id ? (porCuenta.get(f.setter_account_id) ?? null) : null,
+      cuentaSinCupo: f.setter_account_id ? (sinCupo.has(f.setter_account_id)) : false,
       venceAt: vence,
       horasRestantes: Math.max(Math.floor((vence.getTime() - ahora) / 3_600_000), 0),
       diasAtraso: programado

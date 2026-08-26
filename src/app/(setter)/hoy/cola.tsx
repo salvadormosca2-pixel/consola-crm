@@ -337,6 +337,9 @@ export function Cola({
         cupo={cola.cupo.activa?.cupoDiario ?? 0}
         totalUsado={cola.cupo.usadoHoy + consumidos}
         totalCupo={cola.cupo.cupoTotal}
+        seguimientos={cola.seguimientos}
+        atrasados={cola.seguimientosAtrasados}
+        nuevos={cola.nuevos}
         sinSincronizar={sinSincronizar}
       />
 
@@ -363,6 +366,7 @@ export function Cola({
           onEnviado={() => marcar(actual)}
           onSaltear={() => saltear(actual)}
           onNoExiste={() => noExiste(actual)}
+          cuentaActiva={cola.cupo.activa?.igUsername ?? null}
         />
       ) : (
         <DiaCompletado
@@ -397,6 +401,9 @@ function Medidor({
   totalUsado,
   totalCupo,
   sinSincronizar,
+  seguimientos,
+  atrasados,
+  nuevos,
 }: {
   usuario: string | null
   usado: number
@@ -404,6 +411,9 @@ function Medidor({
   totalUsado: number
   totalCupo: number
   sinSincronizar: number
+  seguimientos: number
+  atrasados: number
+  nuevos: number
 }) {
   const llenos = cupo > 0 ? Math.min(Math.round((usado / cupo) * 10), 10) : 0
   const alTope = cupo > 0 && usado >= cupo
@@ -418,6 +428,27 @@ function Medidor({
         </span>
         <span className="dato text-[11.5px] text-texto-2">
           hoy {totalUsado}/{totalCupo}
+        </span>
+      </div>
+
+      {/*
+        Lo que queda por hacer hoy, separado. Los seguimientos van primero en la
+        cola, así que saber cuántos hay explica por qué entran pocos leads
+        nuevos: los dos salen del mismo cupo de 30.
+      */}
+      <div className="mt-1 flex flex-wrap items-baseline gap-x-3 gap-y-0.5 text-[11.5px] text-texto-2">
+        {seguimientos > 0 ? (
+          <span>
+            <span className="dato text-[13px] text-ambar">{seguimientos}</span> seguimientos
+            {atrasados > 0 ? (
+              <span className="text-rojo"> · {atrasados} atrasados</span>
+            ) : null}
+          </span>
+        ) : (
+          <span>seguimientos al día</span>
+        )}
+        <span>
+          <span className="dato text-[13px] text-texto">{nuevos}</span> por contactar
         </span>
       </div>
 
@@ -456,6 +487,7 @@ function TarjetaDeLead({
   onEnviado,
   onSaltear,
   onNoExiste,
+  cuentaActiva,
 }: {
   item: ItemDeCola
   abierto: boolean
@@ -465,9 +497,18 @@ function TarjetaDeLead({
   onEnviado: () => void
   onSaltear: () => void
   onNoExiste: () => void
+  /** Con cuál está trabajando: sirve para avisar solo cuando el lead pide otra. */
+  cuentaActiva: string | null
 }) {
-  const bloqueado = item.mensaje === null
-  const habilitado = abierto || item.abierto
+  /*
+   * Un seguimiento sale de la cuenta que abrió esa conversación, no de la que
+   * el setter tenga activa: en Instagram el hilo vive ahí. Si esa cuenta llegó
+   * a su tope, el lead espera a mañana — cambiar de cuenta no ayuda, porque la
+   * conversación no se mudó.
+   */
+  const sinCupoEnSuCuenta = item.cuentaSinCupo
+  const bloqueado = item.mensaje === null || sinCupoEnSuCuenta
+  const habilitado = (abierto || item.abierto) && !sinCupoEnSuCuenta
 
   return (
     <Panel className="overflow-hidden">
@@ -482,6 +523,13 @@ function TarjetaDeLead({
           ) : (
             <Chip>Primer mensaje</Chip>
           )}
+
+          {/* De qué cuenta sale. Solo cuando no es la activa: si coincide, decirlo
+              es ruido. Cuando no, es la diferencia entre seguir una charla y
+              escribirle de cero a alguien que ya te conoce. */}
+          {item.cuentaUsuario && item.cuentaUsuario !== cuentaActiva ? (
+            <Chip tono="activo">desde @{item.cuentaUsuario}</Chip>
+          ) : null}
         </div>
         <span className="dato text-[11px] text-texto-2">quedan {restantes}</span>
       </div>
@@ -493,7 +541,15 @@ function TarjetaDeLead({
           {[item.niche, item.city].filter(Boolean).join(' · ') || 'Sin datos extra'}
         </p>
 
-        {bloqueado ? (
+        {sinCupoEnSuCuenta ? (
+          <div className="mt-3 rounded-[5px] border border-ambar/35 bg-ambar-tenue px-2.5 py-2">
+            <p className="text-[13px] font-medium text-ambar">Esta conversación sigue mañana</p>
+            <p className="mt-0.5 text-[12.5px] leading-relaxed text-texto-2">
+              Le escribiste desde @{item.cuentaUsuario}, y esa cuenta llegó a su límite de hoy.
+              El seguimiento tiene que salir de ahí, así que no sirve cambiar de cuenta.
+            </p>
+          </div>
+        ) : bloqueado ? (
           <div className="mt-3 rounded-[5px] border border-rojo/35 bg-rojo-tenue px-2.5 py-2">
             <p className="text-[13px] font-medium text-rojo">No se puede armar el mensaje</p>
             <p className="mt-0.5 text-[12.5px] leading-relaxed text-texto-2">

@@ -91,15 +91,56 @@ export async function marcarEnviado(assignmentId: string): Promise<ResultadoMarc
     const sesion = await exigirSetter()
 
     const cupo = await leerCupoDeSetter(sesion.setterId)
-    if (cupo.bloqueadoPorCambio) {
+
+    /*
+     * De qué cuenta sale.
+     *
+     * Un seguimiento **tiene que salir de la cuenta que abrió esa
+     * conversación**: en Instagram el hilo vive ahí, y mandarlo desde otra es
+     * escribirle de cero a alguien que ya te conoce. Así que la cuenta la
+     * decide el lead, no cuál tenga activa el setter en ese momento.
+     *
+     * Los leads sin contactar sí salen de la activa: todavía no tienen hilo.
+     */
+    const previa = await db.execute(sql`
+      select setter_account_id from lead_assignments
+       where id = ${assignmentId}::uuid and setter_id = ${sesion.setterId}::uuid
+       limit 1
+    `)
+    const cuentaDelLead = (previa.rows[0] as { setter_account_id: string | null } | undefined)
+      ?.setter_account_id
+
+    const cuenta = cuentaDelLead
+      ? (cupo.cuentas.find((c) => c.id === cuentaDelLead) ?? null)
+      : cupo.activa
+
+    if (!cuenta) {
+      return { ok: false, error: 'La cuenta con la que le escribiste ya no está disponible.' }
+    }
+
+    /*
+     * El cupo se mira sobre **esa** cuenta. Si es la del hilo y llegó a su
+     * tope, el seguimiento espera a mañana: cambiar de cuenta no ayuda, porque
+     * la conversación no se mudó.
+     */
+    if (cuenta.restante <= 0) {
+      return {
+        ok: false,
+        error: cuentaDelLead
+          ? `@${cuenta.igUsername} llegó a su límite de hoy y este lead vive en esa conversación. Sigue mañana.`
+          : `Llegaste al límite de hoy con @${cuenta.igUsername}. Cambiá de cuenta para seguir.`,
+        requiereCambioDeCuenta: !cuentaDelLead,
+      }
+    }
+
+    // El bloqueo por cambio solo aplica a los leads nuevos: son los únicos que
+    // dependen de cuál cuenta esté activa.
+    if (!cuentaDelLead && cupo.bloqueadoPorCambio) {
       return {
         ok: false,
         error: `Llegaste al límite de hoy con @${cupo.activa?.igUsername}. Cambiá de cuenta para seguir.`,
         requiereCambioDeCuenta: true,
       }
-    }
-    if (!cupo.activa || !cupo.puedeEnviar) {
-      return { ok: false, error: 'Tus cuentas llegaron al límite de hoy. Seguí mañana.' }
     }
 
     const mensaje = await mensajeDeAsignacion(assignmentId, sesion.setterId)
@@ -108,7 +149,7 @@ export async function marcarEnviado(assignmentId: string): Promise<ResultadoMarc
     const r = await registrarEnvio({
       assignmentId,
       setterId: sesion.setterId,
-      cuentaId: cupo.activa.id,
+      cuentaId: cuenta.id,
       paso: mensaje.paso,
       body: mensaje.texto,
       templateId: mensaje.templateId,

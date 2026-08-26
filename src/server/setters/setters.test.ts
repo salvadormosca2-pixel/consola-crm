@@ -540,6 +540,49 @@ describe('la secuencia de cinco situaciones', () => {
   })
 })
 
+describe('el seguimiento sale de la cuenta que abrió la conversación', () => {
+  /**
+   * En Instagram el hilo vive en la cuenta que escribió primero. Un seguimiento
+   * desde otra cuenta no es un seguimiento: es escribirle de cero a alguien que
+   * ya te conoce, desde un desconocido.
+   *
+   * La asignación guarda con qué cuenta se contactó, y eso es lo que decide de
+   * dónde sale todo lo que venga después.
+   */
+  it('la asignación se queda con la cuenta del primer mensaje', async () => {
+    const setter = await crearSetter(pool, { cupos: [30, 30] })
+    const [primera, segunda] = setter.cuentas
+    const a = await asignar(pool, await crearLeadScrapeado(pool, 1), setter.setterId)
+
+    await marcar(a, setter.setterId, primera!, 1)
+
+    const fila = await pool.query<{ setter_account_id: string }>(
+      'select setter_account_id from lead_assignments where id = $1',
+      [a],
+    )
+    expect(fila.rows[0]?.setter_account_id).toBe(primera)
+    expect(fila.rows[0]?.setter_account_id).not.toBe(segunda)
+  })
+
+  it('el cupo de cada cuenta se cuenta por separado', async () => {
+    const setter = await crearSetter(pool, { cupos: [30, 30] })
+    const [primera, segunda] = setter.cuentas
+    const a = await asignar(pool, await crearLeadScrapeado(pool, 1), setter.setterId)
+
+    await marcar(a, setter.setterId, primera!, 1)
+    await pool.query(
+      `update lead_assignments set proximo_seguimiento_at = now() - interval '1 hour'
+        where id = $1`,
+      [a],
+    )
+    await marcar(a, setter.setterId, primera!, 2)
+
+    // Los dos mensajes salieron de la primera: la segunda sigue intacta.
+    expect(await contarCupoDeSetter(pool, primera!)).toBe(2)
+    expect(await contarCupoDeSetter(pool, segunda!)).toBe(0)
+  })
+})
+
 describe('contestó la entrada: le toca la oferta', () => {
   /**
    * El camino bueno del módulo. El lead contesta el mensaje de entrada, y ahí

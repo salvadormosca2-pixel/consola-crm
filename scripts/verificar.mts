@@ -483,10 +483,24 @@ async function verificarEscrituras(
     else mal('clasificar desde el panel', `quedó en ${clasificado?.etapa}`)
     await pool.query(`delete from contacts where id = $1`, [cuarto.contacto])
 
-    /* Reclamarle los seguimientos a alguien deja constancia. */
+    /*
+     * Reclamarle los seguimientos a alguien deja constancia.
+     *
+     * Se le reclama a quien de verdad tiene pendientes: a uno que está al día
+     * el sistema se niega, y con razón. Reclamar sin motivo es lo que hace que
+     * el equipo deje de leer los avisos.
+     */
+    const conAtraso = await uno<{ id: string }>(
+      `select la.setter_id as id from lead_assignments la
+        where la.proximo_seguimiento_at is not null
+          and la.proximo_seguimiento_at <= now()
+          and la.estado not in ('vencido', 'devuelto', 'cuenta_inexistente')
+        limit 1`,
+    )
+    const aQuien = conAtraso?.id ?? setterId
     const antes = await uno<{ n: number }>(
       `select count(*)::int as n from recordatorios where setter_id = $1`,
-      [setterId],
+      [aQuien],
     )
     await fetch(`${BASE}/equipo/seguimientos`, {
       method: 'POST',
@@ -495,18 +509,18 @@ async function verificarEscrituras(
         'content-type': 'text/plain;charset=UTF-8',
         'next-action': await idDeAccion('recordar'),
       },
-      body: JSON.stringify([setterId, 'seguimientos']),
+      body: JSON.stringify([aQuien, 'seguimientos']),
     })
     const despues = await uno<{ n: number }>(
       `select count(*)::int as n from recordatorios where setter_id = $1`,
-      [setterId],
+      [aQuien],
     )
     if ((despues?.n ?? 0) > (antes?.n ?? 0)) {
       bien('reclamar seguimientos', '→ le queda el aviso registrado')
       await pool.query(
         `delete from recordatorios where id in (
            select id from recordatorios where setter_id = $1 order by created_at desc limit 1)`,
-        [setterId],
+        [aQuien],
       )
     } else {
       mal('reclamar seguimientos', 'no quedó ningún recordatorio')
