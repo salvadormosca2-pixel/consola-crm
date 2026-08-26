@@ -5,7 +5,7 @@ import { listarReferencias } from '@/server/setters/referencias'
 
 import { Editor } from './editor'
 
-export const metadata: Metadata = { title: 'Referencias · Ecosystem' }
+export const metadata: Metadata = { title: 'Referencias · 101leads' }
 export const dynamic = 'force-dynamic'
 
 /**

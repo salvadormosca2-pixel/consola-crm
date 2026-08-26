@@ -11,7 +11,7 @@ import { requerirAdmin } from '@/server/session'
 import { listarSettersActivos } from '@/server/setters/panel'
 import { listarReuniones, VISTAS_REUNION, type VistaReunion } from '@/server/setters/reuniones'
 
-export const metadata: Metadata = { title: 'Reuniones · Ecosystem' }
+export const metadata: Metadata = { title: 'Reuniones · 101leads' }
 export const dynamic = 'force-dynamic'
 
 const ETIQUETA_VISTA: Record<VistaReunion, string> = {

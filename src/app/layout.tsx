@@ -25,8 +25,8 @@ const mono = JetBrains_Mono({
 })
 
 export const metadata: Metadata = {
-  title: 'Ecosystem',
-  description: 'Ecosystem — captación y seguimiento de clientes por Instagram',
+  title: '101leads',
+  description: '101leads — captación y seguimiento de clientes por Instagram',
 }
 
 export const viewport: Viewport = {

@@ -11,7 +11,7 @@ import { deflateSync } from 'node:zlib'
  *
  *   npm run iconos
  *
- * El dibujo es el medidor de cupo de ECOSYSTEM —barras segmentadas que se
+ * El dibujo es el medidor de cupo de 101leads —barras segmentadas que se
  * llenan en azul eléctrico—, que es la marca visual del sistema y lo que el
  * setter ve arriba de todo en su pantalla.
  */

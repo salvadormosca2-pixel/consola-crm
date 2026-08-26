@@ -6,7 +6,7 @@ import { leerConfigDeMensajes, listarMensajes, rubrosConLeads } from '@/server/s
 
 import { Editor } from './editor'
 
-export const metadata: Metadata = { title: 'Mensajes · Ecosystem' }
+export const metadata: Metadata = { title: 'Mensajes · 101leads' }
 export const dynamic = 'force-dynamic'
 
 /**

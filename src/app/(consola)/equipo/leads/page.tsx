@@ -7,7 +7,7 @@ import { listarVista, listarSettersActivos } from '@/server/setters/panel'
 
 import { VistaDeLeads } from './vista'
 
-export const metadata: Metadata = { title: 'Leads del equipo · Ecosystem' }
+export const metadata: Metadata = { title: 'Leads del equipo · 101leads' }
 export const dynamic = 'force-dynamic'
 
 function vistaValida(valor: string | undefined): Vista {

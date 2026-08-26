@@ -5,7 +5,7 @@ import { requerirSesion } from '@/server/session'
 
 import { FormularioClave } from './form'
 
-export const metadata: Metadata = { title: 'Cambiar contraseña · Ecosystem' }
+export const metadata: Metadata = { title: 'Cambiar contraseña · 101leads' }
 
 export default async function PaginaCambiarClave() {
   const sesion = await requerirSesion()

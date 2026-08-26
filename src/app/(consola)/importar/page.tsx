@@ -6,7 +6,7 @@ import { contarParaRevisar, listarImportaciones, listarParaRevisar, ultimoMapeo 
 import { Historial, Revisar } from './historial'
 import { Importador } from './importador'
 
-export const metadata: Metadata = { title: 'Importar · Ecosystem' }
+export const metadata: Metadata = { title: 'Importar · 101leads' }
 export const dynamic = 'force-dynamic'
 
 export default async function PaginaImportar({

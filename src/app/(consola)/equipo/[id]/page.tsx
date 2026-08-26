@@ -20,7 +20,7 @@ import {
 import { Acciones } from './acciones'
 import { Ajustes } from './ajustes'
 
-export const metadata: Metadata = { title: 'Setter · Ecosystem' }
+export const metadata: Metadata = { title: 'Setter · 101leads' }
 export const dynamic = 'force-dynamic'
 
 const SECCION_META: Record<SeccionFicha, { label: string; vacio: string }> = {

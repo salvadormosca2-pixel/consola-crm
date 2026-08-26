@@ -10,7 +10,7 @@ import { generalDeSeguimientos, leadsDeClasificacion } from '@/server/setters/se
 import { Clasificaciones } from './clasificaciones'
 import { ListaDeSetters } from './lista-de-setters'
 
-export const metadata: Metadata = { title: 'Seguimientos · Ecosystem' }
+export const metadata: Metadata = { title: 'Seguimientos · 101leads' }
 export const dynamic = 'force-dynamic'
 
 /**

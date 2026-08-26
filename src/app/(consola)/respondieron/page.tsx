@@ -9,7 +9,7 @@ import { Bandeja } from './bandeja'
 import { Clasificaciones } from './clasificaciones'
 import { ListaDeSetters } from './lista-de-setters'
 
-export const metadata: Metadata = { title: 'Respondieron · Ecosystem' }
+export const metadata: Metadata = { title: 'Respondieron · 101leads' }
 export const dynamic = 'force-dynamic'
 
 /**

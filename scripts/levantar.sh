@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Levanta ECOSYSTEM en un servidor con Docker, de una.
+# Levanta 101leads en un servidor con Docker, de una.
 #
 #   curl -fsSL https://raw.githubusercontent.com/salvadormosca2-pixel/consola-crm/master/scripts/levantar.sh | bash
 #
@@ -24,7 +24,7 @@ IMAGEN=ghcr.io/salvadormosca2-pixel/consola-crm:latest
 SECRETOS=/root/.ecosystem.env
 
 echo
-echo "── ECOSYSTEM ─────────────────────────────────────────────"
+echo "── 101leads ─────────────────────────────────────────────"
 echo
 
 # ── Lo que tiene que estar ────────────────────────────────────────────────

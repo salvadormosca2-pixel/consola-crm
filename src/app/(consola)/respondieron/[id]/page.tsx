@@ -14,7 +14,7 @@ import {
 import { Bandeja } from '../bandeja'
 import { Clasificaciones } from '../clasificaciones'
 
-export const metadata: Metadata = { title: 'Respuestas del setter · Ecosystem' }
+export const metadata: Metadata = { title: 'Respuestas del setter · 101leads' }
 export const dynamic = 'force-dynamic'
 
 /**

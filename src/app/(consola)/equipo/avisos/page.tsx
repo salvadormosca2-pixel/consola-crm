@@ -7,7 +7,7 @@ import { listarSettersActivos } from '@/server/setters/panel'
 
 import { Mensajes } from './mensajes'
 
-export const metadata: Metadata = { title: 'Mensajes al equipo · Ecosystem' }
+export const metadata: Metadata = { title: 'Mensajes al equipo · 101leads' }
 export const dynamic = 'force-dynamic'
 
 export default async function PaginaMensajesAlEquipo() {

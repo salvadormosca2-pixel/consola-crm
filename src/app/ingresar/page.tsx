@@ -6,7 +6,7 @@ import type { MotivoDeCorte } from '@/server/session'
 import { AccesoRapido } from './acceso-rapido'
 import { FormularioIngreso } from './form'
 
-export const metadata: Metadata = { title: 'Ingresar · Ecosystem' }
+export const metadata: Metadata = { title: 'Ingresar · 101leads' }
 
 /** Por qué lo sacamos de la app. Si no lo decimos, cree que se rompió algo. */
 const MOTIVOS: Record<MotivoDeCorte, string> = {
@@ -30,7 +30,7 @@ export default async function PaginaIngreso({
       <div className="w-full max-w-[340px]">
         <div className="mb-5">
           <div className="font-[family-name:var(--font-titulo)] text-[22px] font-bold tracking-[-0.045em]">
-            ECOSYSTEM<span className="text-acento">.</span>
+            101leads<span className="text-acento">.</span>
           </div>
           <p className="mt-1 text-[12px] text-texto-2">Seguimiento de clientes.</p>
         </div>

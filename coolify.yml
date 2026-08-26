@@ -1,4 +1,4 @@
-# ECOSYSTEM en Coolify, en un solo recurso.
+# 101leads en Coolify, en un solo recurso.
 #
 # La app y su base viajan juntas en el mismo compose. No es una preferencia de
 # estilo: cuando son dos recursos separados hay que conectarlos a mano por red,

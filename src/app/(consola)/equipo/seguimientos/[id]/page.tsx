@@ -12,7 +12,7 @@ import { fichaDeSeguimientos, leadsDeClasificacion } from '@/server/setters/segu
 import { Clasificaciones } from '../clasificaciones'
 import { Reclamo } from './reclamo'
 
-export const metadata: Metadata = { title: 'Seguimientos del setter · Ecosystem' }
+export const metadata: Metadata = { title: 'Seguimientos del setter · 101leads' }
 export const dynamic = 'force-dynamic'
 
 /**

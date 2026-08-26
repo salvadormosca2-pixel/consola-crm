@@ -41,7 +41,7 @@ export default async function LayoutSetter({ children }: { children: React.React
       <header className="sticky top-0 z-20 border-b border-borde bg-superficie pt-[env(safe-area-inset-top)]">
         <div className="mx-auto flex h-12 max-w-[560px] items-center gap-2 px-3">
           <span className="font-[family-name:var(--font-titulo)] text-[15px] font-bold tracking-[-0.04em]">
-            ECOSYSTEM<span className="text-acento">.</span>
+            101leads<span className="text-acento">.</span>
           </span>
           <span className="ml-auto truncate text-[12.5px] text-texto-2">{sesion.nombre}</span>
           <form action={salir}>

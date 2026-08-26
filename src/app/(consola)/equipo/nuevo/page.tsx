@@ -6,7 +6,7 @@ import { requerirAdminMadre } from '@/server/session'
 
 import { Alta } from './alta'
 
-export const metadata: Metadata = { title: 'Nuevo setter · Ecosystem' }
+export const metadata: Metadata = { title: 'Nuevo setter · 101leads' }
 
 export default async function PaginaNuevoSetter() {
   await requerirAdminMadre()

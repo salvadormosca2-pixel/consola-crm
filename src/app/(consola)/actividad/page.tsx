@@ -6,7 +6,7 @@ import { listarActividad, resumenDeActividad } from '@/server/setters/actividad'
 
 import { Registro } from './registro'
 
-export const metadata: Metadata = { title: 'Actividad · Ecosystem' }
+export const metadata: Metadata = { title: 'Actividad · 101leads' }
 export const dynamic = 'force-dynamic'
 
 function grupoValido(valor: string | undefined): GrupoDeActividad | undefined {

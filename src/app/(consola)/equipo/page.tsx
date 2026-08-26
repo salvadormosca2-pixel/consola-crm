@@ -16,7 +16,7 @@ import { proponerReparto } from '@/server/setters/reparto'
 import { AvisosQueQuiero } from './avisos-que-quiero'
 import { Reparto } from './reparto'
 
-export const metadata: Metadata = { title: 'Equipo · Ecosystem' }
+export const metadata: Metadata = { title: 'Equipo · 101leads' }
 export const dynamic = 'force-dynamic'
 
 /**

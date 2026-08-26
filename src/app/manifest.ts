@@ -7,7 +7,7 @@ import type { MetadataRoute } from 'next'
  */
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: 'Ecosystem · Setters',
+    name: '101leads · Setters',
     short_name: 'Setters',
     description: 'Tu cola de leads del día, para contactar por Instagram desde el celular.',
     // La raíz redirige según el rol. Apuntar directo a /hoy hacía que el

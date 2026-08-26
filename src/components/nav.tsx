@@ -65,7 +65,7 @@ export function Nav({
           href="/equipo"
           className="mr-3 shrink-0 select-none text-[15px] font-semibold tracking-[-0.02em] text-texto"
         >
-          ECOSYSTEM
+          101leads
         </Link>
 
         <nav className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto" aria-label="Secciones">

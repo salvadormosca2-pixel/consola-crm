@@ -8,7 +8,7 @@ import { contarPorEtapa, listarContactos, opcionesDeFiltro } from '@/server/cont
 
 import { TablaContactos } from './tabla'
 
-export const metadata: Metadata = { title: 'Contactos · Ecosystem' }
+export const metadata: Metadata = { title: 'Contactos · 101leads' }
 export const dynamic = 'force-dynamic'
 
 export default async function PaginaContactos() {
