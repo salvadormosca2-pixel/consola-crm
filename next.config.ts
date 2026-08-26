@@ -14,8 +14,12 @@ const nextConfig: NextConfig = {
    * Empaqueta el servidor con solo los modulos que Next rastrea que usa, en
    * <distDir>/standalone. Es lo que copia la etapa runner del Dockerfile: sin
    * esto la imagen tendria que arrastrar node_modules entero.
+   *
+   * En Vercel **no** se usa: allá el empaquetado lo hace la plataforma, y
+   * pedirle `standalone` la obliga a trabajar dos veces sobre una salida que
+   * después descarta. Se apaga solo cuando detecta que está compilando ahí.
    */
-  output: 'standalone',
+  output: process.env.VERCEL ? undefined : 'standalone',
   reactStrictMode: true,
   typedRoutes: true,
   serverExternalPackages: ['pg', '@node-rs/argon2'],

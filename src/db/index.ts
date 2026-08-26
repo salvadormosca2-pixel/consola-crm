@@ -11,13 +11,30 @@ import * as schema from './schema'
  */
 const globalForDb = globalThis as unknown as { __crmPool?: Pool }
 
+/**
+ * Cuántas conexiones abre **cada instancia**.
+ *
+ * En un servidor propio hay un proceso y diez conexiones alcanzan de sobra.
+ * En Vercel no: cada instancia sin uso se apaga y se levantan otras según la
+ * demanda, así que el número se multiplica por cuántas haya vivas en ese
+ * momento. Con diez cada una, media docena de instancias agotan el límite de
+ * un Postgres chico y la aplicación empieza a fallar con "too many clients"
+ * justo cuando más se usa.
+ *
+ * Tres por instancia es suficiente: cada pedido usa una conexión por unos
+ * milisegundos.
+ */
+const MAXIMO = process.env.VERCEL ? 3 : 10
+
 function createPool(): Pool {
   const { DATABASE_URL, DATABASE_SSL } = env()
   return new Pool({
     connectionString: DATABASE_URL,
     ssl: DATABASE_SSL ? { rejectUnauthorized: false } : false,
-    max: 10,
-    idleTimeoutMillis: 30_000,
+    max: MAXIMO,
+    // Sin uso, la conexión se suelta rápido: una instancia dormida no tiene por
+    // qué seguir ocupando un lugar en la base.
+    idleTimeoutMillis: process.env.VERCEL ? 10_000 : 30_000,
     connectionTimeoutMillis: 10_000,
   })
 }

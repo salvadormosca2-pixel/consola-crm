@@ -276,6 +276,91 @@ Abre todas las pantallas y comprueba que cada acción quede guardada. Ojo: el
 modo prueba no existe en producción, así que ahí solo corren los chequeos que no
 necesitan sesión. Para el resto, entrá y probá a mano.
 
+## Desplegar en Vercel + Railway
+
+La aplicación entera va a **Vercel** y la base a **Railway**. No hay frontend y
+backend separados: es una sola aplicación Next.js —las pantallas y la lógica de
+servidor viven en el mismo proceso—, así que Vercel la sirve completa.
+
+### 1. La base, en Railway
+
+**New Project → Database → Add PostgreSQL.** No hay nada que configurar.
+
+Después, en la pestaña **Variables** de esa base, copiá **`DATABASE_PUBLIC_URL`**
+—la pública, no la interna—: Vercel se conecta desde afuera de Railway.
+
+### 2. La aplicación, en Vercel
+
+**Add New → Project → Import Git Repository** y elegí el repo.
+
+Vercel detecta Next.js solo. El `vercel.json` del repo ya trae lo demás: el
+comando de build, la región y la tarea programada.
+
+Las variables, en **Settings → Environment Variables**:
+
+| Variable | Valor |
+| --- | --- |
+| `DATABASE_URL` | el `DATABASE_PUBLIC_URL` de Railway |
+| `DATABASE_SSL` | `true` — Railway exige TLS desde afuera |
+| `AUTH_SECRET` | `openssl rand -base64 32` |
+| `ENCRYPTION_KEY` | `openssl rand -base64 32` |
+| `AUTH_URL` | tu dominio de Vercel, con `https://` |
+| `AUTH_TRUST_HOST` | `true` |
+| `OPS_TIMEZONE` | `America/Argentina/Catamarca` |
+| `CRON_SECRET` | `openssl rand -hex 32` |
+| `VAPID_PUBLIC_KEY` | de `npm run push:claves`, opcional |
+| `VAPID_PRIVATE_KEY` | ídem |
+| `VAPID_SUBJECT` | `mailto:vos@tudominio` |
+
+**`MODO_PRUEBA` no va.** Es la entrada sin contraseña; el código no la compila
+fuera de desarrollo, pero mejor que la variable ni exista.
+
+`AUTH_URL` recién lo sabés después del primer despliegue. Poné cualquier cosa,
+desplegá, copiá el dominio real y volvé a desplegar.
+
+### Las migraciones corren en el build
+
+En un servidor propio las corre el contenedor antes de arrancar. En Vercel no
+hay contenedor, así que corren en el build, **antes** de compilar: si fallan, el
+build falla, Vercel descarta el despliegue y sigue sirviendo la versión
+anterior.
+
+Solo se migra cuando `VERCEL_ENV` es `production`. Una vista previa de una rama
+compila contra la misma base y no puede cambiarle el esquema a lo que está en
+uso.
+
+### El primer usuario
+
+La base arranca vacía. Desde tu máquina, con el `DATABASE_PUBLIC_URL` de
+Railway:
+
+```bash
+DATABASE_URL='<la url de railway>' DATABASE_SSL=true \
+  npx tsx scripts/create-user.ts --email vos@dominio --name "Tu Nombre" --password unaclavelarga
+```
+
+Los setters se dan de alta después desde el panel, en **Equipo → Nuevo setter**.
+
+### Las tareas del reloj
+
+`vercel.json` programa `/api/tareas` cada quince minutos. Vercel manda su
+`CRON_SECRET` en la cabecera y la ruta lo acepta, así que no hay que cablear
+nada.
+
+Eso dispara los recordatorios automáticos, el resumen del día y las alertas de
+atraso. El vencimiento de leads **no** depende de esto: se resuelve al abrir la
+cola, así que el sistema funciona igual si el cron falla.
+
+### Qué mirar si algo no anda
+
+- **`too many clients`** — la base se quedó sin conexiones. Cada instancia abre
+  hasta tres; si Railway tiene un límite bajo, subilo o achicá `MAXIMO` en
+  `src/db/index.ts`.
+- **El build falla en la migración** — revisá `DATABASE_URL` y que
+  `DATABASE_SSL` esté en `true`.
+- **El login rebota** — `AUTH_URL` no coincide con el dominio real.
+- **`/api/salud` devuelve 503** — la aplicación levantó pero no llega a la base.
+
 ## Comandos
 
 | Comando | Qué hace |
