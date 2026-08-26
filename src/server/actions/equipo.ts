@@ -33,6 +33,21 @@ import { repartirAhora } from '@/server/setters/reparto'
  * alguien llame a estas acciones con su id, la base rechaza el cambio.
  */
 
+/**
+ * Una lista de identificadores para un `in (...)`.
+ *
+ * Va como lista de parámetros y no como arreglo: pasar un arreglo de JavaScript
+ * a `= any(...)` no sobrevive el viaje —Postgres no le encuentra el tipo— y la
+ * consulta no falla, devuelve **cero filas**. La operación se da por hecha y no
+ * toca nada.
+ */
+function listaDeIds(ids: string[]) {
+  return sql.join(
+    ids.map((id) => sql`${id}::uuid`),
+    sql`, `,
+  )
+}
+
 function alFallar(err: unknown, generico: string): EstadoAccion {
   if (err instanceof ErrorDePermiso) return { ok: false, error: err.message }
   console.error(generico, err)
@@ -598,7 +613,7 @@ export async function recuperarLeads(ids: string[]): Promise<ResultadoRecuperar>
            set estado = 'devuelto', devuelto_at = now(),
                devuelto_motivo = 'Nunca contestó: se recupera para volver a intentar.',
                marcado_por = ${sesion.userId}::uuid
-         where id = any(${validos}::uuid[])
+         where id in (${listaDeIds(validos)})
            and estado = 'segundo_enviado'
            and respondido_at is null
         returning contact_id
@@ -615,7 +630,7 @@ export async function recuperarLeads(ids: string[]): Promise<ResultadoRecuperar>
       await tx.execute(sql`
         update contacts
            set stage = 'nuevo', next_followup_at = null, updated_at = now()
-         where id = any(${contactos}::uuid[])
+         where id in (${listaDeIds(contactos)})
       `)
 
       await tx.execute(sql`
@@ -672,7 +687,7 @@ export async function marcarNotificacionesLeidas(ids?: string[]): Promise<Estado
       if (validos.length === 0) return { ok: true, error: null }
       await db.execute(sql`
         update notificaciones set leida = true
-         where id = any(${validos}::uuid[])
+         where id in (${listaDeIds(validos)})
            and (para_usuario_id is null or para_usuario_id = ${sesion.userId}::uuid)
       `)
     } else {

@@ -121,18 +121,39 @@ export async function crearMensajeEquipo(datos: unknown): Promise<ResultadoMensa
     }
     const d = parsed.data
 
-    const destinos = await db.execute(
+    /*
+     * A quién le llega: a todos los activos, o solo a los elegidos.
+     *
+     * Los elegidos van como lista de parámetros y no como arreglo. Pasar un
+     * arreglo de JavaScript a `= any(...)` no sobrevive el viaje —Postgres no
+     * le encuentra el tipo— y la consulta no falla: devuelve **cero filas**.
+     * El aviso se daba por mandado y no le llegaba a nadie.
+     */
+    const elegidos =
       d.destinatarios.length > 0
-        ? sql`select s.id, u.id as user_id, u.name
-                from setters s join users u on u.id = s.user_id
-               where u.status = 'activo' and s.id = any(${d.destinatarios}::uuid[])`
-        : sql`select s.id, u.id as user_id, u.name
-                from setters s join users u on u.id = s.user_id
-               where u.status = 'activo'`,
-    )
+        ? sql`and s.id in (${sql.join(
+            d.destinatarios.map((id) => sql`${id}::uuid`),
+            sql`, `,
+          )})`
+        : sql``
+
+    const destinos = await db.execute(sql`
+      select s.id, u.id as user_id, u.name
+        from setters s
+        join users u on u.id = s.user_id
+       where u.status = 'activo' ${elegidos}
+    `)
 
     const filas = destinos.rows as Array<{ id: string; user_id: string; name: string }>
-    if (filas.length === 0) return { ok: false, error: 'No hay setters activos a quienes mandarlo.' }
+    if (filas.length === 0) {
+      return {
+        ok: false,
+        error:
+          d.destinatarios.length > 0
+            ? 'Ninguno de los elegidos sigue activo.'
+            : 'No hay setters activos a quienes mandarlo.',
+      }
+    }
 
     const mensajeId = await db.transaction(async (tx) => {
       const creados = await tx.execute(sql`

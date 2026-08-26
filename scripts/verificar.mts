@@ -525,6 +525,104 @@ async function verificarEscrituras(
     } else {
       mal('reclamar seguimientos', 'no quedó ningún recordatorio')
     }
+    /*
+     * Avisos al equipo: a todos, o a uno solo.
+     *
+     * Lo que se prueba no es que la acción devuelva ok, sino **a quién le
+     * llegó**. Un aviso dirigido que igual le aparece a los demás es peor que
+     * no tener la opción: se usa para decirle algo a una persona.
+     */
+    const titulo = `Verificación ${Date.now()}`
+    await fetch(`${BASE}/equipo/avisos`, {
+      method: 'POST',
+      headers: {
+        cookie: cookiesAdmin,
+        'content-type': 'text/plain;charset=UTF-8',
+        'next-action': await idDeAccion('crearMensajeEquipo'),
+      },
+      body: JSON.stringify([
+        { nivel: 'aviso', titulo, cuerpo: 'Solo para uno.', destinatarios: [setterId] },
+      ]),
+    })
+
+    const dirigido = await uno<{ n: number; suyos: number }>(
+      `select count(*)::int as n,
+              count(*) filter (where md.setter_id = $2::uuid)::int as suyos
+         from mensajes_destinatarios md
+         join mensajes_equipo me on me.id = md.mensaje_id
+        where me.titulo = $1`,
+      [titulo, setterId],
+    )
+    if (dirigido?.n === 1 && dirigido.suyos === 1) {
+      bien('aviso a un setter', '→ le llegó solo a él')
+    } else {
+      mal('aviso a un setter', `llegó a ${dirigido?.n} setters, tenía que ser 1`)
+    }
+
+    const tituloTodos = `Verificación todos ${Date.now()}`
+    await fetch(`${BASE}/equipo/avisos`, {
+      method: 'POST',
+      headers: {
+        cookie: cookiesAdmin,
+        'content-type': 'text/plain;charset=UTF-8',
+        'next-action': await idDeAccion('crearMensajeEquipo'),
+      },
+      body: JSON.stringify([
+        { nivel: 'aviso', titulo: tituloTodos, cuerpo: 'Para el equipo.', destinatarios: [] },
+      ]),
+    })
+
+    const activos = await uno<{ n: number }>(
+      `select count(*)::int as n from setters s join users u on u.id = s.user_id
+        where u.status = 'activo'`,
+    )
+    const aTodos = await uno<{ n: number }>(
+      `select count(*)::int as n from mensajes_destinatarios md
+         join mensajes_equipo me on me.id = md.mensaje_id
+        where me.titulo = $1`,
+      [tituloTodos],
+    )
+    if (aTodos?.n === activos?.n) bien('aviso a todos', `→ a los ${aTodos?.n} activos`)
+    else mal('aviso a todos', `llegó a ${aTodos?.n} de ${activos?.n}`)
+
+    await pool.query(`delete from mensajes_equipo where titulo = any($1::text[])`, [
+      [titulo, tituloTodos],
+    ])
+
+    /*
+     * Recuperar los que nunca contestaron: una operación sobre muchos leads a
+     * la vez. Se prueba porque las operaciones masivas fallan en silencio —no
+     * dan error, simplemente no tocan nada— y nadie lo nota hasta que faltan
+     * los datos.
+     */
+    const paraRecuperar = await pool.query<{ id: string }>(
+      `select la.id from lead_assignments la
+        where la.estado = 'segundo_enviado' and la.respondido_at is null
+        limit 2`,
+    )
+    if (paraRecuperar.rows.length > 0) {
+      const ids = paraRecuperar.rows.map((r) => r.id)
+      await fetch(`${BASE}/equipo/leads`, {
+        method: 'POST',
+        headers: {
+          cookie: cookiesAdmin,
+          'content-type': 'text/plain;charset=UTF-8',
+          'next-action': await idDeAccion('recuperarLeads'),
+        },
+        body: JSON.stringify([ids]),
+      })
+      const devueltos = await uno<{ n: number }>(
+        `select count(*)::int as n from lead_assignments
+          where id in (${ids.map((_, i) => '$' + (i + 1)).join(', ')})
+            and estado = 'devuelto'`,
+        ids,
+      )
+      if (devueltos?.n === ids.length) {
+        bien('recuperar los que nunca contestaron', `→ ${devueltos.n} al pozo`)
+      } else {
+        mal('recuperar los que nunca contestaron', `volvieron ${devueltos?.n} de ${ids.length}`)
+      }
+    }
   } finally {
     // El lead de prueba se va entero: eventos, envíos, reuniones y contacto.
     await pool.query(`delete from contacts where id = $1`, [contacto!.id])
