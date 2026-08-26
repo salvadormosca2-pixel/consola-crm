@@ -172,7 +172,7 @@ export function Mensajes({
               type="checkbox"
               checked={fijado}
               onChange={(e) => setFijado(e.target.checked)}
-              className="h-4 w-4 accent-[#0066FF]"
+              className="h-4 w-4 accent-[#1FC79E]"
             />
             Dejarlo fijo arriba de su pantalla hasta que lo saque
           </label>

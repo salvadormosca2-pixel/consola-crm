@@ -21,7 +21,9 @@ const buttonVariants = cva(
       variant: {
         // El azul eléctrico aclara al pasar por encima y se hunde al apretar:
         // es la única superficie de la interfaz que lleva ese color lleno.
-        primaria: 'bg-acento text-white hover:bg-acento-hover active:bg-acento-activo',
+        // El relleno es el verde de marca, no el brillante: un botón lleno del
+        // brillante cansa la vista. Al pasar por encima aclara, al apretar se hunde.
+        primaria: 'bg-acento-solido text-white hover:bg-acento active:bg-acento-activo',
         secundaria: 'border border-borde bg-elevada text-texto hover:bg-elevada-2',
         contorno: 'border border-borde bg-transparent text-texto hover:bg-elevada',
         fantasma: 'text-texto-2 hover:bg-elevada hover:text-texto',

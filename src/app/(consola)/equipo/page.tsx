@@ -56,7 +56,7 @@ export default async function PaginaEquipo() {
           {sesion.rol === 'admin_madre' ? (
             <Link
               href="/equipo/nuevo"
-              className="flex h-7.5 items-center gap-1.5 rounded-[5px] bg-acento px-3 text-[12.5px] font-semibold text-white hover:bg-acento-hover"
+              className="flex h-7.5 items-center gap-1.5 rounded-[5px] bg-acento-solido px-3 text-[12.5px] font-semibold text-white hover:bg-acento"
             >
               <Plus className="h-3.5 w-3.5" aria-hidden />
               Nuevo setter

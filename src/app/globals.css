@@ -1,51 +1,69 @@
 @import 'tailwindcss';
 
 /* ─────────────────────────────────────────────────────────────────────────
-   101leads — oscuro, con un solo azul.
+   101leads — negro verdoso, con el verde de marca como único acento.
 
-   Los neutros arman la jerarquía: negro de base y superficies que suben
-   (#0A0A0A → #141414 → #1F1F1F) para separar lo apilado **sin sombras**. El
-   azul eléctrico es el único acento y se reserva para lo que se puede tocar:
-   botones principales, links, estados activos y detalles de marca. Nunca en
-   bloques grandes de fondo, ahí pierde el impacto.
+   Los fondos van de más oscuro a menos (#02100D → #04150F → #062018) para
+   separar lo apilado **sin sombras**: cada nivel es un escalón real.
 
-   El resto del color es señal de estado: verde bien, ámbar atención, rojo mal.
-   Si todo grita, no se entiende nada.
+   El verde es lo único que se puede tocar: botones principales, links, estados
+   activos y detalles de marca. Nunca en bloques grandes de fondo, ahí pierde
+   el impacto.
+
+   El resto del color es señal de estado. Si todo grita, no se entiende nada.
    ───────────────────────────────────────────────────────────────────────── */
 
 @theme {
-  /* Superficies apiladas. Cada nivel es un escalón, no una sombra. */
-  --color-fondo: #000000;
-  --color-superficie: #0a0a0a;
-  --color-elevada: #141414;
-  --color-elevada-2: #1f1f1f;
-  --color-borde: #2a2a2a;
-  /* Único valor fuera de la paleta dada: el borde al pasar por encima. */
-  --color-borde-fuerte: #3a3a3a;
+  /* Superficies apiladas, tal cual la paleta de marca. */
+  --color-fondo: #02100d;
+  --color-superficie: #04150f;
+  --color-elevada: #062018;
+  /* Cuarto escalón, derivado: la marca da tres y la interfaz necesita uno más
+     para lo que se apoya sobre lo elevado (un botón dentro de un panel). */
+  --color-elevada-2: #0a2a21;
 
-  /* Jerarquía tipográfica: blanco lo que importa, gris lo que acompaña. */
-  --color-texto: #ffffff;
-  --color-texto-2: #999999;
-  --color-texto-3: #666666;
+  /* Bordes, también derivados: el verde de marca llevado al mínimo visible.
+     Un gris neutro acá se vería sucio contra el verdoso. */
+  --color-borde: #12312a;
+  --color-borde-fuerte: #1b4a3f;
 
-  /* Azul eléctrico: el acento, y nada más que el acento. */
-  --color-acento: #0066ff;
-  --color-acento-hover: #3385ff;
-  --color-acento-activo: #0052cc;
-  /* Profundidad y fondos suaves, para casos puntuales. */
-  --color-acento-profundo: #003d99;
-  --color-acento-claro: #e6f0ff;
-  /* El lavado azul de las pastillas y pestañas activas. Transparente para que
+  /* Jerarquía tipográfica: blanco verdoso lo que importa, gris lo que acompaña. */
+  --color-texto: #eaf6f2;
+  --color-texto-2: #8ca9a0;
+  --color-texto-3: #4e6862;
+
+  /*
+   * El verde de marca, en sus tres pesos.
+   *
+   * `acento` es el que se lee: links, pestañas activas, el punto del logo.
+   * `acento-solido` es el relleno de los botones —el verde de marca, más
+   * apagado a propósito: un botón lleno del brillante cansa la vista—.
+   * `acento-hover` es el brillante, que aparece al pasar por encima.
+   */
+  --color-acento: #1fc79e;
+  --color-acento-solido: #108877;
+  --color-acento-hover: #5bf2c9;
+  --color-acento-activo: #0c6b5d;
+  /* Lavado del acento para pastillas y pestañas activas. Transparente para que
      se apoye en la superficie que tenga debajo, sea cual sea el escalón. */
-  --color-acento-tenue: rgba(0, 102, 255, 0.14);
+  --color-acento-tenue: rgba(31, 199, 158, 0.14);
 
-  /* Señales de estado, en su versión para fondo oscuro. */
-  --color-ambar: #f5a524;
-  --color-ambar-tenue: rgba(245, 165, 36, 0.14);
-  --color-verde: #22c55e;
-  --color-verde-tenue: rgba(34, 197, 94, 0.14);
-  --color-rojo: #ef4444;
-  --color-rojo-tenue: rgba(239, 68, 68, 0.14);
+  /*
+   * Señales de estado.
+   *
+   * El verde de "todo bien" es el más brillante de la marca, no el del acento:
+   * si fueran el mismo, no se distinguiría una pastilla de estado de algo que
+   * se puede tocar.
+   */
+  --color-verde: #5bf2c9;
+  --color-verde-tenue: rgba(91, 242, 201, 0.13);
+  --color-ambar: #ffc24b;
+  --color-ambar-tenue: rgba(255, 194, 75, 0.13);
+  --color-rojo: #ff6b5b;
+  --color-rojo-tenue: rgba(255, 107, 91, 0.13);
+  /* Celeste: dato, no estado. Se usa poco y solo donde hace falta contraste. */
+  --color-celeste: #5cc9f5;
+  --color-celeste-tenue: rgba(92, 201, 245, 0.13);
 
   /* Tipografía: una sola familia para todo, y mono solo para números. */
   --font-sans: var(--fuente-inter), ui-sans-serif, system-ui, sans-serif;
@@ -93,8 +111,8 @@
   }
 
   ::selection {
-    background: var(--color-acento-profundo);
-    color: var(--color-acento-claro);
+    background: var(--color-acento-activo);
+    color: var(--color-texto);
   }
 
   ::-webkit-scrollbar {
@@ -105,12 +123,12 @@
     background: transparent;
   }
   ::-webkit-scrollbar-thumb {
-    background: #2a2a2a;
+    background: var(--color-borde);
     border-radius: 6px;
     border: 3px solid var(--color-fondo);
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: #3a3a3a;
+    background: var(--color-borde-fuerte);
   }
 }
 
@@ -126,7 +144,7 @@
     letter-spacing: -0.01em;
   }
 
-  /* Rótulo de sección. Chico y gris: acompaña, no compite. */
+  /* Rótulo de sección. Chico y apagado: acompaña, no compite. */
   .rotulo {
     font-size: 11px;
     font-weight: 600;

@@ -157,7 +157,7 @@ function Tarjeta({
 
           <button
             onClick={copiar}
-            className="mt-3 flex h-11 w-full items-center justify-center gap-1.5 rounded-[6px] bg-acento text-[13.5px] font-medium text-white"
+            className="mt-3 flex h-11 w-full items-center justify-center gap-1.5 rounded-[6px] bg-acento-solido text-[13.5px] font-medium text-white"
           >
             <Copy className="h-4 w-4" aria-hidden />
             Copiar respuesta

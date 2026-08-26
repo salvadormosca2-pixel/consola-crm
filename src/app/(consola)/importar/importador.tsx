@@ -403,7 +403,7 @@ export function Importador({ mapeoPrevio }: { mapeoPrevio: Mapeo | null }) {
             type="checkbox"
             checked={completarVacios}
             onChange={(e) => setCompletarVacios(e.target.checked)}
-            className="mt-0.5 h-3 w-3 accent-[#0066FF]"
+            className="mt-0.5 h-3 w-3 accent-[#1FC79E]"
           />
           <span className="text-[12.5px]">
             Completar los campos vacíos de los contactos que ya existan

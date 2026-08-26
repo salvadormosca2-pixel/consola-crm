@@ -247,7 +247,7 @@ export function VistaDeLeads({
                     checked={elegidos.has(f.assignmentId)}
                     onChange={() => alternar(f.assignmentId)}
                     aria-label={`Elegir ${f.businessName}`}
-                    className="h-4 w-4 shrink-0 accent-[#0066FF]"
+                    className="h-4 w-4 shrink-0 accent-[#1FC79E]"
                   />
                 ) : null}
 

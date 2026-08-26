@@ -30,7 +30,7 @@ export const metadata: Metadata = {
 }
 
 export const viewport: Viewport = {
-  themeColor: '#000000',
+  themeColor: '#02100D',
   width: 'device-width',
   initialScale: 1,
 }
@@ -45,9 +45,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           duration={2600}
           toastOptions={{
             style: {
-              background: '#141414',
-              border: '1px solid #2A2A2A',
-              color: '#ffffff',
+              background: '#062018',
+              border: '1px solid #12312A',
+              color: '#EAF6F2',
               borderRadius: '8px',
               fontSize: '13px',
             },

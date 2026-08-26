@@ -13,7 +13,7 @@ export const metadata: Metadata = {
 }
 
 export const viewport: Viewport = {
-  themeColor: '#000000',
+  themeColor: '#02100D',
   width: 'device-width',
   initialScale: 1,
   // La app se instala y ocupa toda la pantalla: hay que dibujar debajo de la

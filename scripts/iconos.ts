@@ -12,14 +12,14 @@ import { deflateSync } from 'node:zlib'
  *   npm run iconos
  *
  * El dibujo es el medidor de cupo de 101leads —barras segmentadas que se
- * llenan en azul eléctrico—, que es la marca visual del sistema y lo que el
+ * llenan en el verde de marca—, que es la marca visual del sistema y lo que el
  * setter ve arriba de todo en su pantalla.
  */
 
-const FONDO = [0x00, 0x00, 0x00] as const
-const ACENTO = [0x00, 0x66, 0xff] as const
+const FONDO = [0x02, 0x10, 0x0d] as const
+const ACENTO = [0x1f, 0xc7, 0x9e] as const
 /** Los segmentos vacíos: el borde fino de la interfaz, no un gris claro. */
-const APAGADO = [0x2a, 0x2a, 0x2a] as const
+const APAGADO = [0x12, 0x31, 0x2a] as const
 
 const TABLA_CRC = (() => {
   const t = new Uint32Array(256)
