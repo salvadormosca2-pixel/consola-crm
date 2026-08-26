@@ -92,7 +92,19 @@ export const settersConfigSchema = z.object({
   minutosDeBloqueo: z.number().int().min(1).max(1440).default(15),
 
   /** Largo mínimo de la contraseña que elige el setter. */
-  largoMinimoPassword: z.number().int().min(8).max(64).default(10),
+  /**
+   * Largo mínimo de la contraseña que elige el setter.
+   *
+   * Seis y no diez. Esto se escribe con el pulgar, parado, para entrar a una
+   * app que se abre veinte veces por día: una contraseña larga no la hace más
+   * segura, la hace anotada en un papel o repetida de otro lado.
+   *
+   * La seguridad de verdad está en otro lado y no depende de esto: las cuentas
+   * las crea el admin —nadie se registra solo—, el ingreso se bloquea a los
+   * cinco intentos fallidos, y la sesión dura tanto que casi nunca hay que
+   * volver a tipearla.
+   */
+  largoMinimoPassword: z.number().int().min(4).max(64).default(6),
 })
 
 export type SettersConfig = z.infer<typeof settersConfigSchema>

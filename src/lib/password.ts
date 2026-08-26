@@ -14,7 +14,15 @@ import { randomInt } from 'node:crypto'
 
 const ALFABETO = 'abcdefghjkmnpqrstuvwxyz23456789'
 
-export function generarPasswordTemporal(grupos = 3, largoDeGrupo = 4): string {
+/**
+ * Dos grupos de cuatro: `k7mp-3rqx`. Nueve caracteres, no catorce.
+ *
+ * Es lo que el setter tipea una sola vez, mirando un WhatsApp, con el pulgar.
+ * Acortarla no la debilita en la práctica: el ingreso se bloquea a los cinco
+ * intentos fallidos, así que adivinarla a fuerza bruta no es una opción, y de
+ * todos modos se cambia obligatoriamente en ese primer ingreso.
+ */
+export function generarPasswordTemporal(grupos = 2, largoDeGrupo = 4): string {
   const partes: string[] = []
   for (let g = 0; g < grupos; g++) {
     let parte = ''

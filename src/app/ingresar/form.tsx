@@ -5,6 +5,7 @@ import { useFormStatus } from 'react-dom'
 
 import { Button } from '@/components/ui/button'
 import { Field, Input } from '@/components/ui/input'
+import { CampoClave } from '@/components/ui/campo-clave'
 import { Panel } from '@/components/ui/panel'
 import { ingresar, type EstadoIngreso } from '@/server/actions/auth'
 
@@ -56,9 +57,8 @@ export function FormularioIngreso({
         </Field>
 
         <Field label="Contraseña">
-          <Input
+          <CampoClave
             name="password"
-            type="password"
             autoComplete="current-password"
             required
             className="h-10 text-[16px]"

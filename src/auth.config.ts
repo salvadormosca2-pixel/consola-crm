@@ -31,7 +31,26 @@ const RUTAS_COMUNES = ['/cambiar-clave', '/salir', '/api/push', '/manifest.webma
 
 export const authConfig = {
   trustHost: true,
-  session: { strategy: 'jwt', maxAge: 60 * 60 * 24 * 30 },
+  /**
+   * La sesión dura un año y se renueva sola con el uso.
+   *
+   * El setter abre esto veinte veces por día desde el celular, parado, con una
+   * mano. Hacerlo tipear la contraseña cada tanto no protege nada —el teléfono
+   * ya está desbloqueado con su huella— y sí garantiza que la anote en un papel
+   * o que pierda dos minutos justo cuando tenía que mandar un mensaje.
+   *
+   * `updateAge` en un día es lo que la hace deslizante: cada vez que entra, si
+   * pasó más de un día, el plazo arranca de nuevo. En la práctica, alguien que
+   * usa la app cada semana no vuelve a ver la pantalla de ingreso nunca.
+   *
+   * Cerrar sesión a la fuerza sigue estando: el admin lo hace desde la ficha
+   * del setter, y eso invalida sus accesos al instante.
+   */
+  session: {
+    strategy: 'jwt',
+    maxAge: 60 * 60 * 24 * 365,
+    updateAge: 60 * 60 * 24,
+  },
   pages: { signIn: '/ingresar' },
   providers: [],
   callbacks: {

@@ -30,13 +30,13 @@ if [ -z "$EMAIL" ] || [ -z "$NOMBRE" ] || [ -z "$CLAVE" ]; then
   echo
   echo "  curl -fsSL https://raw.githubusercontent.com/salvadormosca2-pixel/consola-crm/master/scripts/crear-usuario.sh | bash -s -- tumail@dominio.com \"Tu Nombre\" tucontraseña"
   echo
-  echo "La contraseña necesita al menos 10 caracteres."
+  echo "La contraseña necesita al menos 6 caracteres."
   echo
   exit 1
 fi
 
-if [ ${#CLAVE} -lt 10 ]; then
-  echo "La contraseña necesita al menos 10 caracteres."
+if [ ${#CLAVE} -lt 6 ]; then
+  echo "La contraseña necesita al menos 6 caracteres."
   exit 1
 fi
 

@@ -25,7 +25,7 @@ import { users } from '../src/db/schema'
 const argSchema = z.object({
   email: z.string().email('El email no es válido.'),
   name: z.string().min(1, 'El nombre no puede estar vacío.'),
-  password: z.string().min(10, 'La contraseña necesita al menos 10 caracteres.'),
+  password: z.string().min(6, 'La contraseña necesita al menos 6 caracteres.'),
 })
 
 function readFlags(argv: string[]): Record<string, string> {
@@ -56,7 +56,7 @@ async function main(): Promise<void> {
       input = {
         email: flags.email ?? (await rl.question('Email: ')).trim(),
         name: flags.name ?? (await rl.question('Nombre: ')).trim(),
-        password: flags.password ?? (await rl.question('Contraseña (mínimo 10): ')).trim(),
+        password: flags.password ?? (await rl.question('Contraseña (mínimo 6): ')).trim(),
       }
     } finally {
       rl.close()

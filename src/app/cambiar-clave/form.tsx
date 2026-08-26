@@ -6,7 +6,8 @@ import { useFormStatus } from 'react-dom'
 
 import { rutaInicial } from '@/auth.config'
 import { Button } from '@/components/ui/button'
-import { Field, Input } from '@/components/ui/input'
+import { Field } from '@/components/ui/input'
+import { CampoClave } from '@/components/ui/campo-clave'
 import { Panel } from '@/components/ui/panel'
 import type { UserRole } from '@/db/enums'
 import { cambiarPassword, type EstadoClave } from '@/server/actions/auth'
@@ -20,9 +21,8 @@ export function FormularioClave({ obligatorio, rol }: { obligatorio: boolean; ro
     <Panel className="p-4">
       <form action={action} className="space-y-3">
         <Field label={obligatorio ? 'Contraseña temporal' : 'Contraseña actual'}>
-          <Input
+          <CampoClave
             name="actual"
-            type="password"
             autoComplete="current-password"
             required
             autoFocus
@@ -31,9 +31,8 @@ export function FormularioClave({ obligatorio, rol }: { obligatorio: boolean; ro
         </Field>
 
         <Field label="Contraseña nueva">
-          <Input
+          <CampoClave
             name="nueva"
-            type="password"
             autoComplete="new-password"
             required
             className="h-10 text-[16px]"
@@ -41,9 +40,8 @@ export function FormularioClave({ obligatorio, rol }: { obligatorio: boolean; ro
         </Field>
 
         <Field label="Repetila">
-          <Input
+          <CampoClave
             name="repetir"
-            type="password"
             autoComplete="new-password"
             required
             className="h-10 text-[16px]"
