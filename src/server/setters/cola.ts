@@ -67,9 +67,29 @@ export interface ItemDeCola {
   linkRespaldo: string
 }
 
+/**
+ * Lo que le queda pendiente a cada cuenta.
+ *
+ * El setter trabaja una cuenta por vez —cambiar en Instagram desde el celular
+ * es lento— así que necesita ver de un vistazo cuánto le falta en cada una y
+ * decidir cuándo conviene cambiar.
+ */
+export interface PendienteDeCuenta {
+  cuentaId: string
+  igUsername: string
+  activa: boolean
+  usadoHoy: number
+  cupoDiario: number
+  restante: number
+  /** Seguimientos que le tocan hoy y que **solo** se pueden mandar desde acá. */
+  seguimientos: number
+}
+
 export interface ColaDelSetter {
   items: ItemDeCola[]
   cupo: CupoDeSetter
+  /** Qué falta en cada cuenta. Ordenado igual que las cuentas del setter. */
+  porCuenta: PendienteDeCuenta[]
   /** Seguimientos que le tocan hoy, contando los atrasados. */
   seguimientos: number
   seguimientosAtrasados: number
@@ -126,8 +146,14 @@ export async function armarColaDelSetter(setterId: string): Promise<ColaDelSette
          or la.estado in ('asignado', 'abierto', 'saltado')
        )
      order by
-       -- Los seguimientos van primero, siempre: un lead que ya recibió algo
-       -- vale más que uno sin tocar.
+       -- **Primero, todo lo de la cuenta con la que está trabajando.**
+       -- Cambiar de cuenta en Instagram desde el celular es lento; si la cola
+       -- lo mandara a saltar de una a otra cada dos leads, no trabajaría.
+       -- Los que no tienen cuenta todavía (sin contactar) salen de la activa.
+       case when la.setter_account_id is null
+              or la.setter_account_id = s.cuenta_activa_id then 0 else 1 end,
+       -- Dentro de una cuenta, los seguimientos van antes que los nuevos: un
+       -- lead que ya recibió algo vale más que uno sin tocar.
        case when la.proximo_seguimiento_at is not null
              and la.proximo_seguimiento_at <= now() then 0 else 1 end,
        -- Entre seguimientos, el más atrasado arriba.
@@ -143,7 +169,7 @@ export async function armarColaDelSetter(setterId: string): Promise<ColaDelSette
    * consulta por lead: un seguimiento cuya cuenta llegó al tope no se puede
    * mandar aunque el setter tenga otra libre, porque el hilo está en esa.
    */
-  const porCuenta = new Map(cupo.cuentas.map((c) => [c.id, c.igUsername]))
+  const usuarioDeCuenta = new Map(cupo.cuentas.map((c) => [c.id, c.igUsername]))
   const sinCupo = new Set(cupo.cuentas.filter((c) => c.restante <= 0).map((c) => c.id))
 
   const ahora = Date.now()
@@ -185,7 +211,7 @@ export async function armarColaDelSetter(setterId: string): Promise<ColaDelSette
       estado: f.estado,
       abierto: f.abierto_at !== null,
       cuentaId: f.setter_account_id,
-      cuentaUsuario: f.setter_account_id ? (porCuenta.get(f.setter_account_id) ?? null) : null,
+      cuentaUsuario: f.setter_account_id ? (usuarioDeCuenta.get(f.setter_account_id) ?? null) : null,
       cuentaSinCupo: f.setter_account_id ? (sinCupo.has(f.setter_account_id)) : false,
       venceAt: vence,
       horasRestantes: Math.max(Math.floor((vence.getTime() - ahora) / 3_600_000), 0),
@@ -202,9 +228,25 @@ export async function armarColaDelSetter(setterId: string): Promise<ColaDelSette
 
   const seguimientos = items.filter((i) => i.paso > 1)
 
+  /*
+   * Cuánto le falta en cada cuenta. Los seguimientos se cuentan sobre la cuenta
+   * que abrió esa conversación, no sobre la activa: es la única desde la que se
+   * pueden mandar.
+   */
+  const porCuenta: PendienteDeCuenta[] = cupo.cuentas.map((c) => ({
+    cuentaId: c.id,
+    igUsername: c.igUsername,
+    activa: c.id === cupo.activa?.id,
+    usadoHoy: c.enviadosHoy,
+    cupoDiario: c.cupoDiario,
+    restante: c.restante,
+    seguimientos: items.filter((i) => i.paso > 1 && i.cuentaId === c.id).length,
+  }))
+
   return {
     items,
     cupo,
+    porCuenta,
     seguimientos: seguimientos.length,
     seguimientosAtrasados: seguimientos.filter((i) => i.diasAtraso > 0).length,
     diasDeAtraso: seguimientos.reduce((a, i) => Math.max(a, i.diasAtraso), 0),

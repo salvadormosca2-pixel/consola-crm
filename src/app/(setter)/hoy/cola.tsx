@@ -35,6 +35,7 @@ import {
 import type { ColaDelSetter, ItemDeCola } from '@/server/setters/cola'
 import type { PuertaDeEntrada } from '@/server/setters/avisos'
 
+import { Cuentas } from './cuentas'
 import {
   AnuncioFijado,
   CartelDeCambio,
@@ -343,6 +344,9 @@ export function Cola({
         sinSincronizar={sinSincronizar}
       />
 
+      {/* Con más de una cuenta, cuál está usando y qué le falta en cada una. */}
+      <Cuentas cuentas={cola.porCuenta} onCambio={() => router.refresh()} />
+
       {puerta.fijados.map((a) => (
         <AnuncioFijado key={a.id} aviso={a} />
       ))}
@@ -355,6 +359,9 @@ export function Cola({
           motivo={motivoDelCambio(cola.cupo)}
           onCambiar={cambiarCuenta}
           pendiente={pendiente}
+          esperandoEnLaSiguiente={
+            cola.porCuenta.find((c) => c.cuentaId === cola.cupo.siguiente?.id)?.seguimientos ?? 0
+          }
         />
       ) : actual && !terminoPorCupo ? (
         <TarjetaDeLead

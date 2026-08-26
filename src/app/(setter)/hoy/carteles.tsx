@@ -307,6 +307,7 @@ export function CartelDeCambio({
   motivo,
   onCambiar,
   pendiente,
+  esperandoEnLaSiguiente,
 }: {
   cuentaActual: string
   cupo: number
@@ -314,6 +315,8 @@ export function CartelDeCambio({
   motivo: string
   onCambiar: (cuentaId: string) => void
   pendiente: boolean
+  /** Seguimientos que esperan en la cuenta siguiente. Le da sentido al cambio. */
+  esperandoEnLaSiguiente: number
 }) {
   return (
     <Panel className="border-rojo/45">
@@ -333,6 +336,17 @@ export function CartelDeCambio({
               Cambiá a <span className="dato text-texto">@{siguiente.igUsername}</span> en Instagram
               y confirmá acá.
             </p>
+
+            {/* Qué le espera del otro lado. Un cambio de cuenta sin motivo se
+                pospone; con el número a la vista, no. */}
+            {esperandoEnLaSiguiente > 0 ? (
+              <p className="mt-1.5 text-[13px] text-ambar">
+                Ahí te esperan{" "}
+                <span className="dato">{esperandoEnLaSiguiente}</span>{" "}
+                {esperandoEnLaSiguiente === 1 ? "seguimiento" : "seguimientos"} que solo se pueden
+                mandar desde esa cuenta.
+              </p>
+            ) : null}
             <Button
               variant="primaria"
               className="mt-4 h-12 w-full"
