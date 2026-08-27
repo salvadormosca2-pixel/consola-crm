@@ -142,7 +142,6 @@ jobs:
     name: Desplegar
     needs: imagen
     runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'push' }}
     steps:
       - name: Redesplegar en Railway
         env:
