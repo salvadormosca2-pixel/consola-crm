@@ -64,6 +64,14 @@ export function Importador({ mapeoPrevio }: { mapeoPrevio: Mapeo | null }) {
     if (inputRef.current) inputRef.current.value = ''
   }
 
+  /**
+   * Arranca un worker nuevo. **Solo al elegir un archivo.**
+   *
+   * El worker se queda con las filas parseadas en memoria para no volver a leer
+   * el Excel cada vez que se cambia el mapeo. Eso significa que el worker *es*
+   * el archivo abierto: crear otro en cualquier otro momento equivale a cerrar
+   * el archivo sin avisar.
+   */
   function crearWorker(): Worker {
     workerRef.current?.terminate()
     const w = new Worker(new URL('@/workers/parse-sheet.worker.ts', import.meta.url), {
@@ -73,32 +81,78 @@ export function Importador({ mapeoPrevio }: { mapeoPrevio: Mapeo | null }) {
     return w
   }
 
+  /**
+   * Un pedido al worker, con su propio oyente.
+   *
+   * El oyente se engancha antes de mandar y se suelta al llegar la respuesta.
+   * Con oyentes permanentes, cada archivo elegido dejaba uno más colgado y los
+   * de las etapas viejas reaccionaban a los mensajes de la nueva.
+   *
+   * Los mensajes de progreso no cierran el pedido: son varios y siguen viniendo
+   * hasta que llega el que se esperaba.
+   */
+  function pedirAlWorker<T>(
+    w: Worker,
+    mensaje: unknown,
+    espera: string,
+    transferibles?: Transferable[],
+  ): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      function alMensaje(e: MessageEvent): void {
+        const msg = e.data
+        if (msg?.tipo === 'progreso') {
+          setProgreso(msg)
+          return
+        }
+        w.removeEventListener('message', alMensaje)
+        if (msg?.tipo === espera) resolve(msg as T)
+        else if (msg?.tipo === 'error') reject(new Error(msg.mensaje))
+        else reject(new Error('El lector del archivo respondió algo inesperado.'))
+      }
+
+      w.addEventListener('message', alMensaje)
+      w.addEventListener(
+        'error',
+        () => {
+          w.removeEventListener('message', alMensaje)
+          reject(new Error('Se cortó la lectura del archivo. Probá de nuevo.'))
+        },
+        { once: true },
+      )
+
+      if (transferibles) w.postMessage(mensaje, transferibles)
+      else w.postMessage(mensaje)
+    })
+  }
+
   async function tomarArchivo(file: File) {
     setError(null)
     setEtapa('leyendo')
     setArchivo({ nombre: file.name })
 
     const w = crearWorker()
-    w.addEventListener('message', (e) => {
-      const msg = e.data
-      if (msg.tipo === 'progreso') setProgreso(msg)
-      else if (msg.tipo === 'leido') {
-        setEncabezados(msg.encabezados)
-        setVistaPrevia(msg.vistaPrevia)
-        setTotalFilas(msg.totalFilas)
-        // El mapeo guardado de la importación anterior gana sobre el sugerido,
-        // pero solo si las columnas coinciden con las de este archivo.
-        const previo = mapeoPrevio && sirveElMapeoPrevio(mapeoPrevio, msg.encabezados.length)
-        setMapeo(previo ? mapeoPrevio : msg.mapeoSugerido)
-        setEtapa('mapeando')
-      } else if (msg.tipo === 'error') {
-        setError(msg.mensaje)
-        setEtapa('vacio')
-      }
-    })
-
     const buffer = await file.arrayBuffer()
-    w.postMessage({ tipo: 'leer', archivo: buffer, nombre: file.name }, [buffer])
+
+    try {
+      const msg = await pedirAlWorker<{
+        encabezados: string[]
+        vistaPrevia: string[][]
+        totalFilas: number
+        mapeoSugerido: Mapeo
+      }>(w, { tipo: 'leer', archivo: buffer, nombre: file.name }, 'leido', [buffer])
+
+      setEncabezados(msg.encabezados)
+      setVistaPrevia(msg.vistaPrevia)
+      setTotalFilas(msg.totalFilas)
+      // El mapeo guardado de la importación anterior gana sobre el sugerido,
+      // pero solo si las columnas coinciden con las de este archivo.
+      const previo = mapeoPrevio && sirveElMapeoPrevio(mapeoPrevio, msg.encabezados.length)
+      setMapeo(previo ? mapeoPrevio : msg.mapeoSugerido)
+      setEtapa('mapeando')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'No se pudo leer el archivo.')
+      setEtapa('vacio')
+    }
   }
 
   async function importar() {
@@ -112,24 +166,48 @@ export function Importador({ mapeoPrevio }: { mapeoPrevio: Mapeo | null }) {
     setError(null)
     setEtapa('importando')
 
-    const w = crearWorker()
-    const filas = await new Promise<{ filas: FilaPreparada[]; duplicadasEnArchivo: number }>(
-      (resolve, reject) => {
-        w.addEventListener('message', (e) => {
-          const msg = e.data
-          if (msg.tipo === 'progreso') setProgreso(msg)
-          else if (msg.tipo === 'preparado') resolve(msg)
-          else if (msg.tipo === 'error') reject(new Error(msg.mensaje))
-        })
-        w.postMessage({ tipo: 'preparar', mapeo })
-      },
-    ).catch((e: Error) => {
+    /*
+     * **El mismo worker que leyó el archivo**, no uno nuevo.
+     *
+     * Las filas parseadas viven en la memoria de ese worker. Acá se creaba uno
+     * nuevo —y se mataba el que las tenía—, así que "preparar" corría sobre una
+     * lista vacía y devolvía cero filas. La importación seguía adelante sin
+     * error: abría el lote, no mandaba ninguno, lo cerraba, y terminaba con
+     * "0 contactos nuevos" sin decir por qué. El archivo se subía y se veía la
+     * vista previa, pero no se cargaba un solo lead.
+     */
+    const w = workerRef.current
+    if (!w) {
+      setError('Se perdió el archivo que habías abierto. Elegilo de nuevo.')
+      setEtapa('vacio')
+      return
+    }
+
+    const filas = await pedirAlWorker<{
+      filas: FilaPreparada[]
+      duplicadasEnArchivo: number
+    }>(w, { tipo: 'preparar', mapeo }, 'preparado').catch((e: Error) => {
       setError(e.message)
       setEtapa('mapeando')
       return null
     })
 
     if (!filas) return
+
+    /*
+     * Cero filas preparadas sobre un archivo que sí tenía filas es un fallo, no
+     * un resultado. Antes esto pasaba silencioso y la pantalla mostraba una
+     * importación exitosa de nada.
+     */
+    if (filas.filas.length === 0) {
+      setError(
+        totalFilas > 0
+          ? 'No se pudo preparar ninguna fila del archivo. Volvé a elegirlo.'
+          : 'El archivo no tiene filas para importar.',
+      )
+      setEtapa('mapeando')
+      return
+    }
 
     const apertura = await abrirImportacion(
       archivo.nombre,
