@@ -200,114 +200,66 @@ npm run user:create
 npm run dev
 ```
 
-## Desplegar en Hostinger (Coolify)
+## Cómo se despliega
 
-El circuito es: **push a `master` → GitHub Actions verifica, construye y publica
-la imagen → le avisa a Coolify → Coolify la baja y la pone en servicio.**
+Todo corre en **Railway**, proyecto `ecosystem`, con dos servicios: la
+aplicación y su Postgres. El dominio es `101leads.up.railway.app`.
 
-El build corre en GitHub y no en el VPS a propósito: `next build` pega un pico
-de más de 2 GB y en un KVM 2 eso compite con Chatwoot y Evolution hasta que el
-kernel mata alguno. El servidor solo baja la imagen ya hecha.
+El circuito es:
+
+**push a `master` → GitHub Actions verifica, construye la imagen y la publica en
+`ghcr.io/<repo>:latest` → le dice a Railway que la baje → Railway la pone en
+servicio.**
+
+El build corre en GitHub y no en Railway a propósito: `next build` pega un pico
+de más de 2 GB, y pagar por esa RAM en cada despliegue no tiene sentido cuando
+el CI la da gratis. Railway solo baja la imagen ya hecha.
+
+### El paso que hay que tener cargado
+
+Railway no mira el repositorio: mira el registro de imágenes. Alguien le tiene
+que avisar que hay una nueva, y ese alguien es el último job del workflow, que
+usa el secreto **`RAILWAY_TOKEN`**.
+
+Sin ese secreto el despliegue **falla**, y es deliberado. Antes ese paso le
+avisaba a un Coolify que nunca existió: salía en verde diciendo "el despliegue
+se hace a mano", nadie lo leía, y la imagen quedaba publicada mientras
+producción seguía sirviendo la versión de semanas atrás. Se arreglaban errores,
+el CI se ponía verde, y en la app seguían intactos. Un despliegue que no
+despliega no puede parecer exitoso.
+
+Si hay que volver a crearlo:
+
+1. Railway → proyecto `ecosystem` → Settings → Tokens → uno para `production`.
+2. GitHub → Settings → Secrets and variables → Actions → `RAILWAY_TOKEN`.
+
+Para desplegar a mano, desde tu máquina con la CLI de Railway:
+
+```bash
+railway redeploy --service ecosystem --yes
+```
 
 ### Las migraciones no hay que acordarse de correrlas
 
 El contenedor migra la base **antes** de levantar el servidor. Si la migración
-falla, el proceso muere, Coolify no lo pone en servicio y sigue andando la
-versión anterior. Un despliegue que no sale es mucho mejor que uno roto.
+falla, el proceso muere, Railway no lo pone en servicio y sigue andando el
+despliegue anterior. Desplegar código nuevo contra una base vieja es imposible:
+o la base está al día, o la aplicación no levanta.
 
-No hace falta ningún comando previo ni acordarse de nada. Reiniciar el
-contenedor es gratis: cada migración se aplica una sola vez.
+### Las variables
 
-### Qué hay que configurar una sola vez
-
-**En Coolify**, creando la aplicación:
-
-| Campo | Valor |
-| --- | --- |
-| Imagen | `ghcr.io/salvadormosca2-pixel/consola-crm:latest` |
-| Puerto | `3000` |
-| Health check | `/api/salud` |
-
-Y las variables de `.env.example`, con tres cuidados:
-
-- `AUTH_URL` es el dominio real con `https://`, no `localhost`.
-- `DATABASE_URL` apunta al Postgres del servidor. Si es gestionado y pide TLS,
-  además `DATABASE_SSL=true`.
-- **`MODO_PRUEBA` no va.** Es la pasarela que entra sin contraseña. El código no
-  la compila fuera de desarrollo, pero mejor que la variable ni exista.
-
-**En GitHub → Settings → Secrets and variables → Actions:**
-
-| Secreto | De dónde sale |
-| --- | --- |
-| `COOLIFY_WEBHOOK` | Coolify → la aplicación → Webhooks → Deploy |
-| `COOLIFY_TOKEN` | Coolify → Keys & Tokens → API tokens |
-
-Sin estos dos el CI igual construye y publica la imagen; solo se saltea el aviso
-final, y el despliegue se da a mano desde Coolify.
-
-### El primer administrador
-
-La base arranca sin nadie. Para crear la cuenta madre, una sola vez:
-
-```bash
-docker run --rm -it --env-file .env \
-  ghcr.io/salvadormosca2-pixel/consola-crm:ops npm run user:create
-```
-
-Los setters se dan de alta después desde el panel, en **Equipo → Nuevo setter**.
-
-### Antes del primer despliegue
-
-- Respaldar la base. Las migraciones no borran datos, pero un respaldo antes de
-  un cambio de esquema no se discute.
-- Revisar que `AUTH_SECRET` y `ENCRYPTION_KEY` sean los del servidor y no los de
-  desarrollo. Si `AUTH_SECRET` cambia, se cierran todas las sesiones abiertas.
-
-### Verificar que quedó bien
-
-Desde cualquier lado, contra el dominio real:
-
-```bash
-VERIFICAR_URL=https://tudominio npm run verificar
-```
-
-Abre todas las pantallas y comprueba que cada acción quede guardada. Ojo: el
-modo prueba no existe en producción, así que ahí solo corren los chequeos que no
-necesitan sesión. Para el resto, entrá y probá a mano.
-
-## Desplegar en Vercel + Railway
-
-La aplicación entera va a **Vercel** y la base a **Railway**. No hay frontend y
-backend separados: es una sola aplicación Next.js —las pantallas y la lógica de
-servidor viven en el mismo proceso—, así que Vercel la sirve completa.
-
-### 1. La base, en Railway
-
-**New Project → Database → Add PostgreSQL.** No hay nada que configurar.
-
-Después, en la pestaña **Variables** de esa base, copiá **`DATABASE_PUBLIC_URL`**
-—la pública, no la interna—: Vercel se conecta desde afuera de Railway.
-
-### 2. La aplicación, en Vercel
-
-**Add New → Project → Import Git Repository** y elegí el repo.
-
-Vercel detecta Next.js solo. El `vercel.json` del repo ya trae lo demás: el
-comando de build, la región y la tarea programada.
-
-Las variables, en **Settings → Environment Variables**:
+Van en el servicio `ecosystem`, en Railway → Variables.
 
 | Variable | Valor |
 | --- | --- |
-| `DATABASE_URL` | el `DATABASE_PUBLIC_URL` de Railway |
-| `DATABASE_SSL` | `true` — Railway exige TLS desde afuera |
+| `DATABASE_URL` | la interna de Postgres: `postgres://…@postgres.railway.internal:5432/railway` |
+| `DATABASE_SSL` | `false` — la red interna de Railway no usa TLS |
 | `AUTH_SECRET` | `openssl rand -base64 32` |
 | `ENCRYPTION_KEY` | `openssl rand -base64 32` |
-| `AUTH_URL` | tu dominio de Vercel, con `https://` |
+| `AUTH_URL` | el dominio, con `https://` |
 | `AUTH_TRUST_HOST` | `true` |
 | `OPS_TIMEZONE` | `America/Argentina/Catamarca` |
-| `CRON_SECRET` | `openssl rand -hex 32` |
+| `TAREAS_SECRET` | `openssl rand -hex 32` |
 | `VAPID_PUBLIC_KEY` | de `npm run push:claves`, opcional |
 | `VAPID_PRIVATE_KEY` | ídem |
 | `VAPID_SUBJECT` | `mailto:vos@tudominio` |
@@ -315,49 +267,34 @@ Las variables, en **Settings → Environment Variables**:
 **`MODO_PRUEBA` no va.** Es la entrada sin contraseña; el código no la compila
 fuera de desarrollo, pero mejor que la variable ni exista.
 
-`AUTH_URL` recién lo sabés después del primer despliegue. Poné cualquier cosa,
-desplegá, copiá el dominio real y volvé a desplegar.
-
-### Las migraciones corren en el build
-
-En un servidor propio las corre el contenedor antes de arrancar. En Vercel no
-hay contenedor, así que corren en el build, **antes** de compilar: si fallan, el
-build falla, Vercel descarta el despliegue y sigue sirviendo la versión
-anterior.
-
-Solo se migra cuando `VERCEL_ENV` es `production`. Una vista previa de una rama
-compila contra la misma base y no puede cambiarle el esquema a lo que está en
-uso.
-
 ### El primer usuario
 
-La base arranca vacía. Desde tu máquina, con el `DATABASE_PUBLIC_URL` de
-Railway:
+La base arranca vacía. Desde tu máquina, con la CLI de Railway:
 
 ```bash
-DATABASE_URL='<la url de railway>' DATABASE_SSL=true \
-  npx tsx scripts/create-user.ts --email vos@dominio --name "Tu Nombre" --password unaclavelarga
+railway ssh --service ecosystem \
+  "node --import tsx scripts/create-user.ts --email vos@dominio --name 'Tu Nombre' --password unaclavelarga"
 ```
 
 Los setters se dan de alta después desde el panel, en **Equipo → Nuevo setter**.
 
 ### Las tareas del reloj
 
-`vercel.json` programa `/api/tareas` cada quince minutos. Vercel manda su
-`CRON_SECRET` en la cabecera y la ruta lo acepta, así que no hay que cablear
-nada.
-
-Eso dispara los recordatorios automáticos, el resumen del día y las alertas de
-atraso. El vencimiento de leads **no** depende de esto: se resuelve al abrir la
-cola, así que el sistema funciona igual si el cron falla.
+Los recordatorios automáticos, el resumen del día y las alertas de atraso salen
+de `/api/tareas`, que hay que llamar cada tanto con el `TAREAS_SECRET` en la
+cabecera. El vencimiento de leads **no** depende de eso: se resuelve al abrir la
+cola, así que el sistema funciona igual si el reloj falla.
 
 ### Qué mirar si algo no anda
 
+- **La app no cambia después de un push** — mirá el job "Desplegar" del
+  workflow. Si está en rojo por `RAILWAY_TOKEN`, la imagen se publicó pero nadie
+  la bajó: cargá el secreto o corré `railway redeploy` a mano.
 - **`too many clients`** — la base se quedó sin conexiones. Cada instancia abre
-  hasta tres; si Railway tiene un límite bajo, subilo o achicá `MAXIMO` en
+  hasta tres; si el plan tiene un límite bajo, subilo o achicá `MAXIMO` en
   `src/db/index.ts`.
-- **El build falla en la migración** — revisá `DATABASE_URL` y que
-  `DATABASE_SSL` esté en `true`.
+- **El arranque falla en la migración** — revisá `DATABASE_URL`, y que
+  `DATABASE_SSL` sea `false` con la URL interna y `true` con la pública.
 - **El login rebota** — `AUTH_URL` no coincide con el dominio real.
 - **`/api/salud` devuelve 503** — la aplicación levantó pero no llega a la base.
 

@@ -30,7 +30,15 @@ interface Resumen extends ResumenLote {
 
 export function Importador({ mapeoPrevio }: { mapeoPrevio: Mapeo | null }) {
   const [etapa, setEtapa] = React.useState<Etapa>('vacio')
-  const [archivo, setArchivo] = React.useState<{ nombre: string } | null>(null)
+  /**
+   * El archivo elegido, no solo su nombre.
+   *
+   * Se guarda el `File` porque al importar hay que volver a leerlo: el worker
+   * no recuerda nada entre pedidos, a propósito. Un `File` se puede leer las
+   * veces que haga falta, así que esto no ata la importación a que ningún
+   * proceso siga vivo.
+   */
+  const [archivo, setArchivo] = React.useState<{ nombre: string; file: File } | null>(null)
   const [encabezados, setEncabezados] = React.useState<string[]>([])
   const [vistaPrevia, setVistaPrevia] = React.useState<string[][]>([])
   const [totalFilas, setTotalFilas] = React.useState(0)
@@ -65,12 +73,11 @@ export function Importador({ mapeoPrevio }: { mapeoPrevio: Mapeo | null }) {
   }
 
   /**
-   * Arranca un worker nuevo. **Solo al elegir un archivo.**
+   * Arranca un worker nuevo, matando el anterior si lo hubiera.
    *
-   * El worker se queda con las filas parseadas en memoria para no volver a leer
-   * el Excel cada vez que se cambia el mapeo. Eso significa que el worker *es*
-   * el archivo abierto: crear otro en cualquier otro momento equivale a cerrar
-   * el archivo sin avisar.
+   * Se puede llamar cuando haga falta: el worker ya no guarda nada entre
+   * pedidos, así que reiniciarlo no pierde el archivo. Antes sí lo perdía, y
+   * era la causa de que la importación terminara en cero sin decir nada.
    */
   function crearWorker(): Worker {
     workerRef.current?.terminate()
@@ -128,7 +135,7 @@ export function Importador({ mapeoPrevio }: { mapeoPrevio: Mapeo | null }) {
   async function tomarArchivo(file: File) {
     setError(null)
     setEtapa('leyendo')
-    setArchivo({ nombre: file.name })
+    setArchivo({ nombre: file.name, file })
 
     const w = crearWorker()
     const buffer = await file.arrayBuffer()
@@ -167,26 +174,24 @@ export function Importador({ mapeoPrevio }: { mapeoPrevio: Mapeo | null }) {
     setEtapa('importando')
 
     /*
-     * **El mismo worker que leyó el archivo**, no uno nuevo.
+     * El archivo se vuelve a leer y viaja con el mapeo.
      *
-     * Las filas parseadas viven en la memoria de ese worker. Acá se creaba uno
-     * nuevo —y se mataba el que las tenía—, así que "preparar" corría sobre una
-     * lista vacía y devolvía cero filas. La importación seguía adelante sin
-     * error: abría el lote, no mandaba ninguno, lo cerraba, y terminaba con
-     * "0 contactos nuevos" sin decir por qué. El archivo se subía y se veía la
-     * vista previa, pero no se cargaba un solo lead.
+     * Antes el worker se quedaba con las filas parseadas y acá se le pedía que
+     * las preparara. Pero esta misma función arrancaba creando un worker nuevo,
+     * que mataba al que las tenía: preparaba una lista vacía, devolvía cero
+     * filas, y la importación seguía como si nada —abría el lote, no mandaba
+     * ninguno, lo cerraba— y mostraba "0 contactos nuevos" sin un solo error.
+     *
+     * Ahora cada pedido lleva el archivo, así que ningún worker puede quedarse
+     * con la mitad del trabajo.
      */
-    const w = workerRef.current
-    if (!w) {
-      setError('Se perdió el archivo que habías abierto. Elegilo de nuevo.')
-      setEtapa('vacio')
-      return
-    }
+    const w = crearWorker()
+    const buffer = await archivo.file.arrayBuffer()
 
     const filas = await pedirAlWorker<{
       filas: FilaPreparada[]
       duplicadasEnArchivo: number
-    }>(w, { tipo: 'preparar', mapeo }, 'preparado').catch((e: Error) => {
+    }>(w, { tipo: 'preparar', archivo: buffer, mapeo }, 'preparado', [buffer]).catch((e: Error) => {
       setError(e.message)
       setEtapa('mapeando')
       return null

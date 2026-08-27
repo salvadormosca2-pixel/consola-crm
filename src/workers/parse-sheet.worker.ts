@@ -1,9 +1,8 @@
 /// <reference lib="webworker" />
 
-import * as XLSX from 'xlsx'
-
-import { adivinarMapeo, type Mapeo } from '@/lib/import/columns'
-import { deduplicarArchivo, prepararFila, type FilaPreparada } from '@/lib/import/rows'
+import type { Mapeo } from '@/lib/import/columns'
+import { prepararTodo, vistazo } from '@/lib/import/hoja'
+import type { FilaPreparada } from '@/lib/import/rows'
 
 /**
  * Parseo del Excel en un hilo aparte.
@@ -11,11 +10,29 @@ import { deduplicarArchivo, prepararFila, type FilaPreparada } from '@/lib/impor
  * 1.000 filas parseadas y normalizadas en el hilo principal congelan la
  * pantalla varios segundos. Acá el navegador sigue respondiendo y la barra de
  * progreso avanza de verdad.
+ *
+ * Lo único que vive en este archivo es el ir y venir de mensajes. Todo lo que
+ * decide qué se importa está en `lib/import/hoja`, que sí se puede probar: el
+ * worker no se puede importar desde un test porque usa `self` y la librería del
+ * navegador, y tener lógica adentro significaba tenerla sin cobertura.
  */
 
+/**
+ * Los dos pedidos llevan el archivo. **El worker no guarda nada entre
+ * mensajes**, y eso es a propósito.
+ *
+ * Antes se quedaba con las filas parseadas para no releer el Excel al cambiar
+ * el mapeo. Suena a optimización sensata y costó una importación entera: el
+ * worker pasó a *ser* el archivo abierto, así que cualquier cosa que lo
+ * reiniciara —y la pantalla lo reiniciaba justo al importar— dejaba un worker
+ * vacío que preparaba cero filas sin quejarse de nada.
+ *
+ * Releer el archivo cuesta milisegundos y pasa una sola vez, al importar. Que
+ * cada pedido se baste a sí mismo vale muchísimo más que ese ahorro.
+ */
 type Entrada =
   | { tipo: 'leer'; archivo: ArrayBuffer; nombre: string }
-  | { tipo: 'preparar'; mapeo: Mapeo }
+  | { tipo: 'preparar'; archivo: ArrayBuffer; mapeo: Mapeo }
 
 type Salida =
   | { tipo: 'progreso'; etapa: string; hechas: number; total: number }
@@ -31,14 +48,10 @@ type Salida =
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope
 
-/** Se guardan entre mensajes para no volver a parsear al cambiar el mapeo. */
-let encabezados: string[] = []
-let filas: string[][] = []
-
 ctx.addEventListener('message', (e: MessageEvent<Entrada>) => {
   try {
     if (e.data.tipo === 'leer') leer(e.data.archivo)
-    else preparar(e.data.mapeo)
+    else preparar(e.data.archivo, e.data.mapeo)
   } catch (err) {
     responder({
       tipo: 'error',
@@ -54,56 +67,20 @@ function responder(msg: Salida): void {
 function leer(buffer: ArrayBuffer): void {
   responder({ tipo: 'progreso', etapa: 'Leyendo el archivo', hechas: 0, total: 1 })
 
-  const libro = XLSX.read(buffer, { type: 'array', cellDates: false, raw: false })
-  const primeraHoja = libro.SheetNames[0]
-  if (!primeraHoja) throw new Error('El archivo no tiene ninguna hoja.')
-
-  const hoja = libro.Sheets[primeraHoja]
-  if (!hoja) throw new Error('No se pudo leer la primera hoja.')
-
-  // header:1 devuelve un array de arrays, sin inventar nombres de columna.
-  // defval:'' evita que las celdas vacías corran las columnas de lugar.
-  const matriz = XLSX.utils.sheet_to_json<string[]>(hoja, {
-    header: 1,
-    defval: '',
-    blankrows: false,
-    raw: false,
-  })
-
-  if (matriz.length === 0) throw new Error('El archivo está vacío.')
-
-  encabezados = (matriz[0] ?? []).map((h) => String(h ?? '').trim())
-  filas = matriz.slice(1).map((f) => (f ?? []).map((c) => String(c ?? '')))
-
-  // Filas totalmente vacías al final de la hoja: Excel las agrega solo.
-  filas = filas.filter((f) => f.some((c) => c.trim().length > 0))
-
-  if (encabezados.length === 0) throw new Error('No se encontró la fila de encabezados.')
-
+  const v = vistazo(buffer)
   responder({
     tipo: 'leido',
-    encabezados,
-    vistaPrevia: filas.slice(0, 5),
-    totalFilas: filas.length,
-    mapeoSugerido: adivinarMapeo(encabezados, filas.slice(0, 40)),
+    encabezados: v.encabezados,
+    vistaPrevia: v.vistaPrevia,
+    totalFilas: v.totalFilas,
+    mapeoSugerido: v.mapeoSugerido,
   })
 }
 
-function preparar(mapeo: Mapeo): void {
-  const preparadas: FilaPreparada[] = []
-  const total = filas.length
+function preparar(buffer: ArrayBuffer, mapeo: Mapeo): void {
+  const { filas, duplicadasEnArchivo } = prepararTodo(buffer, mapeo, (hechas, total) => {
+    responder({ tipo: 'progreso', etapa: 'Normalizando', hechas, total })
+  })
 
-  for (let i = 0; i < total; i++) {
-    // rowNumber empieza en 2 porque la 1 es el encabezado, igual que en Excel.
-    preparadas.push(prepararFila(filas[i]!, mapeo, encabezados, i + 2))
-
-    if (i % 100 === 0 || i === total - 1) {
-      responder({ tipo: 'progreso', etapa: 'Normalizando', hechas: i + 1, total })
-    }
-  }
-
-  responder({ tipo: 'progreso', etapa: 'Buscando repetidos', hechas: total, total })
-  const { unicas, duplicadas } = deduplicarArchivo(preparadas)
-
-  responder({ tipo: 'preparado', filas: unicas, duplicadasEnArchivo: duplicadas.length })
+  responder({ tipo: 'preparado', filas, duplicadasEnArchivo })
 }

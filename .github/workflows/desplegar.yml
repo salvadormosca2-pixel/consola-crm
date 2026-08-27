@@ -1,6 +1,6 @@
-# Construye la imagen de la Consola y avisa a Coolify para que la descargue.
+# Construye la imagen de la Consola y le dice a Railway que la baje.
 #
-# El build corre acá y no en el VPS a propósito: `next build` pega un pico de
+# El build corre acá y no en el servidor a propósito: `next build` pega un pico de
 # más de 2 GB, y en un KVM 2 de 8 GB eso compite con Chatwoot y Evolution hasta
 # que el kernel mata alguno. El servidor solo baja la imagen ya hecha.
 
@@ -127,25 +127,46 @@ jobs:
           tags: ${{ env.IMAGEN }}:ops
           cache-from: type=gha
 
+  # Dónde corre esto de verdad: Railway, servicio `ecosystem` del proyecto
+  # `ecosystem`, tomando la imagen `:latest` de este mismo registro.
+  #
+  # Durante un tiempo este paso le avisaba solo a Coolify, y el webhook nunca
+  # estuvo cargado. El paso salía en verde diciendo "el despliegue se hace a
+  # mano" y nadie lo leía, así que **ningún push llegó a producción**: la imagen
+  # se publicaba y Railway seguía sirviendo la de semanas atrás. Un error se
+  # daba por arreglado al ver el CI verde y en la app seguía intacto.
+  #
+  # Por eso ahora, si no hay a quién avisarle, el paso **falla**. Un despliegue
+  # que no despliega no puede parecer exitoso.
   desplegar:
-    name: Avisar a Coolify
+    name: Desplegar
     needs: imagen
     runs-on: ubuntu-latest
     if: ${{ github.event_name == 'push' }}
     steps:
-      # Sin el webhook cargado el paso se saltea en vez de fallar: así el CI
-      # sirve igual mientras el servidor todavía no está configurado.
-      - name: Disparar el despliegue
+      - name: Redesplegar en Railway
         env:
-          WEBHOOK: ${{ secrets.COOLIFY_WEBHOOK }}
-          TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
         run: |
-          if [ -z "$WEBHOOK" ]; then
-            echo "COOLIFY_WEBHOOK todavía no está cargado."
-            echo "La imagen quedó publicada; el despliegue se hace a mano desde Coolify."
-            exit 0
+          set -euo pipefail
+
+          if [ -z "${RAILWAY_TOKEN:-}" ]; then
+            echo "::error::Falta el secreto RAILWAY_TOKEN: nadie va a bajar la imagen."
+            echo "La imagen quedó publicada, pero producción sigue con la versión"
+            echo "anterior. Esto falla a propósito: un despliegue que no despliega"
+            echo "no puede salir en verde."
+            echo
+            echo "Se arregla una sola vez:"
+            echo "  1. Railway → proyecto ecosystem → Settings → Tokens → crear uno"
+            echo "     para el entorno production."
+            echo "  2. GitHub → Settings → Secrets and variables → Actions →"
+            echo "     New repository secret → nombre RAILWAY_TOKEN."
+            exit 1
           fi
-          curl --fail --silent --show-error \
-               --request GET "$WEBHOOK" \
-               --header "Authorization: Bearer $TOKEN"
-          echo "Despliegue disparado."
+
+          npm install --global @railway/cli
+
+          # El token de proyecto ya trae el proyecto y el entorno adentro; lo
+          # único que hay que decirle es qué servicio redesplegar.
+          railway redeploy --service ecosystem --yes
+          echo "Railway redesplegado con la imagen recién publicada."
