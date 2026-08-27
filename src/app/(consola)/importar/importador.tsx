@@ -26,6 +26,8 @@ interface Resumen extends ResumenLote {
   duplicadasEnArchivo: number
   batchId: string
   filename: string
+  /** A dónde fueron. Es lo primero que uno quiere saber al terminar. */
+  origen: ContactOrigen
 }
 
 export function Importador({ mapeoPrevio }: { mapeoPrevio: Mapeo | null }) {
@@ -261,6 +263,7 @@ export function Importador({ mapeoPrevio }: { mapeoPrevio: Mapeo | null }) {
       duplicadasEnArchivo: filas.duplicadasEnArchivo,
       batchId: apertura.batchId,
       filename: archivo.nombre,
+      origen,
     })
     setEtapa('listo')
     toast.success(`${total.insertados} contactos nuevos`)
@@ -457,8 +460,14 @@ export function Importador({ mapeoPrevio }: { mapeoPrevio: Mapeo | null }) {
       </Panel>
 
       <Panel className="p-3">
+        {/*
+          Esta elección decide **a dónde van** los contactos, y equivocarse no
+          da ningún error: se importan igual y no aparecen nunca en la cola de
+          los setters. Por eso cada opción dice su destino en vez de esconderlo
+          en una línea de ayuda, y la elegida lo repite abajo en claro.
+        */}
         <div className="mb-3 border-b border-borde pb-3">
-          <span className="rotulo">De dónde salió esta lista</span>
+          <span className="rotulo">Quién va a trabajar esta lista</span>
           <div className="mt-1.5 flex flex-wrap gap-1.5">
             {CONTACT_ORIGENES.map((o) => (
               <button
@@ -466,18 +475,28 @@ export function Importador({ mapeoPrevio }: { mapeoPrevio: Mapeo | null }) {
                 type="button"
                 onClick={() => setOrigen(o)}
                 className={
-                  'h-7.5 rounded-[5px] border px-3 text-[12.5px] font-medium ' +
+                  'flex flex-col items-start gap-0.5 rounded-[6px] border px-3 py-1.5 text-left ' +
                   (origen === o
                     ? 'border-acento/40 bg-acento-tenue text-acento'
                     : 'border-borde bg-elevada text-texto-2 hover:text-texto')
                 }
               >
-                {ORIGEN_META[o].label}
+                <span className="text-[12.5px] font-medium">{ORIGEN_META[o].label}</span>
+                <span className="text-[11px] font-normal opacity-80">
+                  {o === 'scrapeado' ? 'va a la cola de los setters' : 'la trabaja el Despachador'}
+                </span>
               </button>
             ))}
           </div>
-          <p className="mt-1.5 text-[11px] leading-relaxed text-texto-2">
-            {ORIGEN_META[origen].detalle}
+          <p
+            className={
+              'mt-1.5 text-[11.5px] leading-relaxed ' +
+              (origen === 'cliente' ? 'text-ambar' : 'text-texto-2')
+            }
+          >
+            {origen === 'cliente'
+              ? 'Ojo: los contactos entran a la base pero NO le aparecen a ningún setter. Si es una lista fría para trabajar por Instagram, elegí “Lead scrapeado”.'
+              : ORIGEN_META[origen].detalle}
           </p>
         </div>
 
@@ -543,7 +562,9 @@ function ResumenImportacion({
           descripcion={
             error
               ? 'La importación quedó incompleta.'
-              : 'Listo. Los contactos ya están en tu base.'
+              : resumen.origen === 'scrapeado'
+                ? 'Listo. Ya están en el pozo, esperando que los repartas en Equipo.'
+                : 'Listo, están en tu base. Ojo: como cliente propio NO le aparecen a ningún setter.'
           }
           acciones={
             <Button variant="secundaria" size="sm" onClick={onOtra}>
