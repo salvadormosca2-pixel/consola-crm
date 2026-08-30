@@ -836,3 +836,46 @@ describe('las situaciones que marca el setter', () => {
     expect(r.ok).toBe(false)
   })
 })
+
+describe('el candado de "primero abrí el chat"', () => {
+  /**
+   * `abierto_at` es "se abrió desde el último envío", no "se abrió alguna vez".
+   *
+   * Sellarlo una sola vez dejaba el botón "Enviado" habilitado de entrada en
+   * todos los seguimientos: el candado servía solo en la entrada, que es donde
+   * menos falta hace. En un seguimiento el pulgar ya conoce la pantalla.
+   */
+  async function leerAbierto(assignmentId: string): Promise<Date | null> {
+    const r = await pool.query<{ abierto_at: Date | null }>(
+      'select abierto_at from lead_assignments where id = $1',
+      [assignmentId],
+    )
+    return r.rows[0]?.abierto_at ?? null
+  }
+
+  async function abrir(assignmentId: string): Promise<void> {
+    await pool.query('update lead_assignments set abierto_at = now() where id = $1', [
+      assignmentId,
+    ])
+  }
+
+  it('cada envío rearma el candado', async () => {
+    const setter = await crearSetter(pool, { cupos: [30] })
+    const cuenta = setter.cuentas[0]!
+    const a = await asignar(pool, await crearLeadScrapeado(pool, 1), setter.setterId)
+
+    await abrir(a)
+    await marcar(a, setter.setterId, cuenta, 1)
+    // Mandada la entrada, para la oferta hay que volver a abrir el chat.
+    expect(await leerAbierto(a)).toBeNull()
+
+    await pool.query(
+      `update lead_assignments set proximo_seguimiento_at = now() - interval '1 hour'
+        where id = $1`,
+      [a],
+    )
+    await abrir(a)
+    await marcar(a, setter.setterId, cuenta, 2)
+    expect(await leerAbierto(a)).toBeNull()
+  })
+})

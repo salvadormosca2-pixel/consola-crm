@@ -249,6 +249,7 @@ export async function registrarEnvio(
           update lead_assignments
              set estado = 'contactado',
                  contactado_at = ${ahora.toISOString()}::timestamptz,
+                 abierto_at = null,
                  setter_account_id = ${cuenta.id}::uuid,
                  segundo_programado_at = ${siguiente!.cuando.toISOString()}::timestamptz,
                  proximo_paso = ${siguiente!.paso},
@@ -261,6 +262,7 @@ export async function registrarEnvio(
           update lead_assignments
              set estado = 'segundo_enviado',
                  segundo_mensaje_at = ${ahora.toISOString()}::timestamptz,
+                 abierto_at = null,
                  segundo_programado_at = null,
                  proximo_paso = ${siguiente?.paso ?? null},
                  proximo_seguimiento_at = ${siguiente?.cuando.toISOString() ?? null}::timestamptz,
@@ -279,7 +281,7 @@ export async function registrarEnvio(
           update lead_assignments
              set proximo_paso = ${siguiente?.paso ?? null},
                  proximo_seguimiento_at = ${siguiente?.cuando.toISOString() ?? null}::timestamptz,
-                 pospuesto_at = null
+                 pospuesto_at = null, abierto_at = null
            where id = ${params.assignmentId}::uuid
         `)
       }

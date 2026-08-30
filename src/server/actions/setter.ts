@@ -46,11 +46,16 @@ function refrescar(): void {
 /* ── La cola ──────────────────────────────────────────────────────────── */
 
 /**
- * Registra que abrió el chat.
+ * Queda registrado que abrió el chat de este lead.
  *
- * El botón de marcar enviado no se habilita hasta que pasa por acá. No es
- * desconfianza: evita marcados accidentales con el pulgar y deja registrada la
- * hora real en que se abrió la conversación.
+ * `abierto_at` no es "se abrió alguna vez": es **se abrió desde el último
+ * mensaje que salió**. Cada envío lo vuelve a poner en null, así que el candado
+ * del botón "Enviado" se rearma paso por paso.
+ *
+ * Antes se sellaba una sola vez con un `coalesce` y no se limpiaba nunca, así
+ * que a partir de la oferta el botón ya venía habilitado sin haber abierto
+ * nada: el candado solo servía en la entrada, que es justo donde menos falta
+ * hace: en un seguimiento el pulgar ya conoce la pantalla y marca de memoria.
  */
 export async function abrirChat(assignmentId: string): Promise<EstadoAccion> {
   try {

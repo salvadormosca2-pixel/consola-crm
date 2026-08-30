@@ -36,10 +36,14 @@ export interface ItemDeCola {
   igUsername: string
   niche: string | null
   city: string | null
-  /** Cuál de las cinco situaciones le toca a este lead ahora. */
+  /** En cuál de las situaciones está este lead ahora. */
   paso: PasoDeSeguimiento
   estado: LeadEstado
-  /** Ya tocó "Abrir Instagram": el botón de marcar está habilitado. */
+  /**
+   * Ya tocó "Abrir Instagram" **desde el último envío**: el botón de marcar
+   * está habilitado. Se rearma con cada mensaje que sale, así que un
+   * seguimiento no se puede marcar sin haber abierto la conversación.
+   */
   abierto: boolean
   /**
    * Desde qué cuenta hay que mandarlo.
@@ -139,8 +143,8 @@ export async function armarColaDelSetter(setterId: string): Promise<ColaDelSette
       join setters s on s.id = la.setter_id
      where la.setter_id = ${setterId}::uuid
        and (
-         -- Le toca un seguimiento: cualquiera de los cuatro que siguen a la
-         -- entrada, según en qué silencio quedó.
+         -- Le toca un seguimiento: cualquiera de los que siguen a la entrada,
+         -- según en qué silencio quedó o qué marcó el setter.
          (la.proximo_seguimiento_at is not null and la.proximo_seguimiento_at <= now())
          -- O nunca recibió nada y le toca la entrada.
          or la.estado in ('asignado', 'abierto', 'saltado')
