@@ -6,7 +6,7 @@ import { z } from 'zod'
 
 import { db } from '@/db'
 import type { EstadoAccion } from '@/lib/form-state'
-import { MENSAJES_CONFIG_KEY, mensajesConfigSchema } from '@/lib/mensajes-config'
+import { MENSAJES_CONFIG_KEY, mensajesConfigSchema, PASO_META, PASOS } from '@/lib/mensajes-config'
 import { SETTERS_CONFIG_KEY } from '@/lib/setters-config'
 import { variablesDesconocidas } from '@/lib/templates/render'
 import { ErrorDePermiso, exigirAdmin } from '@/server/session'
@@ -40,7 +40,7 @@ export async function guardarDatosDeMensajes(datos: unknown): Promise<EstadoAcci
         set value_jsonb = excluded.value_jsonb, updated_at = now()
     `)
 
-    revalidatePath('/configuracion')
+    revalidatePath('/seguimientos')
     return { ok: true, error: null }
   } catch (err) {
     return alFallar(err, 'No se pudieron guardar los datos.')
@@ -51,6 +51,11 @@ const tiemposSchema = z.object({
   horasSegundoMensaje: z.coerce.number().int().min(1).max(240),
   horasVencimiento: z.coerce.number().int().min(1).max(720),
   diasAtrasoParaAlerta: z.coerce.number().int().min(1).max(30),
+  /* Los tres reenganches. Son los que deciden cuándo vuelve a la cola un lead
+     que se calló, y cada silencio se espera distinto. */
+  diasParaUltimoIntento: z.coerce.number().int().min(1).max(60),
+  diasParaRetomarConversacion: z.coerce.number().int().min(1).max(90),
+  diasParaRetomarInteresado: z.coerce.number().int().min(1).max(90),
 })
 
 /**
@@ -77,7 +82,7 @@ export async function guardarTiempos(datos: unknown): Promise<EstadoAccion> {
         set value_jsonb = excluded.value_jsonb, updated_at = now()
     `)
 
-    revalidatePath('/configuracion')
+    revalidatePath('/seguimientos')
     return { ok: true, error: null }
   } catch (err) {
     return alFallar(err, 'No se pudieron guardar los tiempos.')
@@ -86,7 +91,12 @@ export async function guardarTiempos(datos: unknown): Promise<EstadoAccion> {
 
 const mensajeSchema = z.object({
   id: z.string().uuid().nullable().optional(),
-  paso: z.union([z.literal(1), z.literal(2)]),
+  paso: z
+    .number()
+    .int()
+    .refine((n): n is (typeof PASOS)[number] => (PASOS as readonly number[]).includes(n), {
+      message: 'Esa situación no existe.',
+    }),
   /** null o vacío = el mensaje general. */
   rubro: z.string().trim().max(60).nullable().optional(),
   cuerpo: z.string().trim().min(10, 'El mensaje es demasiado corto.').max(2000),
@@ -121,7 +131,7 @@ export async function guardarMensaje(datos: unknown): Promise<EstadoAccion> {
 
     const rubro = d.rubro?.trim() ? d.rubro.trim().toLowerCase() : null
     const variantes = d.variantes.filter((v) => v.trim().length > 0)
-    const nombre = `${d.paso === 1 ? 'Entrada' : 'Oferta'} · ${rubro ?? 'general'}`
+    const nombre = `${PASO_META[d.paso].label} · ${rubro ?? 'general'}`
 
     if (d.id) {
       await db.execute(sql`
@@ -156,7 +166,7 @@ export async function guardarMensaje(datos: unknown): Promise<EstadoAccion> {
       `)
     }
 
-    revalidatePath('/configuracion')
+    revalidatePath('/seguimientos')
     revalidatePath('/hoy')
     return { ok: true, error: null }
   } catch (err) {
@@ -172,7 +182,7 @@ export async function borrarMensaje(id: string): Promise<EstadoAccion> {
      * y borrarlo dejaría envíos sin saber qué texto salió.
      */
     await db.execute(sql`update templates set active = false, updated_at = now() where id = ${id}::uuid`)
-    revalidatePath('/configuracion')
+    revalidatePath('/seguimientos')
     return { ok: true, error: null }
   } catch (err) {
     return alFallar(err, 'No se pudo desactivar el mensaje.')

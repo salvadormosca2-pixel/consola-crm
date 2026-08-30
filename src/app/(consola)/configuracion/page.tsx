@@ -1,40 +1,12 @@
-import type { Metadata } from 'next'
-
-import { requerirAdmin } from '@/server/session'
-import { leerConfigSetters } from '@/server/setters/config'
-import { leerConfigDeMensajes, listarMensajes, rubrosConLeads } from '@/server/setters/mensajes'
-
-import { Editor } from './editor'
-
-export const metadata: Metadata = { title: 'Mensajes · 101leads' }
-export const dynamic = 'force-dynamic'
+import { redirect } from 'next/navigation'
 
 /**
- * Los mensajes que mandan los setters.
+ * Los mensajes y sus tiempos se mudaron a Seguimientos, que es de lo que son.
  *
- * Es la única configuración que quedó, y es la que más mueve el resultado: el
- * mensaje de entrada decide si contestan, y el de la oferta decide si compran.
+ * Queda el redirect porque esta ruta estuvo en la barra lateral: alguien la
+ * tiene abierta en una pestaña o guardada en el celular, y un 404 no explica
+ * nada. Referencias sigue colgando de acá.
  */
-export default async function PaginaMensajes() {
-  await requerirAdmin()
-
-  const [config, mensajes, rubros, cfg] = await Promise.all([
-    leerConfigDeMensajes(),
-    listarMensajes(),
-    rubrosConLeads(),
-    leerConfigSetters(),
-  ])
-
-  return (
-    <Editor
-      config={config}
-      mensajes={mensajes}
-      rubros={rubros}
-      tiempos={{
-        horasSegundoMensaje: cfg.horasSegundoMensaje,
-        horasVencimiento: cfg.horasVencimiento,
-        diasAtrasoParaAlerta: cfg.diasAtrasoParaAlerta,
-      }}
-    />
-  )
+export default function PaginaConfiguracion() {
+  redirect('/seguimientos')
 }

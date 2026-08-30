@@ -50,7 +50,12 @@ export default async function PaginaEquipo() {
         </div>
 
         <div className="flex flex-wrap gap-1.5">
-          <Atajo href="/equipo/seguimientos" icono={Repeat} texto="Seguimientos" alerta={atrasados} />
+          <Atajo
+            href="/equipo/seguimientos"
+            icono={Repeat}
+            texto="Control de seguimientos"
+            alerta={atrasados}
+          />
           <Atajo href="/equipo/leads" icono={UserCog} texto="Vistas de leads" />
           <Atajo href="/equipo/avisos" icono={Megaphone} texto="Mensajes al equipo" />
           {sesion.rol === 'admin_madre' ? (

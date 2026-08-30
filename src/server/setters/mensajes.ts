@@ -4,6 +4,7 @@ import { sql } from 'drizzle-orm'
 
 import { db } from '@/db'
 import {
+  esPaso,
   MENSAJES_CONFIG_KEY,
   MENSAJES_CONFIG_VACIA,
   mensajesConfigSchema,
@@ -17,7 +18,8 @@ import { renderParaVistaPrevia, variablesDesconocidas } from '@/lib/templates/re
  *
  * Se guardan en `templates`, la tabla que ya existía. Dos cosas la gobiernan:
  *
- *   · **el paso** — 1 es la entrada, 2 es la oferta;
+ *   · **la situación** — las cinco de `PASO_META`, de la entrada al reenganche
+ *     del que ya había dicho que le interesaba;
  *   · **el rubro** — si hay un mensaje escrito para el rubro del lead, gana ese;
  *     si no, se usa el general. Hablarle a una peluquería como a una ferretería
  *     es lo que hace que el mensaje se note copiado y pegado.
@@ -55,7 +57,7 @@ export async function listarMensajes(): Promise<MensajeGuardado[]> {
     select id, coalesce(sequence_step, 1) as paso, niche, body, variants, active, updated_at
       from templates
      where channel in ('instagram', 'ambos')
-       and coalesce(sequence_step, 1) in (1, 2)
+       and coalesce(sequence_step, 1) between 1 and 5
      order by coalesce(sequence_step, 1) asc, (niche is null) desc, niche asc
   `)
 
@@ -69,7 +71,7 @@ export async function listarMensajes(): Promise<MensajeGuardado[]> {
     updated_at: Date
   }>).map((f) => ({
     id: f.id,
-    paso: (f.paso === 2 ? 2 : 1) as Paso,
+    paso: esPaso(f.paso) ? f.paso : 1,
     rubro: f.niche,
     cuerpo: f.body,
     variantes: Array.isArray(f.variants)

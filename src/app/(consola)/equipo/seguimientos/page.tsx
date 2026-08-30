@@ -10,7 +10,7 @@ import { generalDeSeguimientos, leadsDeClasificacion } from '@/server/setters/se
 import { Clasificaciones } from './clasificaciones'
 import { ListaDeSetters } from './lista-de-setters'
 
-export const metadata: Metadata = { title: 'Seguimientos · 101leads' }
+export const metadata: Metadata = { title: 'Control de seguimientos · 101leads' }
 export const dynamic = 'force-dynamic'
 
 /**
@@ -42,11 +42,20 @@ export default async function PaginaSeguimientos({
         <Link href="/equipo" className="text-[12px] text-texto-2 hover:text-texto">
           ← Equipo
         </Link>
-        <h1 className="mt-1 text-[20px]">Seguimientos</h1>
+        <h1 className="mt-1 text-[20px]">Control de seguimientos</h1>
         <p className="mt-0.5 max-w-[720px] text-[12.5px] leading-relaxed text-texto-2">
           Cómo viene el equipo. Tocá cualquier número para ver de qué está hecho, y un nombre para
           entrar a su ficha. A los {cfg.diasAtrasoParaAlerta} días de atraso me llega la alerta.
         </p>
+        {/* Acá se mide si los seguimientos se hacen; en Seguimientos se define
+            cuándo salen y qué dicen. Son dos pantallas y conviene que se
+            encuentren, porque el número que falta casi siempre se arregla allá. */}
+        <Link
+          href="/seguimientos"
+          className="mt-1.5 inline-block text-[12.5px] text-acento hover:underline"
+        >
+          Ver los días y el mensaje de cada situación →
+        </Link>
       </div>
 
       {general.setters.length === 0 ? (

@@ -44,6 +44,9 @@ export interface TiemposDeSeguimiento {
   horasSegundoMensaje: number
   horasVencimiento: number
   diasAtrasoParaAlerta: number
+  diasParaUltimoIntento: number
+  diasParaRetomarConversacion: number
+  diasParaRetomarInteresado: number
 }
 
 export function Editor({
@@ -65,19 +68,21 @@ export function Editor({
   const usados = new Set(porRubro.map((m) => m.rubro))
   const disponibles = rubros.filter((r) => !usados.has(r.rubro))
 
+  const reloj = useTiempos(tiempos)
+
   return (
     <div className="space-y-3">
       <div>
-        <h1 className="text-[22px]">Mensajes</h1>
+        <h1 className="text-[22px]">Seguimientos</h1>
         <p className="mt-1 max-w-[720px] text-[13px] leading-relaxed text-texto-2">
-          Todo lo que mandan los setters lo escribís vos: el sistema no inventa ni completa texto.
-          Si una situación no tiene mensaje cargado, el setter no puede mandar nada en esa
-          situación y el lead le queda bloqueado con el motivo a la vista.
+          Un seguimiento no sale por orden de lista: sale por los días que pasaron y por la
+          situación en la que quedó el lead. Acá se define la escalera entera — cuántos días espera
+          cada situación y con qué texto vuelve. El texto lo escribís vos: si una situación no tiene
+          mensaje, el setter no puede trabajar los leads que caen ahí.
         </p>
       </div>
 
-      <DatosBase config={config} />
-      <Tiempos tiempos={tiempos} />
+      <Escalera mensajes={mensajes} reloj={reloj} activo={paso} onElegir={setPaso} />
 
       <nav className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-1" aria-label="Situaciones">
         {PASOS.map((p) => {
@@ -106,14 +111,9 @@ export function Editor({
         })}
       </nav>
 
-      <Panel className="border-borde bg-elevada">
-        <div className="px-4 py-3">
-          <p className="text-[13px] font-medium text-texto">{PASO_META[paso].cuando}</p>
-          <p className="mt-1 text-[12.5px] leading-relaxed text-texto-2">
-            {PASO_META[paso].objetivo}
-          </p>
-        </div>
-      </Panel>
+      {/* Los días de esta etapa, arriba de su texto y no en otro panel: son la
+          misma decisión partida en dos mitades — cuándo vuelve y qué le llega. */}
+      <Disparador paso={paso} reloj={reloj} />
 
       <MensajeEditable
         key={`general-${paso}-${general?.id ?? 'nuevo'}`}
@@ -139,8 +139,291 @@ export function Editor({
         <NuevoPorRubro paso={paso} config={config} rubros={disponibles} />
       ) : null}
 
+      <DatosBase config={config} />
+      <Generales reloj={reloj} />
       <Variables />
     </div>
+  )
+}
+
+/* ── La escalera ──────────────────────────────────────────────────────── */
+
+/**
+ * Qué hace volver a un lead, y cuánto espera antes.
+ *
+ * Los seguimientos no son una secuencia numerada: son cinco situaciones, y a
+ * cada una la dispara un silencio distinto. Un lead que nunca dijo nada y uno
+ * que dijo "me interesa" y se calló llevan los dos días de espera, pero no el
+ * mismo mensaje ni la misma cantidad de días.
+ *
+ * `campo` es qué número de la config lo demora. Null en la entrada, que no
+ * espera nada: sale cuando el setter la toma de su cola.
+ */
+type ClaveDeEspera = Exclude<keyof TiemposDeSeguimiento, 'horasVencimiento' | 'diasAtrasoParaAlerta'>
+
+interface Disparo {
+  /** En qué situación tiene que estar el lead para que le toque este mensaje. */
+  situacion: string
+  espera: { campo: ClaveDeEspera; unidad: string; desde: string; min: number; max: number } | null
+}
+
+const DISPARO: Record<Paso, Disparo> = {
+  1: {
+    situacion: 'Le cayó a un setter y todavía no recibió nada.',
+    espera: null,
+  },
+  2: {
+    situacion: 'Recibió la entrada y no contestó. Si contesta antes, este le toca en el acto.',
+    espera: {
+      campo: 'horasSegundoMensaje',
+      unidad: 'horas',
+      desde: 'después de la entrada',
+      min: 1,
+      max: 240,
+    },
+  },
+  3: {
+    situacion: 'Recibió los dos y nunca dijo nada. Es el último: después de este no se insiste más.',
+    espera: {
+      campo: 'diasParaUltimoIntento',
+      unidad: 'días',
+      desde: 'después de la oferta',
+      min: 1,
+      max: 60,
+    },
+  },
+  4: {
+    situacion: 'Había contestado, se estuvo hablando, y después desapareció.',
+    espera: {
+      campo: 'diasParaRetomarConversacion',
+      unidad: 'días',
+      desde: 'sin novedad',
+      min: 1,
+      max: 90,
+    },
+  },
+  5: {
+    situacion: 'Dijo que le interesaba la oferta y después dejó de contestar.',
+    espera: {
+      campo: 'diasParaRetomarInteresado',
+      unidad: 'días',
+      desde: 'sin novedad',
+      min: 1,
+      max: 90,
+    },
+  },
+}
+
+/**
+ * Los seis números, en un solo estado.
+ *
+ * Se guardan todos juntos porque son una sola configuración: editar los días
+ * de una etapa desde su pestaña y el vencimiento desde abajo tiene que llegar
+ * al mismo lugar sin pisarse.
+ */
+type Reloj = ReturnType<typeof useTiempos>
+
+function useTiempos(inicial: TiemposDeSeguimiento) {
+  const router = useRouter()
+  const [valores, setValores] = React.useState<Record<keyof TiemposDeSeguimiento, string>>(
+    () =>
+      Object.fromEntries(Object.entries(inicial).map(([k, v]) => [k, String(v)])) as Record<
+        keyof TiemposDeSeguimiento,
+        string
+      >,
+  )
+  const [pendiente, iniciar] = React.useTransition()
+
+  const claves = Object.keys(inicial) as Array<keyof TiemposDeSeguimiento>
+  const cambiado = claves.some((k) => Number(valores[k]) !== inicial[k])
+
+  function guardar(): void {
+    iniciar(async () => {
+      const r = await guardarTiempos(
+        Object.fromEntries(claves.map((k) => [k, Number(valores[k])])),
+      )
+      if (r.ok) {
+        toast.success('Guardado')
+        router.refresh()
+      } else toast.error(r.error ?? 'No se pudo guardar.')
+    })
+  }
+
+  return {
+    valores,
+    inicial,
+    pendiente,
+    cambiado,
+    guardar,
+    poner: (k: keyof TiemposDeSeguimiento, v: string) =>
+      setValores((prev) => ({ ...prev, [k]: v })),
+  }
+}
+
+/** El botón que guarda los seis números, esté donde esté el que tocaste. */
+function GuardarTiempos({ reloj }: { reloj: Reloj }) {
+  return (
+    <Button
+      variant="primaria"
+      className="mb-0.5"
+      disabled={reloj.pendiente || !reloj.cambiado}
+      onClick={reloj.guardar}
+    >
+      {reloj.pendiente ? 'Guardando…' : 'Guardar'}
+    </Button>
+  )
+}
+
+/**
+ * Las cinco situaciones en orden, con lo que las dispara.
+ *
+ * Es lo primero de la pantalla a propósito: el problema de tener los días en un
+ * panel y los textos en otro es que nunca se ve la escalera entera. Acá se ve,
+ * y tocando una se cae en su texto.
+ */
+function Escalera({
+  mensajes,
+  reloj,
+  activo,
+  onElegir,
+}: {
+  mensajes: MensajeGuardado[]
+  reloj: Reloj
+  activo: Paso
+  onElegir: (p: Paso) => void
+}) {
+  return (
+    <Panel>
+      <PanelHeader
+        titulo="Cómo vuelve un lead"
+        descripcion="Las cinco situaciones, en el orden en que le pueden pasar a un lead."
+      />
+      <ol className="divide-y divide-borde/60">
+        {PASOS.map((p) => {
+          const cargado = mensajes.some((m) => m.paso === p && m.rubro === null && m.activo)
+          const espera = DISPARO[p].espera
+          return (
+            <li key={p}>
+              <button
+                onClick={() => onElegir(p)}
+                aria-current={activo === p ? 'step' : undefined}
+                className={cn(
+                  'flex w-full items-baseline gap-3 px-3 py-2 text-left transition-colors duration-150',
+                  activo === p ? 'bg-acento-tenue' : 'hover:bg-elevada',
+                )}
+              >
+                <span className="dato w-[86px] shrink-0 text-[12px] text-acento">
+                  {espera
+                    ? `${reloj.valores[espera.campo]} ${espera.unidad}`
+                    : 'en el acto'}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-center gap-1.5 text-[13px] font-medium text-texto">
+                    {PASO_META[p].label}
+                    {!cargado ? (
+                      <span className="h-1.5 w-1.5 rounded-full bg-rojo" aria-label="sin cargar" />
+                    ) : null}
+                  </span>
+                  <span className="mt-0.5 block text-[12px] leading-relaxed text-texto-2">
+                    {DISPARO[p].situacion}
+                  </span>
+                </span>
+              </button>
+            </li>
+          )
+        })}
+      </ol>
+      <p className="border-t border-borde px-3 py-2 text-[11.5px] leading-relaxed text-texto-2">
+        El punto rojo es una situación sin mensaje escrito. Los leads que caen ahí le quedan
+        bloqueados al setter hasta que la cargues.
+      </p>
+    </Panel>
+  )
+}
+
+/* ── Cuándo se dispara la etapa que estás editando ────────────────────── */
+
+function Disparador({ paso, reloj }: { paso: Paso; reloj: Reloj }) {
+  const { situacion, espera } = DISPARO[paso]
+
+  return (
+    <Panel className="border-borde bg-elevada">
+      <div className="px-4 py-3">
+        <div className="rotulo mb-1">Cuándo le llega</div>
+        <p className="text-[13px] font-medium text-texto">{situacion}</p>
+        <p className="mt-1 text-[12.5px] leading-relaxed text-texto-2">{PASO_META[paso].objetivo}</p>
+
+        {espera ? (
+          <div className="mt-3 flex flex-wrap items-end gap-3 border-t border-borde pt-3">
+            <Field
+              label={`Vuelve a la cola a ${espera.unidad === 'horas' ? 'las' : 'los'}`}
+              className="w-[130px]"
+            >
+              <Input
+                type="number"
+                min={espera.min}
+                max={espera.max}
+                value={reloj.valores[espera.campo]}
+                onChange={(e) => reloj.poner(espera.campo, e.target.value)}
+              />
+            </Field>
+            <span className="pb-2 text-[13px] text-texto-2">
+              {espera.unidad} {espera.desde}
+            </span>
+            <GuardarTiempos reloj={reloj} />
+          </div>
+        ) : (
+          <p className="mt-3 border-t border-borde pt-3 text-[12.5px] text-texto-2">
+            Este no espera nada: sale cuando el setter toma el lead de su cola.
+          </p>
+        )}
+      </div>
+    </Panel>
+  )
+}
+
+/* ── Lo que no es de ninguna etapa ────────────────────────────────────── */
+
+function Generales({ reloj }: { reloj: Reloj }) {
+  return (
+    <Panel>
+      <PanelHeader
+        titulo="Vencimiento y alertas"
+        descripcion="No son de ninguna situación en particular: valen para toda la operación."
+      />
+      <div className="flex flex-wrap items-end gap-3 px-4 py-4">
+        <Field label="Un lead vence a las" className="w-[150px]">
+          <Input
+            type="number"
+            min={1}
+            max={720}
+            value={reloj.valores.horasVencimiento}
+            onChange={(e) => reloj.poner('horasVencimiento', e.target.value)}
+          />
+        </Field>
+        <span className="pb-2 text-[13px] text-texto-2">horas sin trabajarlo</span>
+
+        <Field label="Me avisás con" className="w-[150px]">
+          <Input
+            type="number"
+            min={1}
+            max={30}
+            value={reloj.valores.diasAtrasoParaAlerta}
+            onChange={(e) => reloj.poner('diasAtrasoParaAlerta', e.target.value)}
+          />
+        </Field>
+        <span className="pb-2 text-[13px] text-texto-2">días de atraso</span>
+
+        <GuardarTiempos reloj={reloj} />
+      </div>
+
+      <p className="border-t border-borde px-4 py-3 text-[12.5px] leading-relaxed text-texto-2">
+        Si el setter no manda el primero en {reloj.valores.horasVencimiento} h, el lead vuelve solo
+        al pozo y se le reparte a otro. Un lead ya contactado nunca vence: los seguimientos que le
+        quedan siguen siendo suyos. Y si la conversación sigue viva, el seguimiento se cancela desde
+        la bandeja.
+      </p>
+    </Panel>
   )
 }
 
@@ -190,117 +473,6 @@ function DatosBase({ config }: { config: MensajesConfig }) {
         >
           {pendiente ? 'Guardando…' : 'Guardar'}
         </Button>
-      </div>
-    </Panel>
-  )
-}
-
-/* ── Los tiempos del seguimiento ──────────────────────────────────────── */
-
-/**
- * Cuándo pasa cada cosa.
- *
- * Son las tres decisiones que definen el ritmo de la operación y no deberían
- * necesitar tocar el código. El texto de abajo cuenta el recorrido completo de
- * un lead con los números que están puestos, así se ve el efecto antes de
- * guardar.
- */
-function Tiempos({ tiempos }: { tiempos: TiemposDeSeguimiento }) {
-  const router = useRouter()
-  const [segundo, setSegundo] = React.useState(String(tiempos.horasSegundoMensaje))
-  const [vence, setVence] = React.useState(String(tiempos.horasVencimiento))
-  const [atraso, setAtraso] = React.useState(String(tiempos.diasAtrasoParaAlerta))
-  const [pendiente, iniciar] = React.useTransition()
-
-  const cambiado =
-    Number(segundo) !== tiempos.horasSegundoMensaje ||
-    Number(vence) !== tiempos.horasVencimiento ||
-    Number(atraso) !== tiempos.diasAtrasoParaAlerta
-
-  return (
-    <Panel>
-      <PanelHeader
-        titulo="Tiempos del seguimiento"
-        descripcion="Cuándo sale el segundo mensaje y cuánto aguanta un lead sin trabajar."
-      />
-
-      <div className="flex flex-wrap items-end gap-3 px-4 py-4">
-        <Field label="El 2do mensaje sale a las" className="w-[150px]">
-          <Input
-            type="number"
-            min={1}
-            max={240}
-            value={segundo}
-            onChange={(e) => setSegundo(e.target.value)}
-          />
-        </Field>
-        <span className="pb-2 text-[13px] text-texto-2">horas del primero</span>
-
-        <Field label="Un lead vence a las" className="w-[150px]">
-          <Input
-            type="number"
-            min={1}
-            max={720}
-            value={vence}
-            onChange={(e) => setVence(e.target.value)}
-          />
-        </Field>
-        <span className="pb-2 text-[13px] text-texto-2">horas sin trabajarlo</span>
-
-        <Field label="Me avisás con" className="w-[150px]">
-          <Input
-            type="number"
-            min={1}
-            max={30}
-            value={atraso}
-            onChange={(e) => setAtraso(e.target.value)}
-          />
-        </Field>
-        <span className="pb-2 text-[13px] text-texto-2">días de atraso</span>
-
-        <Button
-          variant="primaria"
-          className="mb-0.5"
-          disabled={pendiente || !cambiado}
-          onClick={() =>
-            iniciar(async () => {
-              const r = await guardarTiempos({
-                horasSegundoMensaje: Number(segundo),
-                horasVencimiento: Number(vence),
-                diasAtrasoParaAlerta: Number(atraso),
-              })
-              if (r.ok) {
-                toast.success('Guardado')
-                router.refresh()
-              } else toast.error(r.error ?? 'No se pudo guardar.')
-            })
-          }
-        >
-          {pendiente ? 'Guardando…' : 'Guardar'}
-        </Button>
-      </div>
-
-      <div className="border-t border-borde px-4 py-3 text-[12.5px] leading-relaxed text-texto-2">
-        <p className="mb-1 font-medium text-texto">Cómo queda el recorrido de un lead</p>
-        <ol className="list-inside list-decimal space-y-0.5">
-          <li>Le toca a un setter. Desde ahí tiene {vence} h para mandarle el primero.</li>
-          <li>
-            Manda el mensaje de entrada. El segundo queda programado para {segundo} h después.
-          </li>
-          <li>
-            Pasadas esas {segundo} h, el lead vuelve a su cola{' '}
-            <span className="text-texto">arriba de todo</span>, antes que cualquier lead nuevo.
-          </li>
-          <li>Manda la oferta. El lead sale de la cola y queda esperando respuesta.</li>
-          <li>
-            Si contesta, el setter lo marca y pasa a tu bandeja. Si no contesta, no se le manda
-            nada más: son dos mensajes y punto.
-          </li>
-        </ol>
-        <p className="mt-2">
-          Si no llega a mandar el primero en {vence} h, el lead vuelve solo al pozo y se le reparte
-          a otro. Un lead ya contactado nunca vence: el segundo mensaje sigue siendo suyo.
-        </p>
       </div>
     </Panel>
   )

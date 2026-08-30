@@ -33,6 +33,11 @@ export const MENSAJES_CONFIG_VACIA: MensajesConfig = mensajesConfigSchema.parse(
 export const PASOS = [1, 2, 3, 4, 5] as const
 export type Paso = (typeof PASOS)[number]
 
+/** Si un número guardado en la base es una de las cinco situaciones. */
+export function esPaso(n: unknown): n is Paso {
+  return typeof n === 'number' && (PASOS as readonly number[]).includes(n)
+}
+
 export interface MetaDePaso {
   label: string
   /** Cuándo le llega este mensaje al lead. */

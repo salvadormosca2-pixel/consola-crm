@@ -23,9 +23,9 @@ import type { FilaNotificacion } from '@/server/setters/notificaciones'
  * Ocho secciones y nada más.
  *
  * Cada una responde una pregunta concreta: quién trabajó, quién contestó, qué
- * reunión viene, quiénes son, de dónde salieron, qué les mandamos y qué les
- * contestamos cuando preguntan y qué hizo cada uno. Todo lo que no responde una
- * pregunta que alguien se hace no está.
+ * reunión viene, quiénes son, de dónde salieron, cuándo les volvemos a escribir
+ * y con qué, qué les contestamos cuando preguntan, y qué hizo cada uno. Todo lo
+ * que no responde una pregunta que alguien se hace no está.
  */
 const SECCIONES = [
   { href: '/equipo', label: 'Equipo', icono: UserCog },
@@ -33,7 +33,7 @@ const SECCIONES = [
   { href: '/reuniones', label: 'Reuniones', icono: CalendarDays },
   { href: '/contactos', label: 'Contactos', icono: Users },
   { href: '/importar', label: 'Importar', icono: Upload },
-  { href: '/configuracion', label: 'Mensajes', icono: MessageSquareText },
+  { href: '/seguimientos', label: 'Seguimientos', icono: MessageSquareText },
   { href: '/configuracion/referencias', label: 'Referencias', icono: BookOpen },
   { href: '/actividad', label: 'Actividad', icono: History },
 ] as const
@@ -50,9 +50,9 @@ export function Nav({
   const pathname = usePathname()
 
   /*
-   * Gana la sección más específica. Referencias cuelga de /configuracion, así
-   * que con un `startsWith` suelto se marcarían las dos y ninguna diría dónde
-   * estás parado.
+   * Gana la sección más específica. Referencias cuelga de /configuracion, y el
+   * control de seguimientos cuelga de /equipo: con un `startsWith` suelto se
+   * marcarían dos y ninguna diría dónde estás parado.
    */
   const seccionActiva = SECCIONES.map((s) => s.href)
     .filter((href) => pathname === href || pathname.startsWith(`${href}/`))

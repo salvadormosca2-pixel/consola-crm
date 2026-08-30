@@ -44,7 +44,7 @@ export default async function PaginaSeguimientosDelSetter({
     <div className="space-y-4">
       <div>
         <Link href="/equipo/seguimientos" className="text-[12px] text-texto-2 hover:text-texto">
-          ← Seguimientos
+          ← Control de seguimientos
         </Link>
         <div className="mt-1 flex flex-wrap items-end justify-between gap-3">
           <div>
