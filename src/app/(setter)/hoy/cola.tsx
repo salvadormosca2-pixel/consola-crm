@@ -581,6 +581,24 @@ function TarjetaDeLead({
       </div>
 
       <div className="space-y-2 border-t border-borde px-3 py-3">
+        {/*
+          Solo en el primer mensaje. Un DM de una cuenta que la persona no
+          sigue le cae en solicitudes, donde puede no mirar nunca; respondiendo
+          una historia el mismo texto entra derecho a su bandeja. En los
+          seguimientos no hace falta decirlo: el hilo ya está abierto.
+        */}
+        {!bloqueado && item.paso === 1 ? (
+          <div className="rounded-[5px] border border-acento/30 bg-acento-tenue px-2.5 py-2">
+            <p className="text-[12.5px] font-medium text-acento">
+              ¿Tiene historia subida? Respondele la historia.
+            </p>
+            <p className="mt-0.5 text-[12px] leading-relaxed text-texto-2">
+              Pegá este mismo mensaje ahí. Un mensaje suelto le cae en solicitudes y capaz no lo
+              ve nunca; una respuesta a la historia le llega a la bandeja y la abre.
+            </p>
+          </div>
+        ) : null}
+
         {!bloqueado ? (
           <Button
             variant={habilitado ? 'secundaria' : 'primaria'}
