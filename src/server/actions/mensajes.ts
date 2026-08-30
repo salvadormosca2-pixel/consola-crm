@@ -141,20 +141,47 @@ export async function guardarMensaje(datos: unknown): Promise<EstadoAccion> {
          where id = ${d.id}::uuid
       `)
     } else {
+      /*
+       * Quitar un mensaje de rubro lo desactiva, no lo borra: los envíos que ya
+       * salieron apuntan acá. Pero entonces el que se desactivó sigue ocupando
+       * el lugar, y escribir uno nuevo para ese mismo rubro chocaba con un
+       * "editá ese" que mandaba a editar algo que la pantalla ya no muestra —
+       * un callejón sin salida del que no se podía volver.
+       *
+       * Si el que está ocupando el lugar está desactivado, se reusa: es el
+       * mismo mensaje volviendo, y así los envíos viejos no pierden a qué
+       * apuntaban.
+       */
       const repetido = await db.execute(sql`
-        select 1 from templates
+        select id, active from templates
          where channel in ('instagram', 'ambos')
            and coalesce(sequence_step, 1) = ${d.paso}
            and coalesce(niche, '') = coalesce(${rubro}, '')
+         order by active desc, updated_at desc
          limit 1
       `)
-      if (repetido.rows.length > 0) {
+      const previo = repetido.rows[0] as { id: string; active: boolean } | undefined
+
+      if (previo?.active) {
         return {
           ok: false,
           error: rubro
             ? `Ya hay un mensaje para el rubro "${rubro}" en ese paso. Editá ese.`
             : 'Ya hay un mensaje general en ese paso. Editá ese.',
         }
+      }
+
+      if (previo) {
+        await db.execute(sql`
+          update templates
+             set body = ${d.cuerpo}, variants = ${JSON.stringify(variantes)}::jsonb,
+                 niche = ${rubro}, active = true, name = ${nombre},
+                 is_opening = ${d.paso === 1}, updated_at = now()
+           where id = ${previo.id}::uuid
+        `)
+        revalidatePath('/seguimientos')
+        revalidatePath('/hoy')
+        return { ok: true, error: null }
       }
 
       await db.execute(sql`
