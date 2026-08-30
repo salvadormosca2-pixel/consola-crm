@@ -2,40 +2,34 @@ import type { Metadata } from 'next'
 
 import { requerirAdmin } from '@/server/session'
 import { leerConfigSetters } from '@/server/setters/config'
-import { leerConfigDeMensajes, listarMensajes, rubrosConLeads } from '@/server/setters/mensajes'
+import { listarMensajes } from '@/server/setters/mensajes'
 
-import { Editor } from './editor'
+import { Tiempos } from './tiempos'
 
 export const metadata: Metadata = { title: 'Seguimientos · 101leads' }
 export const dynamic = 'force-dynamic'
 
 /**
- * Los seguimientos: cuándo vuelve un lead y con qué texto.
+ * Cuándo vuelve un lead a la cola, y con cuál de las situaciones.
  *
- * Las dos mitades de la misma decisión, y por eso están en una sola pantalla.
- * Tenerlas separadas —los días en un panel de configuración y los textos en
- * otro— hacía imposible ver la escalera completa, que es lo único que importa
- * entender acá: un seguimiento sale por los días que pasaron y por la
- * situación en la que quedó el lead, no por orden de lista.
+ * Acá está la escalera completa y nada más: un seguimiento sale por los días
+ * que pasaron y por la situación en la que quedó el lead, no por orden de
+ * lista, y eso solo se entiende viendo las situaciones juntas y comparables.
  *
- * El control de cómo viene el equipo con esos seguimientos está en Equipo:
- * esta pantalla define las reglas, esa mide si se cumplen.
+ * El texto de cada una se escribe en Mensajes. De ahí solo se lee si está
+ * escrito o no: una situación sin mensaje deja leads bloqueados, así que ese
+ * dato tiene que estar acá aunque el texto viva en la otra pantalla.
+ *
+ * Y el control de si el equipo los hace está en Equipo: esta pantalla define
+ * las reglas, esa mide si se cumplen.
  */
 export default async function PaginaSeguimientos() {
   await requerirAdmin()
 
-  const [config, mensajes, rubros, cfg] = await Promise.all([
-    leerConfigDeMensajes(),
-    listarMensajes(),
-    rubrosConLeads(),
-    leerConfigSetters(),
-  ])
+  const [cfg, mensajes] = await Promise.all([leerConfigSetters(), listarMensajes()])
 
   return (
-    <Editor
-      config={config}
-      mensajes={mensajes}
-      rubros={rubros}
+    <Tiempos
       tiempos={{
         horasSegundoMensaje: cfg.horasSegundoMensaje,
         horasVencimiento: cfg.horasVencimiento,
@@ -44,6 +38,9 @@ export default async function PaginaSeguimientos() {
         diasParaRetomarConversacion: cfg.diasParaRetomarConversacion,
         diasParaRetomarInteresado: cfg.diasParaRetomarInteresado,
         diasParaUltimoReenganche: cfg.diasParaUltimoReenganche,
+      }}
+      mensajes={{
+        escritos: mensajes.filter((m) => m.rubro === null && m.activo).map((m) => m.paso),
       }}
     />
   )

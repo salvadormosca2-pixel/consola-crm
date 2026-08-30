@@ -48,13 +48,13 @@ export default async function PaginaSeguimientos({
           entrar a su ficha. A los {cfg.diasAtrasoParaAlerta} días de atraso me llega la alerta.
         </p>
         {/* Acá se mide si los seguimientos se hacen; en Seguimientos se define
-            cuándo salen y qué dicen. Son dos pantallas y conviene que se
-            encuentren, porque el número que falta casi siempre se arregla allá. */}
+            cuándo salen. Son dos pantallas y conviene que se encuentren, porque
+            un número que no baja casi siempre se arregla cambiando los días. */}
         <Link
           href="/seguimientos"
           className="mt-1.5 inline-block text-[12.5px] text-acento hover:underline"
         >
-          Ver los días y el mensaje de cada situación →
+          Ver cuándo vuelve cada situación →
         </Link>
       </div>
 

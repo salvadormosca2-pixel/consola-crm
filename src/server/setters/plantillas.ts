@@ -116,7 +116,7 @@ export function armarMensaje(
   if (!plantilla) {
     return {
       ok: false,
-      motivo: `Todavía no escribiste el mensaje de "${PASO_META[paso].label}". Cargalo en Seguimientos.`,
+      motivo: `Todavía no escribiste el mensaje de "${PASO_META[paso].label}". Cargalo en Mensajes.`,
     }
   }
 

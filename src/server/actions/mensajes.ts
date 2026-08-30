@@ -40,6 +40,7 @@ export async function guardarDatosDeMensajes(datos: unknown): Promise<EstadoAcci
         set value_jsonb = excluded.value_jsonb, updated_at = now()
     `)
 
+    revalidatePath('/mensajes')
     revalidatePath('/seguimientos')
     return { ok: true, error: null }
   } catch (err) {
@@ -83,6 +84,7 @@ export async function guardarTiempos(datos: unknown): Promise<EstadoAccion> {
         set value_jsonb = excluded.value_jsonb, updated_at = now()
     `)
 
+    revalidatePath('/mensajes')
     revalidatePath('/seguimientos')
     return { ok: true, error: null }
   } catch (err) {
@@ -180,7 +182,8 @@ export async function guardarMensaje(datos: unknown): Promise<EstadoAccion> {
                  is_opening = ${d.paso === 1}, updated_at = now()
            where id = ${previo.id}::uuid
         `)
-        revalidatePath('/seguimientos')
+        revalidatePath('/mensajes')
+    revalidatePath('/seguimientos')
         revalidatePath('/hoy')
         return { ok: true, error: null }
       }
@@ -194,6 +197,7 @@ export async function guardarMensaje(datos: unknown): Promise<EstadoAccion> {
       `)
     }
 
+    revalidatePath('/mensajes')
     revalidatePath('/seguimientos')
     revalidatePath('/hoy')
     return { ok: true, error: null }
@@ -210,6 +214,7 @@ export async function borrarMensaje(id: string): Promise<EstadoAccion> {
      * y borrarlo dejaría envíos sin saber qué texto salió.
      */
     await db.execute(sql`update templates set active = false, updated_at = now() where id = ${id}::uuid`)
+    revalidatePath('/mensajes')
     revalidatePath('/seguimientos')
     return { ok: true, error: null }
   } catch (err) {

@@ -7,6 +7,7 @@ import {
   Inbox,
   LogOut,
   MessageSquareText,
+  Repeat,
   Upload,
   UserCog,
   Users,
@@ -20,12 +21,16 @@ import { cn } from '@/lib/utils'
 import type { FilaNotificacion } from '@/server/setters/notificaciones'
 
 /**
- * Ocho secciones y nada más.
+ * Nueve secciones y nada más.
  *
  * Cada una responde una pregunta concreta: quién trabajó, quién contestó, qué
- * reunión viene, quiénes son, de dónde salieron, cuándo les volvemos a escribir
- * y con qué, qué les contestamos cuando preguntan, y qué hizo cada uno. Todo lo
+ * reunión viene, quiénes son, de dónde salieron, qué les decimos, cuándo se lo
+ * decimos, qué les contestamos cuando preguntan, y qué hizo cada uno. Todo lo
  * que no responde una pregunta que alguien se hace no está.
+ *
+ * Mensajes y Seguimientos van separadas porque son dos trabajos distintos: el
+ * texto se reescribe todo el tiempo según qué contesta la gente, y los días se
+ * tocan una vez y quedan.
  */
 const SECCIONES = [
   { href: '/equipo', label: 'Equipo', icono: UserCog },
@@ -33,7 +38,8 @@ const SECCIONES = [
   { href: '/reuniones', label: 'Reuniones', icono: CalendarDays },
   { href: '/contactos', label: 'Contactos', icono: Users },
   { href: '/importar', label: 'Importar', icono: Upload },
-  { href: '/seguimientos', label: 'Seguimientos', icono: MessageSquareText },
+  { href: '/mensajes', label: 'Mensajes', icono: MessageSquareText },
+  { href: '/seguimientos', label: 'Seguimientos', icono: Repeat },
   { href: '/configuracion/referencias', label: 'Referencias', icono: BookOpen },
   { href: '/actividad', label: 'Actividad', icono: History },
 ] as const
