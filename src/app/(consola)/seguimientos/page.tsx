@@ -43,6 +43,7 @@ export default async function PaginaSeguimientos() {
         diasParaUltimoIntento: cfg.diasParaUltimoIntento,
         diasParaRetomarConversacion: cfg.diasParaRetomarConversacion,
         diasParaRetomarInteresado: cfg.diasParaRetomarInteresado,
+        diasParaUltimoReenganche: cfg.diasParaUltimoReenganche,
       }}
     />
   )

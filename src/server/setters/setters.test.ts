@@ -1,6 +1,7 @@
 import type { Pool } from 'pg'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
+import type { PasoDeSeguimiento } from '@/lib/setters-config'
 import {
   asignar,
   contarCupoDeSetter,
@@ -40,7 +41,12 @@ beforeEach(async () => {
   await limpiar(pool)
 })
 
-function marcar(assignmentId: string, setterId: string, cuentaId: string, paso: 1 | 2 | 3 | 4 | 5 = 1) {
+function marcar(
+  assignmentId: string,
+  setterId: string,
+  cuentaId: string,
+  paso: PasoDeSeguimiento = 1,
+) {
   return registrarEnvio(
     {
       assignmentId,
@@ -451,7 +457,7 @@ describe('reparto de una lista grande', () => {
   })
 })
 
-describe('la secuencia de cinco situaciones', () => {
+describe('la secuencia del que nunca contesta', () => {
   /** Deja el seguimiento del lead vencido, para que aparezca en la cola. */
   async function adelantarReloj(assignmentId: string): Promise<void> {
     await pool.query(
@@ -500,7 +506,7 @@ describe('la secuencia de cinco situaciones', () => {
     expect(await contarCupoDeSetter(pool, cuenta)).toBe(2)
   })
 
-  it('los cinco pasos consumen cupo del mismo modo', async () => {
+  it('todos los pasos consumen cupo del mismo modo', async () => {
     const setter = await crearSetter(pool, { cupos: [3] })
     const cuenta = setter.cuentas[0]!
     const a = await asignar(pool, await crearLeadScrapeado(pool, 1), setter.setterId)
@@ -725,5 +731,108 @@ describe('contestó la entrada: le toca la oferta', () => {
     expect(lead.proximo_paso).toBe(2)
     expect(lead.proximo_seguimiento_at!.getTime()).toBeLessThanOrEqual(Date.now())
     expect(await contarCupoDeSetter(pool, cuenta)).toBe(1)
+  })
+})
+
+describe('las situaciones que marca el setter', () => {
+  /**
+   * Las cuatro que se agregaron después de las cinco originales. Antes, tres de
+   * ellas no mandaban nada: el "le interesa" esperaba a enfriarse cinco días
+   * para recién ahí escribirle, el "no me interesa" se cerraba en silencio y
+   * una reunión quedaba de palabra. Estos tests fijan que ahora cada marca del
+   * setter tenga su propio mensaje, y que ninguna rama insista de más.
+   */
+  async function dejarPendiente(assignmentId: string, paso: number): Promise<void> {
+    await pool.query(
+      `update lead_assignments
+          set proximo_paso = $2, proximo_seguimiento_at = now() - interval '1 hour'
+        where id = $1`,
+      [assignmentId, paso],
+    )
+  }
+
+  async function leerPaso(assignmentId: string): Promise<number | null> {
+    const r = await pool.query<{ proximo_paso: number | null }>(
+      'select proximo_paso from lead_assignments where id = $1',
+      [assignmentId],
+    )
+    return r.rows[0]?.proximo_paso ?? null
+  }
+
+  /** Un lead que contestó la entrada y ya recibió la oferta. */
+  async function hastaLaOferta(setterId: string, cuenta: string): Promise<string> {
+    const a = await asignar(pool, await crearLeadScrapeado(pool, 1), setterId)
+    await marcar(a, setterId, cuenta, 1)
+    await pool.query(
+      `update lead_assignments
+          set estado = 'respondido', respondido_at = now(), segundo_programado_at = null,
+              respondio_a = 'primero', proximo_paso = 2, proximo_seguimiento_at = now()
+        where id = $1`,
+      [a],
+    )
+    await marcar(a, setterId, cuenta, 2)
+    return a
+  }
+
+  it('al reenganche le sigue el último de todos, y ahí se corta', async () => {
+    const setter = await crearSetter(pool, { cupos: [30] })
+    const cuenta = setter.cuentas[0]!
+    const a = await hastaLaOferta(setter.setterId, cuenta)
+
+    // Contestó la entrada, así que le tocó el 4 y no el 3.
+    expect(await leerPaso(a)).toBe(4)
+
+    await dejarPendiente(a, 4)
+    await marcar(a, setter.setterId, cuenta, 4)
+    expect(await leerPaso(a)).toBe(9)
+
+    await dejarPendiente(a, 9)
+    await marcar(a, setter.setterId, cuenta, 9)
+    // Se acabó: al noveno no le sigue nada.
+    expect(await leerPaso(a)).toBeNull()
+  })
+
+  it('mandado el "le interesa", queda su reenganche por si se enfría', async () => {
+    const setter = await crearSetter(pool, { cupos: [30] })
+    const cuenta = setter.cuentas[0]!
+    const a = await hastaLaOferta(setter.setterId, cuenta)
+
+    await dejarPendiente(a, 6)
+    const r = await marcar(a, setter.setterId, cuenta, 6)
+    expect(r.ok).toBe(true)
+
+    // El 5 es "le interesó y se enfrió": ya dijo que sí una vez.
+    expect(await leerPaso(a)).toBe(5)
+  })
+
+  it('un no se respeta: el cierre sale una vez y no encadena nada', async () => {
+    const setter = await crearSetter(pool, { cupos: [30] })
+    const cuenta = setter.cuentas[0]!
+    const a = await hastaLaOferta(setter.setterId, cuenta)
+
+    await dejarPendiente(a, 7)
+    await marcar(a, setter.setterId, cuenta, 7)
+    expect(await leerPaso(a)).toBeNull()
+  })
+
+  it('la confirmación de la reunión sale una vez y no encadena nada', async () => {
+    const setter = await crearSetter(pool, { cupos: [30] })
+    const cuenta = setter.cuentas[0]!
+    const a = await hastaLaOferta(setter.setterId, cuenta)
+
+    await dejarPendiente(a, 8)
+    await marcar(a, setter.setterId, cuenta, 8)
+    expect(await leerPaso(a)).toBeNull()
+  })
+
+  it('las nueve situaciones consumen cupo del mismo modo', async () => {
+    const setter = await crearSetter(pool, { cupos: [2] })
+    const cuenta = setter.cuentas[0]!
+    const a = await hastaLaOferta(setter.setterId, cuenta)
+
+    // La entrada y la oferta ya gastaron las dos del cupo.
+    await dejarPendiente(a, 4)
+    const r = await marcar(a, setter.setterId, cuenta, 4)
+    expect(r.ok).toBe(false)
   })
 })

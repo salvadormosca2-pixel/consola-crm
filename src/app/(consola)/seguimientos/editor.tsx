@@ -9,8 +9,8 @@ import { Button } from '@/components/ui/button'
 import { Field, Input, Textarea } from '@/components/ui/input'
 import { Chip, Panel, PanelHeader } from '@/components/ui/panel'
 import {
+  GRUPOS_DE_PASOS,
   PASO_META,
-  PASOS,
   VARIABLES_DISPONIBLES,
   type MensajesConfig,
   type Paso,
@@ -47,6 +47,7 @@ export interface TiemposDeSeguimiento {
   diasParaUltimoIntento: number
   diasParaRetomarConversacion: number
   diasParaRetomarInteresado: number
+  diasParaUltimoReenganche: number
 }
 
 export function Editor({
@@ -85,7 +86,7 @@ export function Editor({
       <Escalera mensajes={mensajes} reloj={reloj} activo={paso} onElegir={setPaso} />
 
       <nav className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-1" aria-label="Situaciones">
-        {PASOS.map((p) => {
+        {GRUPOS_DE_PASOS.flatMap((g) => g.pasos).map((p) => {
           const cargado = mensajes.some((m) => m.paso === p && m.rubro === null && m.activo)
           return (
             <button
@@ -212,6 +213,28 @@ const DISPARO: Record<Paso, Disparo> = {
       max: 90,
     },
   },
+  6: {
+    situacion: 'El setter marcó que contestó la oferta y que le interesa.',
+    espera: null,
+  },
+  7: {
+    situacion: 'El setter marcó que contestó la oferta y que no le interesa.',
+    espera: null,
+  },
+  8: {
+    situacion: 'El setter cargó la reunión.',
+    espera: null,
+  },
+  9: {
+    situacion: 'Ya recibió un reenganche y tampoco contestó. Es el último de todos.',
+    espera: {
+      campo: 'diasParaUltimoReenganche',
+      unidad: 'días',
+      desde: 'del reenganche anterior',
+      min: 1,
+      max: 120,
+    },
+  },
 }
 
 /**
@@ -296,43 +319,51 @@ function Escalera({
     <Panel>
       <PanelHeader
         titulo="Cómo vuelve un lead"
-        descripcion="Las cinco situaciones, en el orden en que le pueden pasar a un lead."
+        descripcion="Cada situación en la que puede quedar un lead, y qué la dispara."
       />
-      <ol className="divide-y divide-borde/60">
-        {PASOS.map((p) => {
-          const cargado = mensajes.some((m) => m.paso === p && m.rubro === null && m.activo)
-          const espera = DISPARO[p].espera
-          return (
-            <li key={p}>
-              <button
-                onClick={() => onElegir(p)}
-                aria-current={activo === p ? 'step' : undefined}
-                className={cn(
-                  'flex w-full items-baseline gap-3 px-3 py-2 text-left transition-colors duration-150',
-                  activo === p ? 'bg-acento-tenue' : 'hover:bg-elevada',
-                )}
-              >
-                <span className="dato w-[86px] shrink-0 text-[12px] text-acento">
-                  {espera
-                    ? `${reloj.valores[espera.campo]} ${espera.unidad}`
-                    : 'en el acto'}
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="flex items-center gap-1.5 text-[13px] font-medium text-texto">
-                    {PASO_META[p].label}
-                    {!cargado ? (
-                      <span className="h-1.5 w-1.5 rounded-full bg-rojo" aria-label="sin cargar" />
-                    ) : null}
-                  </span>
-                  <span className="mt-0.5 block text-[12px] leading-relaxed text-texto-2">
-                    {DISPARO[p].situacion}
-                  </span>
-                </span>
-              </button>
-            </li>
-          )
-        })}
-      </ol>
+      {GRUPOS_DE_PASOS.map((grupo) => (
+        <div key={grupo.titulo} className="border-t border-borde first:border-t-0">
+          <div className="bg-elevada px-3 py-1.5">
+            <p className="text-[12px] font-medium text-texto">{grupo.titulo}</p>
+            <p className="text-[11.5px] leading-relaxed text-texto-2">{grupo.detalle}</p>
+          </div>
+          <ol className="divide-y divide-borde/60">
+            {grupo.pasos.map((p) => {
+              const cargado = mensajes.some((m) => m.paso === p && m.rubro === null && m.activo)
+              const espera = DISPARO[p].espera
+              return (
+                <li key={p}>
+                  <button
+                    onClick={() => onElegir(p)}
+                    aria-current={activo === p ? 'step' : undefined}
+                    className={cn(
+                      'flex w-full items-baseline gap-3 px-3 py-2 text-left transition-colors duration-150',
+                      activo === p ? 'bg-acento-tenue' : 'hover:bg-elevada',
+                    )}
+                  >
+                    <span className="dato w-[86px] shrink-0 text-[12px] text-acento">
+                      {espera
+                        ? `${reloj.valores[espera.campo]} ${espera.unidad}`
+                        : 'en el acto'}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="flex items-center gap-1.5 text-[13px] font-medium text-texto">
+                        {PASO_META[p].label}
+                        {!cargado ? (
+                          <span className="h-1.5 w-1.5 rounded-full bg-rojo" aria-label="sin cargar" />
+                        ) : null}
+                      </span>
+                      <span className="mt-0.5 block text-[12px] leading-relaxed text-texto-2">
+                        {DISPARO[p].situacion}
+                      </span>
+                    </span>
+                  </button>
+                </li>
+              )
+            })}
+          </ol>
+        </div>
+      ))}
       <p className="border-t border-borde px-3 py-2 text-[11.5px] leading-relaxed text-texto-2">
         El punto rojo es una situación sin mensaje escrito. Los leads que caen ahí le quedan
         bloqueados al setter hasta que la cargues.
@@ -374,7 +405,9 @@ function Disparador({ paso, reloj }: { paso: Paso; reloj: Reloj }) {
           </div>
         ) : (
           <p className="mt-3 border-t border-borde pt-3 text-[12.5px] text-texto-2">
-            Este no espera nada: sale cuando el setter toma el lead de su cola.
+            {paso === 1
+              ? 'Este no espera nada: sale cuando el setter toma el lead de su cola.'
+              : 'Este no espera nada: le aparece al setter apenas marca eso en la app, con la persona todavía del otro lado.'}
           </p>
         )}
       </div>

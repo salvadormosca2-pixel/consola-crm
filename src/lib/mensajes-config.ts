@@ -20,17 +20,24 @@ export type MensajesConfig = z.infer<typeof mensajesConfigSchema>
 
 export const MENSAJES_CONFIG_VACIA: MensajesConfig = mensajesConfigSchema.parse({})
 
-/* ── Las cinco situaciones ────────────────────────────────────────────── */
+/* ── Las situaciones ──────────────────────────────────────────────────── */
 
 /**
  * Cada mensaje responde a una situación distinta del lead, no a un número de
  * orden. Un lead que contestó y después se calló no necesita lo mismo que uno
  * que nunca dijo nada: son dos silencios distintos.
  *
+ * **Las situaciones son las que marca el setter.** No hay ninguna que el
+ * sistema deduzca por su cuenta: si en la app hay un botón que dice "le
+ * interesa", acá hay un mensaje para eso, y al revés. Es lo que hace que el
+ * texto que sale siempre corresponda a cómo está clasificado el lead.
+ *
  * El número es el que se guarda en `templates.sequence_step` y en
- * `lead_assignments.proximo_paso`.
+ * `lead_assignments.proximo_paso`, y **no se reordena nunca**: los mensajes ya
+ * escritos y los envíos ya hechos apuntan a estos números. Una situación nueva
+ * se agrega al final, aunque en el recorrido del lead pase antes.
  */
-export const PASOS = [1, 2, 3, 4, 5] as const
+export const PASOS = [1, 2, 3, 4, 5, 6, 7, 8, 9] as const
 export type Paso = (typeof PASOS)[number]
 
 /** Si un número guardado en la base es una de las cinco situaciones. */
@@ -88,10 +95,77 @@ export const PASO_META: Record<Paso, MetaDePaso> = {
     ejemplo:
       'Hola! Habíamos quedado en avanzar con {{oferta}}. ¿Te viene bien esta semana o lo vemos más adelante?',
   },
+  6: {
+    label: 'Le interesa',
+    cuando: 'El setter marcó "contestó la oferta" y puso que le interesa. Sale en el acto.',
+    objetivo:
+      'Ya dijo que sí. Este mensaje tiene que llevarlo a una fecha concreta, no a seguir charlando: cada día que pasa entre el sí y la reunión es un lead que se enfría.',
+    ejemplo:
+      'Buenísimo! ¿Te viene bien que hablemos 15 minutos? Decime qué día y hora te queda cómodo y lo dejamos agendado.',
+  },
+  7: {
+    label: 'No le interesa',
+    cuando: 'El setter marcó "contestó la oferta" y puso que no le interesa. Sale en el acto.',
+    objetivo:
+      'Cerrar bien. No es para convencerlo —dijo que no y hay que respetarlo—: es para que dentro de unos meses puedas volver a escribirle sin que te tenga bloqueado.',
+    ejemplo:
+      'Dale, te agradezco igual la respuesta. Quedo por acá por si en algún momento te sirve. Éxitos con {{negocio}}!',
+  },
+  8: {
+    label: 'Agendó reunión',
+    cuando: 'El setter cargó la reunión. Sale en el acto.',
+    objetivo:
+      'Dejar por escrito lo que se habló. Una reunión que quedó solo de palabra en un chat de Instagram es una reunión a la que no se presenta nadie.',
+    ejemplo:
+      'Listo, quedamos entonces. Te confirmo por acá el día antes. Si te surge algo avisame y lo movemos sin problema.',
+  },
+  9: {
+    label: 'Último reenganche',
+    cuando: 'Ya recibió un reenganche y tampoco contestó. Sale a los días que configures.',
+    objetivo:
+      'El último de todos, y el que cierra la relación. Corto, sin reproche y sin pedir nada: lo único que busca es dejar la puerta abierta para más adelante.',
+    ejemplo:
+      'Te dejo tranquilo por ahora. Si en algún momento te sirve lo que hacemos, escribime y lo vemos. Éxitos!',
+  },
 }
 
-/** Los tres que son reenganche: se disparan por silencio, no por secuencia. */
-export const PASOS_DE_REENGANCHE: readonly Paso[] = [3, 4, 5]
+/* ── Cómo se agrupan en pantalla ──────────────────────────────────────── */
+
+/**
+ * Los números están en el orden en que se fueron agregando; el recorrido del
+ * lead no. "Le interesa" es el 6 y pasa antes que "Le interesó y se enfrió",
+ * que es el 5.
+ *
+ * Por eso la pantalla no los lista por número sino por lo que le pasó al lead:
+ * qué le mandamos nosotros, qué le mandamos cuando se calla, y qué le mandamos
+ * cuando el setter marca lo que contestó.
+ */
+export interface GrupoDePasos {
+  titulo: string
+  detalle: string
+  pasos: readonly Paso[]
+}
+
+export const GRUPOS_DE_PASOS: readonly GrupoDePasos[] = [
+  {
+    titulo: 'Le escribimos',
+    detalle: 'Los dos que salen sí o sí, sin que el lead haya hecho nada.',
+    pasos: [1, 2],
+  },
+  {
+    titulo: 'Se calló',
+    detalle: 'Vuelven solos a la cola por silencio. Cuál le toca depende de hasta dónde llegó.',
+    pasos: [3, 4, 5, 9],
+  },
+  {
+    titulo: 'El setter lo marcó',
+    detalle: 'Salen en el acto, apenas el setter marca en la app qué contestó el lead.',
+    pasos: [6, 7, 8],
+  },
+]
+
+/** Los que son reenganche: se disparan por silencio, no por una marca. */
+export const PASOS_DE_REENGANCHE: readonly Paso[] = [3, 4, 5, 9]
 
 /* ── Variables ────────────────────────────────────────────────────────── */
 

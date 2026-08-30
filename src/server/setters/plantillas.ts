@@ -50,7 +50,7 @@ export async function leerPlantillasDeSetter(): Promise<PlantillasPorRubro> {
       from templates
      where active
        and (channel = 'instagram' or channel = 'ambos')
-       and coalesce(sequence_step, 1) between 1 and 5
+       and coalesce(sequence_step, 1) between 1 and 9
      order by coalesce(sequence_step, 1) asc, updated_at desc
   `)
 

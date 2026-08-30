@@ -37,6 +37,12 @@ export const settersConfigSchema = z.object({
   /** Días sin novedad después de un "me interesa" antes del reenganche (paso 5). */
   diasParaRetomarInteresado: z.number().int().min(1).max(90).default(5),
 
+  /**
+   * Días de silencio después de un reenganche antes del último de todos
+   * (paso 9). Es el que cierra: después de este no le vuelve a salir nada.
+   */
+  diasParaUltimoReenganche: z.number().int().min(1).max(120).default(7),
+
   /** Cupo por cuenta de Instagram que se propone al crear un setter. */
   cupoPorCuentaDefault: z.number().int().min(1).max(100).default(30),
 
@@ -125,7 +131,7 @@ export function calcularSegundoMensaje(cfg: SettersConfig, desde: Date = new Dat
 
 const DIA = 86_400_000
 
-export type PasoDeSeguimiento = 1 | 2 | 3 | 4 | 5
+export type PasoDeSeguimiento = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9
 export interface ProximoPaso {
   paso: PasoDeSeguimiento
   cuando: Date
@@ -134,15 +140,18 @@ export interface ProximoPaso {
 /**
  * Qué mensaje le toca después del que se acaba de mandar.
  *
- * Devuelve null cuando ya no le toca nada más: después del último intento se
- * deja de insistir. Si no contestó tres mensajes, el cuarto no lo va a
- * despertar, y cada intento de más es cupo gastado y riesgo para la cuenta.
- * A partir de ahí el lead pasa a la lista de recuperación.
+ * Devuelve null cuando ya no le toca nada más. Cada intento de más es cupo
+ * gastado y riesgo para la cuenta, así que ninguna rama sigue para siempre.
  *
  * Después de la oferta el silencio se lee distinto según quién lo hace: al que
  * nunca dijo nada le toca el último intento (paso 3), y al que había abierto
  * conversación y después se enfrió le toca el reenganche (paso 4). No es lo
  * mismo insistirle a un desconocido que a alguien con quien ya se habló.
+ *
+ * Las ramas terminan distinto a propósito. La del que nunca habló se corta en
+ * el 3: tres mensajes sin una sola respuesta y el cuarto no lo va a despertar.
+ * La del que alguna vez contestó llega hasta el 9, porque alguien que escribió
+ * una vez puede volver a escribir.
  */
 export function proximoSeguimiento(
   cfg: SettersConfig,
@@ -158,16 +167,36 @@ export function proximoSeguimiento(
       ? reengancheDeConversacion(cfg, desde)
       : { paso: 3, cuando: new Date(desde.getTime() + cfg.diasParaUltimoIntento * DIA) }
   }
+
+  /*
+   * Después de un reenganche queda uno solo más, y es el que cierra. Al que
+   * nunca dijo nada (paso 3) no le toca: ese ya recibió tres mensajes sin
+   * contestar ninguno, y un cuarto no lo va a despertar. Este es para el que
+   * en algún momento habló, que es el que puede volver.
+   */
+  if (paso === 4 || paso === 5) {
+    return { paso: 9, cuando: new Date(desde.getTime() + cfg.diasParaUltimoReenganche * DIA) }
+  }
+
+  /*
+   * Mandado el "le interesa", lo que puede pasar es que se enfríe otra vez. Ahí
+   * le toca el reenganche del interesado, que es el mensaje más valioso que
+   * hay: ya dijo que sí una vez.
+   */
+  if (paso === 6) return reengancheDeInteresado(cfg, desde)
+
+  // 3 cierra la rama del que nunca habló; 7 es un no y se respeta; 8 ya tiene
+  // la reunión encima; 9 es el último de todos.
   return null
 }
 
 /**
  * Contestó la entrada: le toca la oferta, y le toca **ahora**.
  *
- * Es el único paso que no espera. Los demás se programan para dentro de horas
- * o días porque nacen de un silencio; este nace de que la persona está del
- * otro lado escribiendo. Hacerlo esperar hasta mañana es perder la respuesta
- * que se acaba de ganar.
+ * Es uno de los cuatro que no esperan. Los que nacen de un silencio se
+ * programan para dentro de horas o días; los que nacen de una marca del setter
+ * salen ya, porque la persona está del otro lado escribiendo. Hacerlo esperar
+ * hasta mañana es perder la respuesta que se acaba de ganar.
  */
 export function ofertaTrasLaRespuesta(desde: Date = new Date()): ProximoPaso {
   return { paso: 2, cuando: desde }
@@ -187,4 +216,30 @@ export function reengancheDeInteresado(
   desde: Date = new Date(),
 ): ProximoPaso {
   return { paso: 5, cuando: new Date(desde.getTime() + cfg.diasParaRetomarInteresado * DIA) }
+}
+
+/* ── Los que salen apenas el setter marca ─────────────────────────────── */
+
+/**
+ * Tres situaciones que no nacen de un silencio sino de una marca en la app, y
+ * por eso ninguna espera: el lead está del otro lado, ahora.
+ *
+ * Antes estas tres no mandaban nada. El "le interesa" quedaba esperando cinco
+ * días a enfriarse para recién ahí escribirle, el "no me interesa" se cerraba
+ * en silencio, y una reunión agendada quedaba de palabra en un chat.
+ */
+
+/** Dijo que le interesa la oferta. Le toca el mensaje que lleva a la fecha. */
+export function mensajeDeInteres(desde: Date = new Date()): ProximoPaso {
+  return { paso: 6, cuando: desde }
+}
+
+/** Dijo que no. Le toca el cierre cordial, que deja la puerta abierta. */
+export function mensajeDeRechazo(desde: Date = new Date()): ProximoPaso {
+  return { paso: 7, cuando: desde }
+}
+
+/** Quedó agendada la reunión. Le toca la confirmación por escrito. */
+export function mensajeDeReunion(desde: Date = new Date()): ProximoPaso {
+  return { paso: 8, cuando: desde }
 }

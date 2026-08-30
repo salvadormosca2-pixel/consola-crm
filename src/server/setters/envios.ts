@@ -138,7 +138,12 @@ export async function registrarEnvio(
             ? contestoLaEntrada
               ? ['contactado', 'respondido']
               : ['contactado']
-            : ['contactado', 'segundo_enviado', 'respondido']
+            : /*
+               * Los reenganches y los tres que salen por marca del setter caen
+               * todos acá: sobre un lead ya trabajado. Lo que manda no es el
+               * estado sino que el paso sea el que tenía programado.
+               */
+              ['contactado', 'segundo_enviado', 'respondido']
 
       if (!esperado.includes(asignacion.estado)) {
         /*
@@ -229,9 +234,12 @@ export async function registrarEnvio(
       }
 
       /*
-       * Qué le toca después. La secuencia decide sola: entrada → oferta →
-       * último intento → se deja de insistir. Los reenganches (4 y 5) no se
-       * encadenan desde acá: los dispara el silencio después de una respuesta.
+       * Qué le toca después. La cadena decide sola, y adónde va depende de si
+       * el lead alguna vez habló: el que nunca dijo nada termina en el último
+       * intento, y el que contestó sigue hasta el último reenganche. Las tres
+       * situaciones que salen por marca del setter (le interesa, no le
+       * interesa, agendó reunión) no se encadenan desde acá: las programa la
+       * acción que las marca.
        */
       const siguiente = proximoSeguimiento(cfg, paso, ahora, asignacion.respondio_a !== null)
       const segundoAt = siguiente?.paso === 2 ? siguiente.cuando : null
@@ -263,11 +271,15 @@ export async function registrarEnvio(
         /*
          * Un reenganche no cambia el estado del lead: seguía siendo "respondió"
          * o "segundo enviado" antes y lo sigue siendo. Lo único que cambia es
-         * que ya no le toca nada más.
+         * qué le toca después, y eso lo decide la cadena: al reenganche le
+         * sigue el último de todos, al "le interesa" le sigue su reenganche por
+         * si se enfría, y a los demás no les sigue nada.
          */
         await tx.execute(sql`
           update lead_assignments
-             set proximo_paso = null, proximo_seguimiento_at = null, pospuesto_at = null
+             set proximo_paso = ${siguiente?.paso ?? null},
+                 proximo_seguimiento_at = ${siguiente?.cuando.toISOString() ?? null}::timestamptz,
+                 pospuesto_at = null
            where id = ${params.assignmentId}::uuid
         `)
       }

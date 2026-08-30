@@ -8,8 +8,12 @@ import { db } from '@/db'
 
 import type { EstadoAccion } from '@/lib/form-state'
 import { cuantosEntregar } from '@/lib/setters-cupo'
-import { ofertaTrasLaRespuesta, reengancheDeInteresado } from '@/lib/setters-config'
-import { leerConfigSetters } from '@/server/setters/config'
+import {
+  mensajeDeInteres,
+  mensajeDeRechazo,
+  mensajeDeReunion,
+  ofertaTrasLaRespuesta,
+} from '@/lib/setters-config'
 import { OPS_TZ } from '@/lib/tz'
 import { borrarSuscripcion, guardarSuscripcion } from '@/server/push'
 import { ErrorDePermiso, exigirSesion, exigirSetter } from '@/server/session'
@@ -377,21 +381,24 @@ export async function marcarRespondio(
     }
 
     /*
-     * Contestar no es el final: es donde el lead pasa a lo que sigue.
+     * Contestar no es el final: es donde el lead pasa a lo que sigue, y lo que
+     * sigue sale **ya**, no dentro de unos días. Los tres casos son distintos y
+     * cada uno tiene su propio texto:
      *
-     * Si contestó la entrada, lo que sigue es **la oferta, ya mismo**: recién
-     * ahí se entera de a qué nos dedicamos, y está del otro lado escribiendo.
-     * Si contestó la oferta y le interesó, lo que sigue es el reenganche por si
-     * se enfría. Un "no me interesa" no encadena nada: dijo que no y hay que
-     * respetarlo.
+     *   · contestó la entrada → la oferta, que es de lo que todavía no se
+     *     enteró;
+     *   · contestó la oferta y le interesa → el mensaje que lo lleva a una
+     *     fecha concreta, antes de que el sí se enfríe;
+     *   · contestó la oferta y no le interesa → el cierre cordial. Dijo que no
+     *     y se respeta, pero se cierra bien: dentro de unos meses se le puede
+     *     volver a escribir si no quedó un silencio incómodo.
      */
-    const cfg = await leerConfigSetters()
     const siguiente =
-      interes === 'no_interesa'
-        ? null
-        : respondioA === 'segundo'
-          ? reengancheDeInteresado(cfg)
-          : ofertaTrasLaRespuesta()
+      respondioA === 'primero'
+        ? ofertaTrasLaRespuesta()
+        : interes === 'no_interesa'
+          ? mensajeDeRechazo()
+          : mensajeDeInteres()
 
     const filas = await db.execute(sql`
       update lead_assignments
@@ -523,6 +530,9 @@ export async function agendarReunion(
      */
     const cuando = `${parsed.data.fecha} ${parsed.data.hora}`
 
+    // La confirmación por escrito, que sale apenas queda agendada.
+    const reunionAlLead = mensajeDeReunion()
+
     const reuniones = await db.execute(sql`
       insert into meetings (contact_id, scheduled_at, type, notes, setter_id)
       values (${fila.contact_id}::uuid,
@@ -543,7 +553,13 @@ export async function agendarReunion(
                                     ${vioLaOferta ? 'segundo' : 'primero'}::setter_send_tipo),
              interes = case when ${vioLaOferta} then coalesce(interes, 'interesa'::lead_interes)
                             else interes end,
-             proximo_paso = null, proximo_seguimiento_at = null,
+             /*
+              * Agendar no corta la conversación: la confirma. Antes esto ponía
+              * el próximo paso en null y la reunión quedaba de palabra en un
+              * chat de Instagram, que es a lo que no se presenta nadie.
+              */
+             proximo_paso = ${reunionAlLead.paso},
+             proximo_seguimiento_at = ${reunionAlLead.cuando.toISOString()}::timestamptz,
              marcado_por = ${propio ? null : sesion.userId}::uuid
        where id = ${assignmentId}::uuid
     `)

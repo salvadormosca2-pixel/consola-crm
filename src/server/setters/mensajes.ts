@@ -57,7 +57,7 @@ export async function listarMensajes(): Promise<MensajeGuardado[]> {
     select id, coalesce(sequence_step, 1) as paso, niche, body, variants, active, updated_at
       from templates
      where channel in ('instagram', 'ambos')
-       and coalesce(sequence_step, 1) between 1 and 5
+       and coalesce(sequence_step, 1) between 1 and 9
      order by coalesce(sequence_step, 1) asc, (niche is null) desc, niche asc
   `)
 

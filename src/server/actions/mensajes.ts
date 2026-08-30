@@ -56,6 +56,7 @@ const tiemposSchema = z.object({
   diasParaUltimoIntento: z.coerce.number().int().min(1).max(60),
   diasParaRetomarConversacion: z.coerce.number().int().min(1).max(90),
   diasParaRetomarInteresado: z.coerce.number().int().min(1).max(90),
+  diasParaUltimoReenganche: z.coerce.number().int().min(1).max(120),
 })
 
 /**
