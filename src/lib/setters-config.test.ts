@@ -80,7 +80,7 @@ describe('las escaleras bajan un escalón por vez y terminan', () => {
       const recorridos: Paso[] = [esperados[0]!]
       let actual: Paso | null = esperados[0]!
       while (actual !== null) {
-        const s = proximoSeguimiento(cfg, actual, T0, false)
+        const s = proximoSeguimiento(cfg, actual, T0, null)
         actual = s?.paso ?? null
         if (actual !== null) recorridos.push(actual)
       }
