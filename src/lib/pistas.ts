@@ -48,10 +48,18 @@ export function esPaso(n: unknown): n is Paso {
  * reusan porque hay envíos y textos que los apuntan, y el historial tiene que
  * poder decir qué se mandó.
  */
-export const PASOS_RETIRADOS: readonly Paso[] = [4, 5, 9]
+export const PASOS_RETIRADOS = [4, 5, 9] as const satisfies readonly Paso[]
+
+/**
+ * Va como tupla y no como `readonly Paso[]`: con el tipo ancho,
+ * `(typeof PASOS_RETIRADOS)[number]` se ensancha a *todos* los pasos, y el
+ * `Record` de sus etiquetas termina pidiendo una entrada por cada número que
+ * existe en vez de por estos tres.
+ */
+export type PasoRetirado = (typeof PASOS_RETIRADOS)[number]
 
 export function estaRetirado(paso: Paso): boolean {
-  return PASOS_RETIRADOS.includes(paso)
+  return (PASOS_RETIRADOS as readonly number[]).includes(paso)
 }
 
 /* ── Las pistas ───────────────────────────────────────────────────────── */
@@ -441,7 +449,7 @@ export interface MetaDePaso {
  * no cubriera los retirados, una pantalla de actividad reventaría al toparse
  * con un envío de hace dos meses.
  */
-const META_RETIRADOS: Record<(typeof PASOS_RETIRADOS)[number], MetaDePaso> = {
+const META_RETIRADOS: Record<PasoRetirado, MetaDePaso> = {
   4: {
     label: 'Contestó y se enfrió (retirado)',
     cuando: 'Del modelo viejo. Hoy ese lead va a la pista de tibio.',
@@ -489,7 +497,7 @@ export const PASO_META: Record<Paso, MetaDePaso> = (() => {
     }
   }
 
-  for (const p of PASOS_RETIRADOS) salida[p] = META_RETIRADOS[p as 4 | 5 | 9]
+  for (const p of PASOS_RETIRADOS) salida[p] = META_RETIRADOS[p]
 
   return salida
 })()
