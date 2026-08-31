@@ -1,6 +1,7 @@
 import type { Pool } from 'pg'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
+import { PISTA_META } from '@/lib/pistas'
 import type { PasoDeSeguimiento } from '@/lib/setters-config'
 import {
   asignar,
@@ -457,7 +458,7 @@ describe('reparto de una lista grande', () => {
   })
 })
 
-describe('la secuencia del que nunca contesta', () => {
+describe('las pistas: por dónde sigue el que no contesta', () => {
   /** Deja el seguimiento del lead vencido, para que aparezca en la cola. */
   async function adelantarReloj(assignmentId: string): Promise<void> {
     await pool.query(
@@ -475,22 +476,57 @@ describe('la secuencia del que nunca contesta', () => {
     return r.rows[0]?.proximo_paso ?? null
   }
 
-  it('encadena entrada → oferta → último intento, y ahí se detiene', async () => {
+  /** Manda una escalera entera y devuelve el paso en el que quedó. */
+  async function bajarEscalera(
+    a: string,
+    setterId: string,
+    cuenta: string,
+    pasos: readonly PasoDeSeguimiento[],
+  ): Promise<number | null> {
+    for (const paso of pasos) {
+      await adelantarReloj(a)
+      await marcar(a, setterId, cuenta, paso)
+    }
+    return leerPaso(a)
+  }
+
+  const REINTENTO = PISTA_META.sin_abrir.pasos.map((p) => p.paso)
+  const SILENCIO = PISTA_META.silencio.pasos.map((p) => p.paso)
+
+  it('el que nunca contestó la entrada no ve la oferta: va al reintento', async () => {
+    // Es el cambio de fondo. Antes la oferta salía igual a las horas, a alguien
+    // que jamás abrió el chat.
     const setter = await crearSetter(pool, { cupos: [30] })
     const cuenta = setter.cuentas[0]!
     const a = await asignar(pool, await crearLeadScrapeado(pool, 1), setter.setterId)
 
     await marcar(a, setter.setterId, cuenta, 1)
-    expect(await leerPaso(a)).toBe(2)
+    expect(await leerPaso(a)).toBe(REINTENTO[0])
+  })
 
+  it('el reintento son dos intentos y ahí se corta', async () => {
+    const setter = await crearSetter(pool, { cupos: [30] })
+    const cuenta = setter.cuentas[0]!
+    const a = await asignar(pool, await crearLeadScrapeado(pool, 1), setter.setterId)
+
+    await marcar(a, setter.setterId, cuenta, 1)
+    // Después del segundo no se insiste más: cada intento de más es cupo
+    // gastado y riesgo para la cuenta.
+    expect(await bajarEscalera(a, setter.setterId, cuenta, REINTENTO)).toBeNull()
+  })
+
+  it('mandada la oferta sin respuesta, baja los cuatro escalones de silencio', async () => {
+    const setter = await crearSetter(pool, { cupos: [30] })
+    const cuenta = setter.cuentas[0]!
+    const a = await asignar(pool, await crearLeadScrapeado(pool, 1), setter.setterId)
+
+    await marcar(a, setter.setterId, cuenta, 1)
     await adelantarReloj(a)
     await marcar(a, setter.setterId, cuenta, 2)
-    expect(await leerPaso(a)).toBe(3)
+    expect(await leerPaso(a)).toBe(SILENCIO[0])
 
-    await adelantarReloj(a)
-    await marcar(a, setter.setterId, cuenta, 3)
-    // Tres mensajes y se deja de insistir: el cuarto no lo va a despertar.
-    expect(await leerPaso(a)).toBeNull()
+    // Un seguimiento no es un mensaje: es una escalera, y se recorre entera.
+    expect(await bajarEscalera(a, setter.setterId, cuenta, SILENCIO)).toBeNull()
   })
 
   it('cada mensaje entra una sola vez aunque se marque dos veces', async () => {
@@ -500,13 +536,19 @@ describe('la secuencia del que nunca contesta', () => {
 
     await marcar(a, setter.setterId, cuenta, 1)
     await adelantarReloj(a)
-    await marcar(a, setter.setterId, cuenta, 2)
-    await marcar(a, setter.setterId, cuenta, 2)
+    await marcar(a, setter.setterId, cuenta, REINTENTO[0]!)
+    await marcar(a, setter.setterId, cuenta, REINTENTO[0]!)
 
     expect(await contarCupoDeSetter(pool, cuenta)).toBe(2)
   })
 
-  it('todos los pasos consumen cupo del mismo modo', async () => {
+  it('los seguimientos no gastan cupo: el chat ya está abierto', async () => {
+    /*
+     * Lo que hace que Instagram restrinja una cuenta es abrir chats nuevos con
+     * desconocidos, no seguir uno empezado. Si los seguimientos gastaran cupo,
+     * trabajar bien a los que ya contestaron competiría con abrir leads nuevos,
+     * que son dos cosas que no tienen por qué disputarse el mismo número.
+     */
     const setter = await crearSetter(pool, { cupos: [3] })
     const cuenta = setter.cuentas[0]!
     const a = await asignar(pool, await crearLeadScrapeado(pool, 1), setter.setterId)
@@ -514,18 +556,34 @@ describe('la secuencia del que nunca contesta', () => {
     await marcar(a, setter.setterId, cuenta, 1)
     await adelantarReloj(a)
     await marcar(a, setter.setterId, cuenta, 2)
-    await adelantarReloj(a)
-    await marcar(a, setter.setterId, cuenta, 3)
+    await bajarEscalera(a, setter.setterId, cuenta, SILENCIO)
 
-    expect(await contarCupoDeSetter(pool, cuenta)).toBe(3)
+    // Seis envíos salieron por esa cuenta…
+    expect(await contarCupoDeSetter(pool, cuenta)).toBe(6)
 
-    // La cuenta llegó a su tope: el cuarto rebota aunque sea otro lead.
+    // …pero de cupo solo gastaron los dos que abren: la entrada y la oferta.
+    // Por eso todavía entra una apertura más de las tres del día.
     const otro = await asignar(pool, await crearLeadScrapeado(pool, 2), setter.setterId)
-    const r = await marcar(otro, setter.setterId, cuenta, 1)
-    expect(r.ok).toBe(false)
+    expect((await marcar(otro, setter.setterId, cuenta, 1)).ok).toBe(true)
+
+    // Esa fue la tercera: la siguiente apertura ya rebota.
+    const tercero = await asignar(pool, await crearLeadScrapeado(pool, 3), setter.setterId)
+    expect((await marcar(tercero, setter.setterId, cuenta, 1)).ok).toBe(false)
   })
 
-  it('deshacer un reenganche lo deja pendiente otra vez', async () => {
+  it('el reintento sí gasta cupo, porque el chat nunca se abrió', async () => {
+    const setter = await crearSetter(pool, { cupos: [1] })
+    const cuenta = setter.cuentas[0]!
+    const a = await asignar(pool, await crearLeadScrapeado(pool, 1), setter.setterId)
+
+    await marcar(a, setter.setterId, cuenta, 1)
+    await adelantarReloj(a)
+
+    // La entrada ya consumió el único cupo del día.
+    expect((await marcar(a, setter.setterId, cuenta, REINTENTO[0]!)).ok).toBe(false)
+  })
+
+  it('deshacer un escalón lo deja pendiente otra vez', async () => {
     const setter = await crearSetter(pool, { cupos: [30] })
     const cuenta = setter.cuentas[0]!
     const a = await asignar(pool, await crearLeadScrapeado(pool, 1), setter.setterId)
@@ -534,15 +592,14 @@ describe('la secuencia del que nunca contesta', () => {
     await adelantarReloj(a)
     await marcar(a, setter.setterId, cuenta, 2)
     await adelantarReloj(a)
-    const envio = await marcar(a, setter.setterId, cuenta, 3)
+    const envio = await marcar(a, setter.setterId, cuenta, SILENCIO[0]!)
 
-    expect(await leerPaso(a)).toBeNull()
+    expect(await leerPaso(a)).toBe(SILENCIO[1])
 
     await deshacerEnvio((envio as { sendId: string }).sendId, setter.setterId, null, db)
 
-    // Si se marcó sin querer, el lead no puede perder su último intento.
-    expect(await leerPaso(a)).toBe(3)
-    expect(await contarCupoDeSetter(pool, cuenta)).toBe(2)
+    // Si se marcó sin querer, el lead no puede perder ese escalón.
+    expect(await leerPaso(a)).toBe(SILENCIO[0])
   })
 })
 

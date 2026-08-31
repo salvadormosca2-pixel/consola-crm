@@ -18,8 +18,9 @@ import { renderParaVistaPrevia, variablesDesconocidas } from '@/lib/templates/re
  *
  * Se guardan en `templates`, la tabla que ya existía. Dos cosas la gobiernan:
  *
- *   · **la situación** — las cinco de `PASO_META`, de la entrada al reenganche
- *     del que ya había dicho que le interesaba;
+ *   · **el paso** — el escalón concreto de una pista, o una de las tres
+ *     situaciones que el setter marca. El número es la identidad del texto y no
+ *     se reordena nunca: ver `pistas.ts`;
  *   · **el rubro** — si hay un mensaje escrito para el rubro del lead, gana ese;
  *     si no, se usa el general. Hablarle a una peluquería como a una ferretería
  *     es lo que hace que el mensaje se note copiado y pegado.
@@ -57,7 +58,7 @@ export async function listarMensajes(): Promise<MensajeGuardado[]> {
     select id, coalesce(sequence_step, 1) as paso, niche, body, variants, active, updated_at
       from templates
      where channel in ('instagram', 'ambos')
-       and coalesce(sequence_step, 1) between 1 and 9
+       and coalesce(sequence_step, 1) between 1 and 18
      order by coalesce(sequence_step, 1) asc, (niche is null) desc, niche asc
   `)
 

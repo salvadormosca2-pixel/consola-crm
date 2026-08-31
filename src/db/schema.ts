@@ -686,8 +686,18 @@ export const leadAssignments = pgTable('lead_assignments', {
    * sí o un no.
    */
   respondioA: setterSendTipoEnum('respondio_a'),
-  /** Solo con `respondioA = 'segundo'`: si le interesa o no. */
+  /** Solo con `respondioA = 'segundo'`: si le interesa, si no, o si quedó tibio. */
   interes: leadInteresEnum('interes'),
+  /**
+   * Cuándo alguien decidió a qué pista va este lead.
+   *
+   * Contestar la oferta no dice adónde sigue: entre "cuánto sale" y "no me
+   * interesa" decide una persona mirando el hilo. Mientras esto sea null el
+   * lead está parado esperando esa decisión, y es la espera más cara que hay
+   * porque ya habló.
+   */
+  clasificadoAt: timestamp('clasificado_at', { withTimezone: true }),
+  clasificadoPor: uuid('clasificado_por').references(() => users.id, { onDelete: 'set null' }),
   devueltoAt: timestamp('devuelto_at', { withTimezone: true }),
   devueltoMotivo: text('devuelto_motivo'),
   /** Si lo marcó el admin en lugar del setter, queda quién fue. */
@@ -720,6 +730,10 @@ export const leadAssignments = pgTable('lead_assignments', {
   index('lead_assignments_oferta_idx')
     .on(t.setterId, sql`${t.segundoMensajeAt} desc`)
     .where(sql`${t.estado} = 'segundo_enviado'`),
+  /* La cola de clasificación: contestaron la oferta y nadie decidió todavía. */
+  index('lead_assignments_sin_clasificar_idx')
+    .on(t.respondidoAt)
+    .where(sql`${t.respondioA} = 'segundo' and ${t.clasificadoAt} is null`),
   check('lead_interes_solo_con_oferta', sql`${t.interes} is null or ${t.respondioA} = 'segundo'`),
 ])
 

@@ -9,30 +9,26 @@ import { MensajesDeLaSituacion, Variables } from '@/components/mensaje-editable'
 import { Button } from '@/components/ui/button'
 import { Field, Input } from '@/components/ui/input'
 import { Panel, PanelHeader } from '@/components/ui/panel'
-import {
-  GRUPOS_PRINCIPALES,
-  PASO_META,
-  type MensajesConfig,
-  type Paso,
-} from '@/lib/mensajes-config'
+import { PASO_META, type MensajesConfig, type Paso } from '@/lib/mensajes-config'
+import { GRUPOS_DE_MENSAJES } from '@/lib/pistas'
 import { cn } from '@/lib/utils'
 import { guardarDatosDeMensajes } from '@/server/actions/mensajes'
 import type { MensajeGuardado } from '@/server/setters/mensajes'
 
 /**
- * Los mensajes principales: los que salen sin esperar ningún día.
+ * Los mensajes que no dependen de ningún día.
  *
- * Son la entrada y la oferta, que el setter manda desde su cola, y los tres que
- * salen en el acto apenas marca qué contestó el lead.
+ * La apertura —entrada y oferta, las dos en el acto— y los tres que salen
+ * apenas el setter marca qué contestó el lead.
  *
- * **Los de seguimiento no están acá.** Esos se escriben en Seguimientos, en la
- * misma fila que su día, porque el texto depende de cuántos días pasaron: a los
- * tres días le preguntás si lo vio, a los quince le cerrás la puerta. Escribir
- * eso sin el día a la vista es escribir a ciegas.
+ * **Los escalones de las pistas no están acá.** Esos se escriben en
+ * Seguimientos, en la misma fila que su día, porque el texto depende de cuántos
+ * días pasaron: a los dos le preguntás si lo vio, a los once le cerrás la
+ * puerta. Escribir eso sin el día a la vista es escribir a ciegas.
  *
- * Dentro de cada situación está el mensaje general y, si hace falta, uno
- * escrito para cada rubro: hablarle a una peluquería como a una ferretería es
- * lo que hace que el mensaje se note copiado y pegado.
+ * Dentro de cada uno está el mensaje general y, si hace falta, uno escrito para
+ * cada rubro: hablarle a una peluquería como a una ferretería es lo que hace
+ * que el mensaje se note copiado y pegado.
  */
 
 export function Editor({
@@ -56,19 +52,19 @@ export function Editor({
         <p className="mt-1 max-w-[720px] text-[13px] leading-relaxed text-texto-2">
           Los que salen sin esperar ningún día: la entrada y la oferta, y los tres que salen en el
           acto cuando el setter marca qué contestó. Todo lo que mandan los setters lo escribís vos:
-          el sistema no inventa ni completa texto. Los mensajes de seguimiento —los que vuelven
-          solos por silencio— se escriben en{' '}
+          el sistema no inventa ni completa texto. Los escalones de las pistas —silencio, tibio y
+          reintento— se escriben en{' '}
           <Link href="/seguimientos" className="text-acento hover:underline">
             Seguimientos
           </Link>
-          , junto al día de cada uno.
+          , cada uno pegado a su día.
         </p>
       </div>
 
       <DatosBase config={config} />
 
       <nav className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-1" aria-label="Situaciones">
-        {GRUPOS_PRINCIPALES.flatMap((g) => g.pasos).map((p) => {
+        {GRUPOS_DE_MENSAJES.flatMap((g) => g.pasos).map((p) => {
           const cargado = mensajes.some((m) => m.paso === p && m.rubro === null && m.activo)
           return (
             <button

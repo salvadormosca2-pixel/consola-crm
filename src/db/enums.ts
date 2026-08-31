@@ -367,8 +367,12 @@ export const MENSAJE_META: Record<SetterSendTipo, { label: string; detalle: stri
  *
  * Solo existe para el segundo mensaje: un "me interesa" antes de saber qué le
  * estamos ofreciendo no significa nada.
+ *
+ * Son tres y no dos porque entre el sí y el no está el que más se pierde: el
+ * que contestó con una duda. Tratarlo como un no lo cierra, y tratarlo como un
+ * sí le manda un mensaje que no viene al caso.
  */
-export const LEAD_INTERESES = ['interesa', 'no_interesa'] as const
+export const LEAD_INTERESES = ['interesa', 'no_interesa', 'tibio'] as const
 export const leadInteresEnum = pgEnum('lead_interes', LEAD_INTERESES)
 export type LeadInteres = (typeof LEAD_INTERESES)[number]
 
@@ -382,6 +386,12 @@ export const INTERES_META: Record<LeadInteres, { label: string; tone: Tono; deta
     label: 'No le interesa',
     detalle: 'Vio la oferta y dijo que no. Sale de la cola, pero cuenta como respuesta.',
     tone: 'negativo',
+  },
+  tibio: {
+    label: 'Tibio',
+    detalle:
+      'Contestó la oferta con una duda o una objeción: precio, momento, "después veo". Ni sí ni no, y es el que más se pierde por tratarlo como un no.',
+    tone: 'activo',
   },
 }
 

@@ -1,97 +1,154 @@
 import { describe, expect, it } from 'vitest'
 
 import {
-  SETTERS_CONFIG_DEFAULT,
+  PISTAS,
+  PISTA_META,
+  primerPasoDe,
+  type Paso,
+} from './pistas'
+import {
+  cuandoSale,
+  diasDelPaso,
+  entrarAPista,
   mensajeDeInteres,
   mensajeDeRechazo,
   mensajeDeReunion,
   ofertaTrasLaRespuesta,
   proximoSeguimiento,
-  type PasoDeSeguimiento,
+  SETTERS_CONFIG_DEFAULT,
+  settersConfigSchema,
+  trasClasificar,
 } from './setters-config'
 
 /**
- * La cadena de situaciones, sin base de datos.
+ * Por dónde sigue un lead, sin base de datos.
  *
- * Qué mensaje sigue a cuál es una decisión de negocio y no depende de nada
- * externo, así que se prueba acá: son las reglas que deciden si a alguien le
- * llega el texto que corresponde a cómo está clasificado, o le llega otro.
+ * Adónde va cada uno es la decisión de negocio del sistema y no depende de nada
+ * externo, así que se prueba acá. Lo que se cuida no es cada caso suelto sino
+ * las dos propiedades que sostienen todo: **ninguna escalera se encadena para
+ * siempre** —cada toque de más es cupo gastado y riesgo de cuenta— y **nadie
+ * queda parado en un paso que no existe**.
  */
 
 const cfg = SETTERS_CONFIG_DEFAULT
 const DIA = 86_400_000
-const HORA = 3_600_000
 const T0 = new Date('2026-03-10T12:00:00Z')
 
-function siguiente(paso: PasoDeSeguimiento, yaContesto = false) {
+function siguiente(paso: Paso, yaContesto = false) {
   return proximoSeguimiento(cfg, paso, T0, yaContesto)
 }
 
-describe('qué mensaje le sigue a cuál', () => {
-  it('la entrada engancha la oferta, a las horas configuradas', () => {
-    const s = siguiente(1)
-    expect(s?.paso).toBe(2)
-    expect(s?.cuando.getTime()).toBe(T0.getTime() + cfg.horasSegundoMensaje * HORA)
+describe('el primer contacto se bifurca según si habló', () => {
+  it('mandada la entrada y sin respuesta, nunca ve la oferta: va al reintento', () => {
+    // Es el cambio de fondo: antes la oferta salía igual a las 24 horas, a
+    // alguien que jamás abrió el chat.
+    const s = siguiente(1, false)
+    expect(s?.paso).toBe(primerPasoDe('sin_abrir').paso)
+    expect(s?.cuando.getTime()).toBe(T0.getTime() + diasDelPaso(cfg, s!.paso) * DIA)
   })
 
-  it('después de la oferta, el silencio se lee según quién lo hace', () => {
-    // Nunca dijo nada: le toca el último intento.
-    const mudo = siguiente(2, false)
-    expect(mudo?.paso).toBe(3)
-    expect(mudo?.cuando.getTime()).toBe(T0.getTime() + cfg.diasParaUltimoIntento * DIA)
-
-    // Había hablado: no se le escribe igual que a un desconocido.
-    const hablo = siguiente(2, true)
-    expect(hablo?.paso).toBe(4)
-    expect(hablo?.cuando.getTime()).toBe(T0.getTime() + cfg.diasParaRetomarConversacion * DIA)
+  it('si contestó la entrada, la cadena no programa nada: la oferta sale en el acto', () => {
+    // La programa la acción que marca la respuesta, no el envío.
+    expect(siguiente(1, true)).toBeNull()
+    expect(ofertaTrasLaRespuesta(T0)).toEqual({ paso: 2, cuando: T0 })
   })
 
-  it('la rama del que nunca habló se corta en el último intento', () => {
-    // Tres mensajes sin una sola respuesta: el cuarto no lo va a despertar.
-    expect(siguiente(3)).toBeNull()
+  it('mandada la oferta y sin respuesta, entra a silencio', () => {
+    const s = siguiente(2, false)
+    expect(s?.paso).toBe(primerPasoDe('silencio').paso)
   })
 
-  it('los dos reenganches terminan en el último de todos', () => {
-    for (const paso of [4, 5] as const) {
-      const s = siguiente(paso)
-      expect(s?.paso).toBe(9)
-      expect(s?.cuando.getTime()).toBe(T0.getTime() + cfg.diasParaUltimoReenganche * DIA)
+  it('si contestó la oferta, no decide la cadena: decide una persona', () => {
+    expect(siguiente(2, true)).toBeNull()
+  })
+})
+
+describe('las escaleras bajan un escalón por vez y terminan', () => {
+  it('cada pista recorre todos sus escalones, en orden, y corta al final', () => {
+    for (const pista of PISTAS) {
+      if (pista === 'primer_contacto') continue
+      const esperados = PISTA_META[pista].pasos.map((p) => p.paso)
+
+      const recorridos: Paso[] = [esperados[0]!]
+      let actual: Paso | null = esperados[0]!
+      while (actual !== null) {
+        const s = proximoSeguimiento(cfg, actual, T0, false)
+        actual = s?.paso ?? null
+        if (actual !== null) recorridos.push(actual)
+      }
+
+      expect(recorridos, `la pista ${pista} no recorre sus escalones`).toEqual(esperados)
     }
   })
 
-  it('mandado el "le interesa", lo que queda es su reenganche por si se enfría', () => {
-    const s = siguiente(6)
-    expect(s?.paso).toBe(5)
-    expect(s?.cuando.getTime()).toBe(T0.getTime() + cfg.diasParaRetomarInteresado * DIA)
+  it('cada escalón espera los días que dice el modelo', () => {
+    for (const pista of PISTAS) {
+      for (const p of PISTA_META[pista].pasos) {
+        expect(diasDelPaso(cfg, p.paso)).toBe(p.diasDefault)
+      }
+    }
   })
 
-  it('un no es un no, una reunión ya está, y el último es el último', () => {
-    expect(siguiente(7)).toBeNull()
-    expect(siguiente(8)).toBeNull()
-    expect(siguiente(9)).toBeNull()
+  it('lo guardado le gana al default, y lo que falta cae en el default', () => {
+    const tocado = settersConfigSchema.parse({ diasPorPaso: { '10': 9 } })
+    expect(diasDelPaso(tocado, 10)).toBe(9)
+    expect(diasDelPaso(tocado, 11)).toBe(diasDelPaso(cfg, 11))
   })
 
   it('ninguna rama se encadena para siempre', () => {
-    // Se recorre cada arranque hasta que se corta. Si alguna vez alguien
-    // engancha un ciclo, esto no termina en vez de fallar raro en producción.
-    for (const arranque of [1, 2, 6] as const) {
+    // Si alguien engancha un ciclo, esto falla acá en vez de mandarle mensajes
+    // a un lead hasta que lo bloqueen.
+    for (const arranque of [1, 2, 3, 6, 7, 8, 13, 17] as const) {
       for (const yaContesto of [false, true]) {
-        let paso: PasoDeSeguimiento | null = arranque
+        let paso: Paso | null = arranque
         let vistos = 0
         while (paso !== null) {
-          const s: ReturnType<typeof siguiente> = siguiente(paso, yaContesto)
+          const s: ReturnType<typeof siguiente> = proximoSeguimiento(cfg, paso, T0, yaContesto)
           paso = s?.paso ?? null
           vistos += 1
-          expect(vistos).toBeLessThanOrEqual(9)
+          expect(vistos).toBeLessThanOrEqual(8)
         }
       }
     }
   })
+
+  it('los que salen por marca no encadenan nada', () => {
+    for (const p of [6, 7, 8] as const) expect(siguiente(p)).toBeNull()
+  })
+})
+
+describe('los días se cuentan desde el último movimiento', () => {
+  it('el escalón sale contando desde ahí, no desde que arrancó la secuencia', () => {
+    // La oferta salió el lunes y el lead contestó el viernes: el seguimiento
+    // cuenta desde el viernes. Contarlo desde el lunes se lo mandaría encima de
+    // su propia respuesta.
+    const viernes = new Date(T0.getTime() + 4 * DIA)
+    const s = entrarAPista(cfg, 'tibio', viernes)
+    expect(s.cuando.getTime()).toBe(viernes.getTime() + diasDelPaso(cfg, s.paso) * DIA)
+    expect(cuandoSale(cfg, s.paso, viernes).getTime()).toBe(s.cuando.getTime())
+  })
+})
+
+describe('clasificar manda a cada lado lo que corresponde', () => {
+  it('tibio y silencio entran a su pista y esperan su día', () => {
+    for (const [destino, pista] of [
+      ['tibio', 'tibio'],
+      ['silencio', 'silencio'],
+    ] as const) {
+      const s = trasClasificar(cfg, destino, T0)
+      expect(s.paso).toBe(primerPasoDe(pista).paso)
+      expect(s.cuando.getTime()).toBe(T0.getTime() + diasDelPaso(cfg, s.paso) * DIA)
+    }
+  })
+
+  it('el sí y el no salen en el acto: la persona está del otro lado', () => {
+    expect(trasClasificar(cfg, 'interesado', T0)).toEqual({ paso: 6, cuando: T0 })
+    expect(trasClasificar(cfg, 'no_interesa', T0)).toEqual({ paso: 7, cuando: T0 })
+  })
 })
 
 describe('los que salen apenas el setter marca', () => {
-  it('ninguno espera: el lead está del otro lado, ahora', () => {
-    expect(ofertaTrasLaRespuesta(T0)).toEqual({ paso: 2, cuando: T0 })
+  it('ninguno espera', () => {
     expect(mensajeDeInteres(T0)).toEqual({ paso: 6, cuando: T0 })
     expect(mensajeDeRechazo(T0)).toEqual({ paso: 7, cuando: T0 })
     expect(mensajeDeReunion(T0)).toEqual({ paso: 8, cuando: T0 })

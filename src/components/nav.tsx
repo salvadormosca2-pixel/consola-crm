@@ -2,6 +2,7 @@
 
 import {
   BookOpen,
+  ListChecks,
   CalendarDays,
   History,
   Inbox,
@@ -21,12 +22,13 @@ import { cn } from '@/lib/utils'
 import type { FilaNotificacion } from '@/server/setters/notificaciones'
 
 /**
- * Nueve secciones y nada más.
+ * Diez secciones y nada más.
  *
- * Cada una responde una pregunta concreta: quién trabajó, quién contestó, qué
- * reunión viene, quiénes son, de dónde salieron, qué les decimos, cuándo se lo
- * decimos, qué les contestamos cuando preguntan, y qué hizo cada uno. Todo lo
- * que no responde una pregunta que alguien se hace no está.
+ * Cada una responde una pregunta concreta: quién trabajó, a quién hay que
+ * decidirle por dónde sigue, quién contestó, qué reunión viene, quiénes son, de
+ * dónde salieron, qué les decimos, cuándo se lo decimos, qué les contestamos
+ * cuando preguntan, y qué hizo cada uno. Todo lo que no responde una pregunta
+ * que alguien se hace no está.
  *
  * Mensajes y Seguimientos van separadas porque son dos mensajes distintos.
  * Mensajes tiene los que salen sin esperar nada —la entrada, la oferta y los
@@ -36,6 +38,7 @@ import type { FilaNotificacion } from '@/server/setters/notificaciones'
  */
 const SECCIONES = [
   { href: '/equipo', label: 'Equipo', icono: UserCog },
+  { href: '/clasificar', label: 'Clasificar', icono: ListChecks },
   { href: '/respondieron', label: 'Respondieron', icono: Inbox },
   { href: '/reuniones', label: 'Reuniones', icono: CalendarDays },
   { href: '/contactos', label: 'Contactos', icono: Users },

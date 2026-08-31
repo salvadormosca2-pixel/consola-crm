@@ -3,7 +3,8 @@ import 'server-only'
 import { sql } from 'drizzle-orm'
 
 import { db } from '@/db'
-import { esDeSeguimiento, PASO_META } from '@/lib/mensajes-config'
+import { PASO_META } from '@/lib/mensajes-config'
+import { pistaDePaso } from '@/lib/pistas'
 import type { PasoDeSeguimiento } from '@/lib/setters-config'
 import { datosDeContacto, renderTemplate } from '@/lib/templates/render'
 import { leerConfigDeMensajes } from '@/server/setters/mensajes'
@@ -11,10 +12,10 @@ import { leerConfigDeMensajes } from '@/server/setters/mensajes'
 /**
  * El texto que el setter copia y pega.
  *
- * Cinco mensajes, uno por situación, y cada uno puede tener una versión por
- * rubro. **Todos los escribe el admin**: el sistema no inventa ni completa
- * texto. Si falta el de una situación, el lead queda bloqueado con el motivo a
- * la vista y el setter lo saltea.
+ * Un texto por paso —cada escalón de cada pista tiene el suyo—, y cada uno
+ * puede tener una versión por rubro. **Todos los escribe el admin**: el sistema
+ * no inventa ni completa texto. Si falta el de un paso, el lead queda bloqueado
+ * con el motivo a la vista y el setter lo saltea.
  *
  * Cada setter manda una variante distinta del mismo mensaje: mil DMs con el
  * texto exacto es lo que dispara las restricciones de Instagram.
@@ -50,7 +51,7 @@ export async function leerPlantillasDeSetter(): Promise<PlantillasPorRubro> {
       from templates
      where active
        and (channel = 'instagram' or channel = 'ambos')
-       and coalesce(sequence_step, 1) between 1 and 9
+       and coalesce(sequence_step, 1) between 1 and 18
      order by coalesce(sequence_step, 1) asc, updated_at desc
   `)
 
@@ -114,10 +115,13 @@ export function armarMensaje(
   paso: PasoDeSeguimiento,
 ): MensajeArmado {
   if (!plantilla) {
-    /* Cada texto se escribe en una pantalla distinta según sea un seguimiento
-       o no, así que el motivo tiene que nombrar la correcta: mandarlo a Mensajes
-       a buscar un texto que se escribe en Seguimientos es un callejón. */
-    const donde = esDeSeguimiento(paso) ? 'Seguimientos' : 'Mensajes'
+    /* Cada texto se escribe en una pantalla distinta según a qué pista
+       pertenezca, así que el motivo tiene que nombrar la correcta: mandarlo a
+       Mensajes a buscar un texto que se escribe en Seguimientos es un callejón. */
+    const pista = pistaDePaso(paso)
+    const donde = pista === 'silencio' || pista === 'tibio' || pista === 'sin_abrir'
+      ? 'Seguimientos'
+      : 'Mensajes'
     return {
       ok: false,
       motivo: `Todavía no escribiste el mensaje de "${PASO_META[paso].label}". Cargalo en ${donde}.`,

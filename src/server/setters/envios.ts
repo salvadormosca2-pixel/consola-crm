@@ -4,8 +4,10 @@ import { sql } from 'drizzle-orm'
 
 import { db, type Db } from '@/db'
 import type { SetterSendTipo } from '@/db/enums'
-import { proximoSeguimiento, type PasoDeSeguimiento } from '@/lib/setters-config'
+import { diasDelPaso, proximoSeguimiento, type PasoDeSeguimiento } from '@/lib/setters-config'
+import { consumeCupo, primerPasoDe } from '@/lib/pistas'
 import { leerConfigSetters } from '@/server/setters/config'
+import { PASOS_CON_CUPO } from '@/server/setters/cupo'
 import { opsDate } from '@/lib/tz'
 
 /**
@@ -98,12 +100,23 @@ export async function registrarEnvio(
       }
 
       /* ── 2. Recontar el cupo del día ───────────────────────────────── */
+      /*
+       * Solo cuentan los pasos que abren chat: la entrada y el reintento. En
+       * las dos pistas de seguimiento la conversación ya existe, y lo que hace
+       * que Instagram restrinja una cuenta es abrir chats nuevos con
+       * desconocidos, no seguir uno empezado.
+       *
+       * Antes contaban todos, y eso ponía a competir dos cosas que no tienen
+       * por qué disputarse el mismo número: trabajar bien a los que ya
+       * contestaron, y abrir leads nuevos.
+       */
       const usados = await tx.execute(sql`
         select count(*)::int as n
           from setter_sends
          where setter_account_id = ${cuenta.id}::uuid
            and ops_date = ${hoy}::date
            and undone_at is null
+           and paso in (${PASOS_CON_CUPO})
       `)
       const usadoHoy = (usados.rows[0] as { n: number } | undefined)?.n ?? 0
 
@@ -180,8 +193,11 @@ export async function registrarEnvio(
       }
 
       // El cupo se verifica DESPUÉS de descartar el duplicado: una marca
-      // repetida no puede rebotar por cupo, porque no consume nada nuevo.
-      if (usadoHoy >= cuenta.cupo_diario) {
+      // repetida no puede rebotar por cupo, porque no consume nada nuevo. Y
+      // solo frena a los pasos que abren chat: un seguimiento sobre una
+      // conversación que ya existe no puede quedar bloqueado por el cupo de
+      // aperturas del día.
+      if (consumeCupo(params.paso) && usadoHoy >= cuenta.cupo_diario) {
         return {
           ok: false as const,
           motivo: 'cupo' as const,
@@ -234,15 +250,33 @@ export async function registrarEnvio(
       }
 
       /*
-       * Qué le toca después. La cadena decide sola, y adónde va depende de si
-       * el lead alguna vez habló: el que nunca dijo nada termina en el último
-       * intento, y el que contestó sigue hasta el último reenganche. Las tres
-       * situaciones que salen por marca del setter (le interesa, no le
-       * interesa, agendó reunión) no se encadenan desde acá: las programa la
-       * acción que las marca.
+       * Por dónde sigue. Lo decide el modelo de pistas y depende de una sola
+       * cosa: si el lead abrió la boca.
+       *
+       *   · mandada la entrada y sin respuesta, nunca va a ver la oferta: se va
+       *     al reintento de apertura. Si contestó, la oferta ya se la programó
+       *     la acción que marcó la respuesta, y salió en el acto — acá no hay
+       *     nada que encadenar.
+       *   · mandada la oferta y sin respuesta, entra a silencio. Si contestó,
+       *     tampoco se decide acá: lo decide una persona en la cola de
+       *     clasificación, que es la que sabe si eso fue una objeción, ruido o
+       *     un sí.
+       *
+       * Dentro de una pista no hay bifurcación: se baja un escalón por vez, y
+       * al final de la escalera no sigue nada. Las tres situaciones que salen
+       * por marca del setter tampoco encadenan: las programa quien las marca.
        */
-      const siguiente = proximoSeguimiento(cfg, paso, ahora, asignacion.respondio_a !== null)
-      const segundoAt = siguiente?.paso === 2 ? siguiente.cuando : null
+      const yaContesto = asignacion.respondio_a !== null
+      const siguiente = proximoSeguimiento(cfg, paso, ahora, yaContesto)
+
+      /*
+       * `segundo_programado_at` es el reloj que miran los recordatorios, las
+       * tareas y el reparto para saber si a un lead le quedó algo pendiente. Se
+       * sigue llenando con lo que venga después de la entrada —que ahora es el
+       * reintento, no la oferta— para que esas tres cosas sigan contando lo
+       * mismo: un toque programado que ya venció.
+       */
+      const segundoAt = paso === 1 ? (siguiente?.cuando ?? null) : null
 
       if (paso === 1) {
         await tx.execute(sql`
@@ -251,9 +285,9 @@ export async function registrarEnvio(
                  contactado_at = ${ahora.toISOString()}::timestamptz,
                  abierto_at = null,
                  setter_account_id = ${cuenta.id}::uuid,
-                 segundo_programado_at = ${siguiente!.cuando.toISOString()}::timestamptz,
-                 proximo_paso = ${siguiente!.paso},
-                 proximo_seguimiento_at = ${siguiente!.cuando.toISOString()}::timestamptz,
+                 segundo_programado_at = ${segundoAt?.toISOString() ?? null}::timestamptz,
+                 proximo_paso = ${siguiente?.paso ?? null},
+                 proximo_seguimiento_at = ${siguiente?.cuando.toISOString() ?? null}::timestamptz,
                  pospuesto_at = null
            where id = ${params.assignmentId}::uuid
         `)
@@ -271,11 +305,10 @@ export async function registrarEnvio(
         `)
       } else {
         /*
-         * Un reenganche no cambia el estado del lead: seguía siendo "respondió"
-         * o "segundo enviado" antes y lo sigue siendo. Lo único que cambia es
-         * qué le toca después, y eso lo decide la cadena: al reenganche le
-         * sigue el último de todos, al "le interesa" le sigue su reenganche por
-         * si se enfría, y a los demás no les sigue nada.
+         * Un escalón de seguimiento no cambia el estado del lead: seguía siendo
+         * "respondió" o "segundo enviado" antes y lo sigue siendo. Lo único que
+         * cambia es qué le toca después: el escalón siguiente de su pista, o
+         * nada si era el último y de ahí en más queda para nurture.
          */
         await tx.execute(sql`
           update lead_assignments
@@ -409,22 +442,30 @@ export async function deshacerEnvio(
         `)
       } else if (envio.paso === 2) {
         /*
-         * Al deshacer la oferta el lead vuelve a esperarla, pero desde dónde
-         * depende de por qué le tocaba. Al que nunca contestó se le recalcula
-         * la fecha desde su primer mensaje; al que había contestado la entrada
-         * le vuelve a tocar ya mismo, porque su oferta nunca fue una espera.
+         * Al deshacer la oferta, adónde vuelve el lead depende de por qué le
+         * había tocado:
+         *
+         *   · si había contestado la entrada, la oferta era la respuesta a esa
+         *     contestación y le vuelve a tocar **ya mismo**: nunca fue una
+         *     espera.
+         *   · si nunca contestó, la oferta no le corresponde. Vuelve adonde
+         *     corresponde a alguien que no abrió el chat: al reintento de
+         *     apertura, contando desde su primer mensaje. Son leads viejos, de
+         *     cuando la oferta salía igual a las horas.
          */
+        const reintento = primerPasoDe('sin_abrir').paso
+        const diasReintento = `${diasDelPaso(cfg, reintento)} days`
         await tx.execute(sql`
           update lead_assignments
              set estado = case when respondio_a is not null then 'respondido'::lead_assignment_estado
                                else 'contactado'::lead_assignment_estado end,
                  segundo_mensaje_at = null,
-                 proximo_paso = 2,
+                 proximo_paso = case when respondio_a is null then ${reintento} else 2 end,
                  segundo_programado_at = case when respondio_a is null
-                   then coalesce(contactado_at, now()) + ${`${cfg.horasSegundoMensaje} hours`}::interval
+                   then coalesce(contactado_at, now()) + ${diasReintento}::interval
                    end,
                  proximo_seguimiento_at = case when respondio_a is null
-                   then coalesce(contactado_at, now()) + ${`${cfg.horasSegundoMensaje} hours`}::interval
+                   then coalesce(contactado_at, now()) + ${diasReintento}::interval
                    else now() end
            where id = ${envio.assignment_id}::uuid
         `)

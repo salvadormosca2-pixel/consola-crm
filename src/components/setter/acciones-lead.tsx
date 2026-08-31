@@ -6,6 +6,7 @@ import {
   ExternalLink,
   MessageSquareReply,
   Send,
+  HelpCircle,
   ThumbsDown,
   ThumbsUp,
   X,
@@ -286,7 +287,7 @@ export function AccionDeLead({
 
   if (!accion) return null
 
-  function enviarRespondio(interes?: 'interesa' | 'no_interesa'): void {
+  function enviarRespondio(interes?: 'interesa' | 'no_interesa' | 'tibio'): void {
     iniciar(async () => {
       const r = await marcarRespondio(assignmentId, {
         nota: nota.trim() || undefined,
@@ -296,7 +297,9 @@ export function AccionDeLead({
         toast.success(
           interes === 'no_interesa'
             ? `${negocio}: anotado que no le interesa`
-            : `${negocio} pasó a la etapa siguiente`,
+            : interes === 'tibio'
+              ? `${negocio} entró a seguimiento de tibios`
+              : `${negocio} pasó a la etapa siguiente`,
         )
         setAbierta(false)
         setNota('')
@@ -392,6 +395,20 @@ export function AccionDeLead({
                 >
                   <ThumbsUp aria-hidden />
                   Le interesa
+                </Button>
+                {/*
+                  El del medio es el que más se pierde. Sin este botón, un
+                  "cuánto sale" o un "después veo" hay que empujarlo a sí o a
+                  no, y el que lo empuja a no cierra un lead que estaba vivo.
+                */}
+                <Button
+                  variant="secundaria"
+                  className="h-12 w-full text-[14px]"
+                  onClick={() => enviarRespondio('tibio')}
+                  disabled={pendiente || nota.trim().length === 0}
+                >
+                  <HelpCircle aria-hidden />
+                  Tibio: dudó o puso un pero
                 </Button>
                 <Button
                   variant="destructiva"

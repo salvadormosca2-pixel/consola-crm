@@ -3,6 +3,7 @@ import 'server-only'
 import { sql } from 'drizzle-orm'
 
 import { db } from '@/db'
+import { PASOS_QUE_CONSUMEN_CUPO } from '@/lib/pistas'
 import { leerCupo, type CuentaDeSetter, type EstadoDeCupo } from '@/lib/setters-cupo'
 import { opsDate } from '@/lib/tz'
 
@@ -14,6 +15,20 @@ import { opsDate } from '@/lib/tz'
  * contador guardado se desincroniza con un deshacer, con un reintento o con un
  * cambio de día a mitad de jornada; un recuento no.
  */
+
+/**
+ * Los pasos que descuentan cupo, como lista para un `in (...)`.
+ *
+ * Se arma con `sql.join` y no interpolando el array: drizzle bindea un array
+ * como un solo parámetro, y `paso in $1` no es SQL válido.
+ *
+ * Todas las cuentas de cupo tienen que usar este mismo filtro. Si una lo usara
+ * y otra no, el panel diría un número y el envío rebotaría con otro.
+ */
+export const PASOS_CON_CUPO = sql.join(
+  PASOS_QUE_CONSUMEN_CUPO.map((p) => sql`${p}`),
+  sql`, `,
+)
 
 export interface CupoDeSetter extends EstadoDeCupo {
   setterId: string
@@ -33,6 +48,7 @@ export async function leerCupoDeSetter(setterId: string): Promise<CupoDeSetter> 
         select setter_account_id, count(*)::int as n
           from setter_sends
          where ops_date = ${hoy}::date and undone_at is null
+           and paso in (${PASOS_CON_CUPO})
          group by setter_account_id
       ) u on u.setter_account_id = sa.id
      where s.id = ${setterId}::uuid
@@ -85,6 +101,7 @@ export async function leerCuposDelEquipo(): Promise<Map<string, CupoDeSetter>> {
         select setter_account_id, count(*)::int as n
           from setter_sends
          where ops_date = ${hoy}::date and undone_at is null
+           and paso in (${PASOS_CON_CUPO})
          group by setter_account_id
       ) u on u.setter_account_id = sa.id
      order by s.id, sa.orden asc, sa.ig_username asc
@@ -132,4 +149,33 @@ export async function leerCuposDelEquipo(): Promise<Map<string, CupoDeSetter>> {
     })
   }
   return salida
+}
+
+/**
+ * El cupo de todo el equipo hoy, en un número.
+ *
+ * Lo mira el panel de pistas, y solo por una: el reintento de apertura es la
+ * única que gasta cupo, porque el chat nunca se abrió. Poner el número al lado
+ * de esa escalera es lo que hace visible que agregarle un escalón no sale
+ * gratis — sale del mismo cupo con el que se abren leads nuevos.
+ */
+export async function cupoDelDia(): Promise<{ total: number; restante: number }> {
+  const hoy = opsDate()
+
+  const filas = await db.execute(sql`
+    select coalesce(sum(sa.cupo_diario), 0)::int as total,
+           coalesce(sum(greatest(sa.cupo_diario - coalesce(u.n, 0), 0)), 0)::int as restante
+      from setter_accounts sa
+      left join (
+        select setter_account_id, count(*)::int as n
+          from setter_sends
+         where ops_date = ${hoy}::date and undone_at is null
+           and paso in (${PASOS_CON_CUPO})
+         group by setter_account_id
+      ) u on u.setter_account_id = sa.id
+     where sa.activa
+  `)
+
+  const f = filas.rows[0] as { total: number; restante: number } | undefined
+  return { total: f?.total ?? 0, restante: f?.restante ?? 0 }
 }

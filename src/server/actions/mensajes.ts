@@ -7,6 +7,7 @@ import { z } from 'zod'
 import { db } from '@/db'
 import type { EstadoAccion } from '@/lib/form-state'
 import { MENSAJES_CONFIG_KEY, mensajesConfigSchema, PASO_META, PASOS } from '@/lib/mensajes-config'
+import { PASOS_DE_PISTA } from '@/lib/pistas'
 import { SETTERS_CONFIG_KEY } from '@/lib/setters-config'
 import { variablesDesconocidas } from '@/lib/templates/render'
 import { ErrorDePermiso, exigirAdmin } from '@/server/session'
@@ -48,24 +49,34 @@ export async function guardarDatosDeMensajes(datos: unknown): Promise<EstadoAcci
   }
 }
 
+/**
+ * Los días de cada escalón, más los dos números que no son de nadie.
+ *
+ * Los días llegan como un mapa `{ "3": 2, "10": 4, ... }` en vez de un campo
+ * por paso: una pista es una escalera de largo variable, y con diez escalones
+ * un campo por cada uno obliga a tocar el esquema cada vez que se suma un
+ * toque. Solo se aceptan números de paso que hoy pertenezcan a una pista — un
+ * paso retirado o inventado no tiene días que configurar.
+ */
 const tiemposSchema = z.object({
-  horasSegundoMensaje: z.coerce.number().int().min(1).max(240),
   horasVencimiento: z.coerce.number().int().min(1).max(720),
   diasAtrasoParaAlerta: z.coerce.number().int().min(1).max(30),
-  /* Los tres reenganches. Son los que deciden cuándo vuelve a la cola un lead
-     que se calló, y cada silencio se espera distinto. */
-  diasParaUltimoIntento: z.coerce.number().int().min(1).max(60),
-  diasParaRetomarConversacion: z.coerce.number().int().min(1).max(90),
-  diasParaRetomarInteresado: z.coerce.number().int().min(1).max(90),
-  diasParaUltimoReenganche: z.coerce.number().int().min(1).max(120),
+  diasPorPaso: z
+    .record(z.string(), z.coerce.number().int().min(0).max(120))
+    .default({})
+    .refine(
+      (m) => Object.keys(m).every((k) => (PASOS_DE_PISTA as readonly number[]).includes(Number(k))),
+      { message: 'Ese paso no existe.' },
+    ),
 })
 
 /**
- * Los tiempos del seguimiento.
+ * Los tiempos de las pistas.
  *
  * Se guardan sobre la configuración existente en vez de reemplazarla: el resto
  * de los valores (umbrales de las alertas, horarios de los avisos) sigue como
- * estaba.
+ * estaba. Los días se fusionan con los que ya había, no lo pisan: el panel
+ * manda solo lo que se ve en pantalla.
  */
 export async function guardarTiempos(datos: unknown): Promise<EstadoAccion> {
   try {
@@ -76,10 +87,16 @@ export async function guardarTiempos(datos: unknown): Promise<EstadoAccion> {
     }
 
     const actual = await leerConfigSetters()
+    const nueva = {
+      ...actual,
+      horasVencimiento: parsed.data.horasVencimiento,
+      diasAtrasoParaAlerta: parsed.data.diasAtrasoParaAlerta,
+      diasPorPaso: { ...actual.diasPorPaso, ...parsed.data.diasPorPaso },
+    }
 
     await db.execute(sql`
       insert into settings (key, value_jsonb, updated_at)
-      values (${SETTERS_CONFIG_KEY}, ${JSON.stringify({ ...actual, ...parsed.data })}::jsonb, now())
+      values (${SETTERS_CONFIG_KEY}, ${JSON.stringify(nueva)}::jsonb, now())
       on conflict (key) do update
         set value_jsonb = excluded.value_jsonb, updated_at = now()
     `)

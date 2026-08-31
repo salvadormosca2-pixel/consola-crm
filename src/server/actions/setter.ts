@@ -9,15 +9,16 @@ import { db } from '@/db'
 import type { EstadoAccion } from '@/lib/form-state'
 import { cuantosEntregar } from '@/lib/setters-cupo'
 import {
-  mensajeDeInteres,
-  mensajeDeRechazo,
   mensajeDeReunion,
   ofertaTrasLaRespuesta,
+  trasClasificar,
+  type DestinoDeClasificacion,
 } from '@/lib/setters-config'
 import { OPS_TZ } from '@/lib/tz'
 import { borrarSuscripcion, guardarSuscripcion } from '@/server/push'
 import { ErrorDePermiso, exigirSesion, exigirSetter } from '@/server/session'
 import { asignarLeads, contarPozo } from '@/server/setters/asignacion'
+import { leerConfigSetters } from '@/server/setters/config'
 import { leerCupoDeSetter } from '@/server/setters/cupo'
 import { deshacerEnvio, registrarEnvio } from '@/server/setters/envios'
 import { notificarYAvisar } from '@/server/setters/notificaciones'
@@ -317,9 +318,21 @@ export async function verMensajePreparado(assignmentId: string): Promise<Mensaje
 
 const respuestaSchema = z.object({
   nota: z.string().trim().max(500).optional(),
-  /** Solo se usa si el lead ya recibió la oferta. */
-  interes: z.enum(['interesa', 'no_interesa']).optional(),
+  /**
+   * Solo se usa si el lead ya recibió la oferta.
+   *
+   * Son tres y no dos: entre el sí y el no está el que contestó con una duda,
+   * que es el que más se pierde. Tratarlo como un no lo cierra para siempre.
+   */
+  interes: z.enum(['interesa', 'no_interesa', 'tibio']).optional(),
 })
+
+/** De lo que marca el setter a la pista por la que sigue el lead. */
+const DESTINO_DEL_INTERES: Record<'interesa' | 'no_interesa' | 'tibio', DestinoDeClasificacion> = {
+  interesa: 'interesado',
+  no_interesa: 'no_interesa',
+  tibio: 'tibio',
+}
 
 /**
  * El lead contestó. Hay dos versiones y no significan lo mismo.
@@ -370,7 +383,7 @@ export async function marcarRespondio(
     const interes = yaVioLaOferta ? (parsed.data.interes ?? 'interesa') : null
 
     if (yaVioLaOferta && !parsed.data.interes) {
-      return { ok: false, error: 'Decime si le interesa o no.' }
+      return { ok: false, error: 'Decime si le interesa, si no, o si quedó tibio.' }
     }
 
     /*
@@ -386,30 +399,31 @@ export async function marcarRespondio(
     }
 
     /*
-     * Contestar no es el final: es donde el lead pasa a lo que sigue, y lo que
-     * sigue sale **ya**, no dentro de unos días. Los tres casos son distintos y
-     * cada uno tiene su propio texto:
+     * Contestar no es el final: es donde el lead pasa a lo que sigue.
      *
      *   · contestó la entrada → la oferta, que es de lo que todavía no se
-     *     enteró;
-     *   · contestó la oferta y le interesa → el mensaje que lo lleva a una
-     *     fecha concreta, antes de que el sí se enfríe;
-     *   · contestó la oferta y no le interesa → el cierre cordial. Dijo que no
-     *     y se respeta, pero se cierra bien: dentro de unos meses se le puede
-     *     volver a escribir si no quedó un silencio incómodo.
+     *     enteró, y sale **ya**: si contestó está mirando el celular ahora.
+     *   · contestó la oferta → adónde va lo decide lo que se marcó, y son tres
+     *     destinos distintos: el sí arranca el mensaje que lleva a una fecha, el
+     *     no arranca el cierre cordial, y el tibio entra a su pista de cuatro
+     *     escalones. Los dos primeros salen en el acto; el tibio espera su día.
+     *
+     * Marcar la respuesta a la oferta **es** clasificarla, así que el lead no
+     * pasa por la cola: la decisión ya está tomada y queda sellada acá.
      */
+    const cfg = await leerConfigSetters()
     const siguiente =
       respondioA === 'primero'
         ? ofertaTrasLaRespuesta()
-        : interes === 'no_interesa'
-          ? mensajeDeRechazo()
-          : mensajeDeInteres()
+        : trasClasificar(cfg, DESTINO_DEL_INTERES[interes ?? 'interesa'])
 
     const filas = await db.execute(sql`
       update lead_assignments
          set estado = 'respondido', respondido_at = now(), segundo_programado_at = null,
              respondio_a = ${respondioA}::setter_send_tipo,
              interes = ${interes}::lead_interes,
+             clasificado_at = ${yaVioLaOferta ? sql`now()` : sql`null`},
+             clasificado_por = ${yaVioLaOferta ? sql`${sesion.userId}::uuid` : sql`null`},
              proximo_paso = ${siguiente?.paso ?? null},
              proximo_seguimiento_at = ${siguiente?.cuando.toISOString() ?? null}::timestamptz,
              nota = coalesce(${texto}, nota),
