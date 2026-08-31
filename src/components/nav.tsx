@@ -68,7 +68,7 @@ export function Nav({
 
   return (
     <header className="sticky top-0 z-30 border-b border-borde bg-superficie">
-      <div className="mx-auto flex h-14 max-w-[1400px] items-center gap-1 px-3 sm:px-4">
+      <div className="mx-auto flex min-h-14 max-w-[1400px] items-center gap-1 px-3 py-2 sm:px-4">
         <Link
           href="/equipo"
           className="mr-3 shrink-0 select-none text-[15px] font-semibold tracking-[-0.02em] text-texto"
@@ -76,7 +76,17 @@ export function Nav({
           101leads
         </Link>
 
-        <nav className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto" aria-label="Secciones">
+        {/*
+          Baja a dos filas en vez de recortarse. Antes era una sola fila con
+          scroll horizontal, y en una pantalla de notebook las últimas secciones
+          quedaban del otro lado del borde sin ninguna barra que lo dijera:
+          Mensajes y Seguimientos, que son la sexta y la séptima, no existían
+          salvo que a alguien se le ocurriera arrastrar la barra al costado.
+        */}
+        <nav
+          className="flex min-w-0 flex-1 flex-wrap items-center gap-0.5"
+          aria-label="Secciones"
+        >
           {SECCIONES.map(({ href, label, icono: Icono }) => {
             const activo = href === seccionActiva
             return (
