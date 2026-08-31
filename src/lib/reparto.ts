@@ -21,6 +21,15 @@ export interface CapacidadDeSetter {
   pendientes: number
   /** Segundos mensajes que le tocan hoy. También consumen cupo. */
   seguimientos: number
+  /**
+   * Cuántas cuentas de Instagram prendidas tiene.
+   *
+   * Se mira aparte del cupo aunque sin cuentas el cupo sea cero igual: cero por
+   * no tener ninguna y cero por haber llegado al límite del día son dos
+   * situaciones distintas —una se arregla cargando una cuenta, la otra
+   * esperando a mañana— y el panel tiene que poder decir cuál es.
+   */
+  cuentas: number
   /** Pausado o de baja: no recibe nada. */
   activo: boolean
 }
@@ -54,6 +63,16 @@ export interface PlanDeReparto {
  */
 export function capacidadDe(s: CapacidadDeSetter): { capacidad: number; motivo: string } {
   if (!s.activo) return { capacidad: 0, motivo: 'Está pausado: no recibe leads nuevos.' }
+
+  /*
+   * Sin cuenta de Instagram no se le entrega nada, y no es un tecnicismo:
+   * entregarle leads sería sacarlos del pozo y dejarlos tomados 48 horas en la
+   * cola de alguien que no tiene con qué escribir. Es lo que pasa el primer día
+   * después de dar de alta al equipo, así que el motivo dice qué hacer.
+   */
+  if (s.cuentas === 0) {
+    return { capacidad: 0, motivo: 'Todavía no tiene ninguna cuenta de Instagram cargada.' }
+  }
 
   const porCupo = s.cupoRestante - s.seguimientos
   if (porCupo <= 0) {

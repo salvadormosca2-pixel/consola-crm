@@ -7,7 +7,7 @@ import { db } from '@/db'
 import { opsDate, opsTime, OPS_TZ } from '@/lib/tz'
 import { barrer } from '@/server/setters/asignacion'
 import { leerConfigSetters } from '@/server/setters/config'
-import { repartirAhora } from '@/server/setters/reparto'
+import { repartoAutomaticoDelDia } from '@/server/setters/reparto'
 import { notificar, notificarYAvisar } from '@/server/setters/notificaciones'
 import { contarPendientes, mandarRecordatorio } from '@/server/setters/recordatorios'
 
@@ -44,8 +44,7 @@ export async function correrTareas(): Promise<ResumenDeTareas> {
    * recordatorios, el setter abre la app y ya tiene la tanda del día esperando
    * en vez de encontrarse la cola vacía.
    */
-  const repartidos =
-    cfg.repartoAutomatico && ahora >= cfg.horaReparto ? await repartoDelDia(hoy) : 0
+  const repartidos = await repartoAutomaticoDelDia()
 
   const recordatorios = await recordatoriosAutomaticos(ahora, hoy)
   const alertas =
@@ -56,35 +55,6 @@ export async function correrTareas(): Promise<ResumenDeTareas> {
     (ahora >= cfg.horaResumenDiario ? await alertarInactivos(hoy) : 0)
 
   return { vencidos, desalteados, repartidos, recordatorios, alertas }
-}
-
-/**
- * El reparto de la mañana, una sola vez por día.
- *
- * Se marca con un evento con la fecha adentro: si el programador corre cada
- * quince minutos, el reparto sale una vez y las otras noventa y cinco veces no
- * hace nada. Sin esa marca, cada corrida volvería a llenarle la cola al equipo
- * a medida que van mandando mensajes y liberando cupo.
- */
-async function repartoDelDia(hoy: string): Promise<number> {
-  const yaSalio = await db.execute(sql`
-    select 1 from events
-     where type = 'leads_asignados'
-       and payload_jsonb->>'automatico' = 'true'
-       and payload_jsonb->>'dia' = ${hoy}
-     limit 1
-  `)
-  if (yaSalio.rows.length > 0) return 0
-
-  const r = await repartirAhora(null)
-
-  await db.execute(sql`
-    insert into events (type, payload_jsonb)
-    values ('leads_asignados',
-            ${JSON.stringify({ automatico: true, dia: hoy, entregados: r.entregados })}::jsonb)
-  `)
-
-  return r.entregados
 }
 
 /**

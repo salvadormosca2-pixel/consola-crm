@@ -288,8 +288,13 @@ Los setters se dan de alta después desde el panel, en **Equipo → Nuevo setter
 
 Los recordatorios automáticos, el resumen del día y las alertas de atraso salen
 de `/api/tareas`, que hay que llamar cada tanto con el `TAREAS_SECRET` en la
-cabecera. El vencimiento de leads **no** depende de eso: se resuelve al abrir la
-cola, así que el sistema funciona igual si el reloj falla.
+cabecera. El vencimiento de leads y **el reparto del día** no dependen de eso:
+se resuelven al abrir la app —la cola de un setter o el panel de Equipo—, así
+que el sistema funciona igual si el reloj falla. Lo que se pierde sin el
+programador son los avisos que llegan solos.
+
+El cron escrito en `vercel.json` no corre: esto vive en Railway, que no lee ese
+archivo. Por eso el reparto se dispara al leer y no depende de él.
 
 ### Qué mirar si algo no anda
 

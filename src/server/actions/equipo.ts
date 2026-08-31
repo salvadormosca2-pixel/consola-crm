@@ -17,7 +17,7 @@ import { generarPasswordTemporal, tarjetaDeAcceso } from '@/lib/password'
 import { SETTERS_CONFIG_DEFAULT } from '@/lib/setters-config'
 import { ErrorDePermiso, exigirAdmin, exigirAdminMadre } from '@/server/session'
 import { devolverLead, devolverPendientes, reasignarLead } from '@/server/setters/asignacion'
-import { repartirAhora } from '@/server/setters/reparto'
+import { proponerReparto, repartirAhora } from '@/server/setters/reparto'
 
 /**
  * Alta, baja y mantenimiento del equipo.
@@ -807,11 +807,25 @@ export async function repartirLeads(): Promise<ResultadoDeReparto> {
     const sesion = await exigirAdmin()
     const r = await repartirAhora(sesion.userId)
 
+    /*
+     * Un cero no se explica con un "o esto o lo otro": el sistema sabe cuál de
+     * las dos cosas pasó, y decirlo es la diferencia entre "está roto" y "me
+     * falta cargar las cuentas de Instagram".
+     */
     if (r.entregados === 0) {
+      const plan = await proponerReparto()
+      const sinCuentas = plan.tajadas.filter((t) => t.motivo.includes('cuenta de Instagram')).length
+
       return {
         ok: false,
         error:
-          'No se entregó nada: o no quedan leads en el pozo, o ninguna cuenta tiene cupo hoy.',
+          plan.pozo === 0
+            ? 'No quedan leads sin asignar en el pozo. Importá una lista de leads scrapeados.'
+            : sinCuentas === plan.tajadas.length && sinCuentas > 0
+              ? 'Nadie tiene cuenta de Instagram cargada: cargalas en Equipo → Cuentas de Instagram.'
+              : sinCuentas > 0
+                ? `Hay ${plan.pozo} leads esperando, pero nadie tiene cupo hoy y ${sinCuentas} no tienen cuenta de Instagram cargada.`
+                : 'Hay leads en el pozo, pero hoy nadie tiene cupo libre: ya llegaron a su tanda o al límite de sus cuentas.',
       }
     }
 

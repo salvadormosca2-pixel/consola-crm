@@ -1,6 +1,7 @@
 'use client'
 
 import { Share2 } from 'lucide-react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import * as React from 'react'
 import { toast } from 'sonner'
@@ -22,6 +23,11 @@ export function Reparto({ plan }: { plan: RepartoPropuesto }) {
   const [pendiente, iniciar] = React.useTransition()
 
   const hayAlgoQueHacer = plan.total > 0
+
+  // Un cero se explica. El caso que más pasa es el primer día del equipo: los
+  // setters existen, el pozo está lleno, y nadie tiene todavía la cuenta de
+  // Instagram con la que va a escribir.
+  const sinCuenta = plan.tajadas.filter((t) => t.motivo.includes('cuenta de Instagram')).length
 
   return (
     <Panel>
@@ -73,6 +79,21 @@ export function Reparto({ plan }: { plan: RepartoPropuesto }) {
             </div>
           ))}
         </div>
+      ) : null}
+
+      {plan.pozo > 0 && plan.total === 0 ? (
+        <p className="border-t border-borde px-4 py-2.5 text-[12.5px] text-ambar">
+          {sinCuenta === plan.tajadas.length
+            ? 'Nadie tiene cuenta de Instagram cargada, así que nadie puede mandar nada todavía. '
+            : sinCuenta > 0
+              ? `${sinCuenta} de ${plan.tajadas.length} no tienen cuenta de Instagram cargada. `
+              : 'Hoy nadie tiene cupo libre: ya llegaron a su tanda o al límite de sus cuentas. '}
+          {sinCuenta > 0 ? (
+            <Link href="/equipo/instagram" className="text-acento hover:underline">
+              Cargalas acá
+            </Link>
+          ) : null}
+        </p>
       ) : null}
 
       {plan.pozo > 0 && plan.sobran > 0 ? (

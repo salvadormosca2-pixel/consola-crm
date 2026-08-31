@@ -7,6 +7,7 @@ import type { LeadEstado } from '@/db/enums'
 import type { PasoDeSeguimiento } from '@/lib/setters-config'
 import { opsDate, OPS_TZ } from '@/lib/tz'
 import { barrer } from '@/server/setters/asignacion'
+import { repartoAutomaticoDelDia } from '@/server/setters/reparto'
 import { leerCupoDeSetter, type CupoDeSetter } from '@/server/setters/cupo'
 import {
   armarMensaje,
@@ -124,8 +125,11 @@ interface FilaCola {
 
 export async function armarColaDelSetter(setterId: string): Promise<ColaDelSetter> {
   // Antes de mostrar nada, se pone al día lo que depende del reloj: leads
-  // vencidos que vuelven al pozo y salteados de ayer que vuelven a la cola.
+  // vencidos que vuelven al pozo, salteados de ayer que vuelven a la cola, y la
+  // tanda del día si todavía no salió. Nada de eso espera a un cron: el setter
+  // abre la app y encuentra su cola armada.
   await barrer()
+  await repartoAutomaticoDelDia()
 
   const [cupo, plantillas, voz] = await Promise.all([
     leerCupoDeSetter(setterId),

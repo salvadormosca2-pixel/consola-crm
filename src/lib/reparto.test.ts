@@ -9,6 +9,7 @@ function setter(over: Partial<CapacidadDeSetter> & { setterId: string }): Capaci
     tandaDiaria: 60,
     pendientes: 0,
     seguimientos: 0,
+    cuentas: 1,
     activo: true,
     ...over,
   }
@@ -32,6 +33,28 @@ describe('capacidad de un setter', () => {
     const r = capacidadDe(setter({ setterId: 'a', cupoRestante: 0 }))
     expect(r.capacidad).toBe(0)
     expect(r.motivo).toContain('límite')
+  })
+
+  it('sin ninguna cuenta de Instagram no recibe nada, y el motivo lo dice', () => {
+    // Es el primer día del equipo: existen, pueden entrar, y todavía no tienen
+    // con qué escribir. Entregarles leads sería sacarlos del pozo para dejarlos
+    // 48 horas en una cola que nadie puede trabajar.
+    const r = capacidadDe(setter({ setterId: 'a', cuentas: 0, cupoRestante: 0 }))
+    expect(r.capacidad).toBe(0)
+    expect(r.motivo).toContain('cuenta de Instagram')
+    expect(r.motivo).not.toContain('límite')
+  })
+
+  it('el que sí tiene cuentas se lleva los leads del que no tiene ninguna', () => {
+    const plan = planificarReparto(
+      [
+        setter({ setterId: 'sin', cuentas: 0, cupoRestante: 0 }),
+        setter({ setterId: 'con', cupoRestante: 30, tandaDiaria: 30 }),
+      ],
+      100,
+    )
+    expect(plan.tajadas.map((t) => t.cantidad)).toEqual([0, 30])
+    expect(plan.total).toBe(30)
   })
 
   it('un setter pausado no recibe nada', () => {

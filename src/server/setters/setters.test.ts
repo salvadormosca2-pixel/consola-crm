@@ -16,7 +16,7 @@ import {
 import { asignarLeads, barrer, contarPozo, devolverPendientes } from './asignacion'
 import { leerPuertaDeEntrada } from './avisos'
 import { deshacerEnvio, registrarEnvio } from './envios'
-import { repartirAhora } from './reparto'
+import { repartirAhora, repartoAutomaticoDelDia } from './reparto'
 
 /**
  * Las reglas que no se negocian, probadas contra Postgres de verdad.
@@ -456,6 +456,86 @@ describe('reparto de una lista grande', () => {
 
     await crearSetter(pool, { cupos: [30], tanda: 30 })
     expect((await repartirAhora(null, db)).entregados).toBe(0)
+  })
+})
+
+describe('el reparto automático del día', () => {
+  /**
+   * La hora se baja a las 00:00 para que el test no dependa de a qué hora corra
+   * el CI. `settings` no entra en el truncate entre tests, así que se borra a
+   * mano al terminar.
+   */
+  async function repartoAutomaticoDesdeLasCero(): Promise<void> {
+    await pool.query(
+      `insert into settings (key, value_jsonb) values ('setters', $1)
+       on conflict (key) do update set value_jsonb = excluded.value_jsonb`,
+      [JSON.stringify({ repartoAutomatico: true, horaReparto: '00:00' })],
+    )
+  }
+
+  async function olvidarConfig(): Promise<void> {
+    await pool.query(`delete from settings where key = 'setters'`)
+  }
+
+  it('sale una sola vez por día, aunque dos pantallas lo pidan a la vez', async () => {
+    await repartoAutomaticoDesdeLasCero()
+    try {
+      await crearSetter(pool, { cupos: [30], tanda: 30 })
+      for (let i = 0; i < 100; i++) await crearLeadScrapeado(pool, i)
+
+      // Dos setters abriendo la app en el mismo segundo. El índice único de la
+      // marca del día deja pasar a uno solo: sin él, los dos repartirían.
+      const [uno, otro] = await Promise.all([
+        repartoAutomaticoDelDia(db),
+        repartoAutomaticoDelDia(db),
+      ])
+      expect(uno + otro).toBe(30)
+      expect(Math.min(uno, otro)).toBe(0)
+
+      // Y ya no vuelve a salir hoy, ni aunque quede cupo libre.
+      expect(await repartoAutomaticoDelDia(db)).toBe(0)
+      expect(await contarPozo(db)).toBe(70)
+    } finally {
+      await olvidarConfig()
+    }
+  })
+
+  it('apagado en la configuración, no reparte nada', async () => {
+    await pool.query(
+      `insert into settings (key, value_jsonb) values ('setters', $1)
+       on conflict (key) do update set value_jsonb = excluded.value_jsonb`,
+      [JSON.stringify({ repartoAutomatico: false, horaReparto: '00:00' })],
+    )
+    try {
+      await crearSetter(pool, { cupos: [30], tanda: 30 })
+      for (let i = 0; i < 50; i++) await crearLeadScrapeado(pool, i)
+
+      expect(await repartoAutomaticoDelDia(db)).toBe(0)
+      expect(await contarPozo(db)).toBe(50)
+    } finally {
+      await olvidarConfig()
+    }
+  })
+
+  it('un setter sin cuenta de Instagram no recibe nada', async () => {
+    await repartoAutomaticoDesdeLasCero()
+    try {
+      // Recién dado de alta en lote: existe, puede entrar, no tiene cuenta.
+      const sinCuenta = await crearSetter(pool, { cupos: [], tanda: 30 })
+      for (let i = 0; i < 50; i++) await crearLeadScrapeado(pool, i)
+
+      expect(await repartoAutomaticoDelDia(db)).toBe(0)
+
+      const suyos = await pool.query<{ n: string }>(
+        `select count(*) as n from lead_assignments where setter_id = $1`,
+        [sinCuenta.setterId],
+      )
+      expect(Number(suyos.rows[0]!.n)).toBe(0)
+      // Los leads siguen en el pozo, disponibles para el que sí pueda mandar.
+      expect(await contarPozo(db)).toBe(50)
+    } finally {
+      await olvidarConfig()
+    }
   })
 })
 

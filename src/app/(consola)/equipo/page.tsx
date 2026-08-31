@@ -11,7 +11,7 @@ import { clavePublica } from '@/server/push'
 import { requerirAdmin } from '@/server/session'
 import { leerConfigNotificaciones } from '@/server/setters/notificaciones'
 import { armarTablero, type FilaTablero } from '@/server/setters/panel'
-import { proponerReparto } from '@/server/setters/reparto'
+import { proponerReparto, repartoAutomaticoDelDia } from '@/server/setters/reparto'
 
 import { AvisosQueQuiero } from './avisos-que-quiero'
 import { Reparto } from './reparto'
@@ -28,6 +28,12 @@ export const dynamic = 'force-dynamic'
  */
 export default async function PaginaEquipo() {
   const sesion = await requerirAdmin()
+
+  // La tanda del día, si todavía no salió. No espera a ningún cron: el primero
+  // que abre una pantalla después de la hora la dispara, y como mucho sale una
+  // vez por día. Va antes del tablero para que lo que se ve ya la incluya.
+  await repartoAutomaticoDelDia()
+
   const [filas, plan, avisos] = await Promise.all([
     armarTablero(),
     proponerReparto(),

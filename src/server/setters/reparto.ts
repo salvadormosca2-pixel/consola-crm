@@ -4,8 +4,10 @@ import { sql } from 'drizzle-orm'
 
 import { db, type Db, type Ejecutor } from '@/db'
 import { planificarReparto, type CapacidadDeSetter, type PlanDeReparto } from '@/lib/reparto'
-import { opsDate } from '@/lib/tz'
+import { opsDate, opsTime } from '@/lib/tz'
 import { asignarLeads, barrer, contarPozo } from '@/server/setters/asignacion'
+import { leerConfigSetters } from '@/server/setters/config'
+import { PASOS_CON_CUPO } from '@/server/setters/cupo'
 
 /**
  * Repartir el pozo entre los setters, desde el panel.
@@ -39,6 +41,11 @@ async function leerCapacidades(cliente: Ejecutor = db): Promise<CapacidadDeSette
 
            -- Cupo que le queda hoy sumando sus cuentas activas. La autoridad es
            -- el recuento de envíos, no el contador guardado en la cuenta.
+           --
+           -- El filtro por paso no es opcional: hay pasos que no consumen cupo,
+           -- y contarlos acá hacía que el panel le viera menos capacidad de la
+           -- que el envío le iba a permitir. El mismo setter recibía de menos
+           -- por seguimientos que no le costaban nada.
            coalesce((
              select sum(greatest(sa.cupo_diario - coalesce(e.n, 0), 0))::int
                from setter_accounts sa
@@ -46,10 +53,16 @@ async function leerCapacidades(cliente: Ejecutor = db): Promise<CapacidadDeSette
                  select setter_account_id, count(*)::int as n
                    from setter_sends
                   where ops_date = ${hoy}::date and undone_at is null
+                    and paso in (${PASOS_CON_CUPO})
                   group by setter_account_id
                ) e on e.setter_account_id = sa.id
               where sa.setter_id = s.id and sa.activa
            ), 0) as cupo_restante,
+
+           -- Cuántas cuentas prendidas tiene. Sin ninguna, el cero de arriba no
+           -- es "llegó al límite" sino "todavía no le cargaron la cuenta".
+           (select count(*)::int from setter_accounts sa
+             where sa.setter_id = s.id and sa.activa) as cuentas,
 
            (select count(*)::int from lead_assignments la
              where la.setter_id = s.id
@@ -72,6 +85,7 @@ async function leerCapacidades(cliente: Ejecutor = db): Promise<CapacidadDeSette
     tanda_diaria: number
     activo: boolean
     cupo_restante: number
+    cuentas: number
     pendientes: number
     seguimientos: number
   }>).map((f) => ({
@@ -80,6 +94,7 @@ async function leerCapacidades(cliente: Ejecutor = db): Promise<CapacidadDeSette
     tandaDiaria: f.tanda_diaria,
     activo: f.activo,
     cupoRestante: f.cupo_restante,
+    cuentas: f.cuentas,
     pendientes: f.pendientes,
     seguimientos: f.seguimientos,
   }))
@@ -144,4 +159,87 @@ export async function repartirAhora(
 
     return { entregados, porSetter, pozoRestante: Math.max(pozo - entregados, 0) }
   })
+}
+
+/* ── El reparto de la mañana, sin depender de un reloj externo ─────────── */
+
+/**
+ * Reparte la tanda del día si todavía no salió, y devuelve cuántos entregó.
+ *
+ * Antes esto vivía solo en `/api/tareas`, que hay que llamar desde afuera. El
+ * cron estaba escrito en `vercel.json` y la aplicación corre en Railway, que no
+ * lee ese archivo: **nadie llamaba a la ruta y el reparto automático no salía
+ * nunca**. El pozo se quedaba lleno y el equipo abría la app con la cola vacía,
+ * sin ningún error a la vista que explicara por qué.
+ *
+ * Ahora se resuelve al leer, igual que el vencimiento de leads: lo dispara la
+ * primera pantalla que se abre después de la hora configurada. Con el
+ * programador o sin él, el equipo encuentra su tanda puesta.
+ *
+ * Sale **una sola vez por día** y el candado lo pone la base: la marca del día
+ * tiene un índice único, así que si dos setters abren la app en el mismo
+ * segundo, uno la inserta y reparte y el otro choca y no hace nada. Contarlo
+ * con un `select` antes del `insert` no alcanzaría: entre los dos hay un hueco,
+ * y en ese hueco entran dos repartos.
+ *
+ * Nunca tira: que falle el reparto no puede dejar a alguien sin ver su cola.
+ */
+export async function repartoAutomaticoDelDia(cliente: Db = db): Promise<number> {
+  try {
+    const cfg = await leerConfigSetters(cliente)
+    if (!cfg.repartoAutomatico) return 0
+    if (opsTime() < cfg.horaReparto) return 0
+
+    const hoy = opsDate()
+
+    /*
+     * Dos pasos, y los dos hacen falta.
+     *
+     * El `select` es el que corre casi siempre: esto se llama en cada lectura
+     * de cola de cada setter, todo el día, y sin él cada una intentaría un
+     * `insert` que choca. Un insert que choca igual escribe y deja basura que
+     * después hay que limpiar.
+     *
+     * El `insert` de abajo es el que decide de verdad. Entre el select y él hay
+     * un hueco, y en ese hueco entran dos repartos: por eso el que manda es el
+     * índice único, no la consulta.
+     */
+    const yaSalio = await cliente.execute(sql`
+      select 1 from events
+       where type = 'leads_asignados'
+         and payload_jsonb->>'automatico' = 'true'
+         and payload_jsonb->>'dia' = ${hoy}
+       limit 1
+    `)
+    if (yaSalio.rows.length > 0) return 0
+
+    // Tomar el turno. Si la marca ya está, el reparto de hoy ya salió.
+    const marca = await cliente.execute(sql`
+      insert into events (type, payload_jsonb)
+      values ('leads_asignados', ${JSON.stringify({ automatico: true, dia: hoy })}::jsonb)
+      on conflict do nothing
+      returning id
+    `)
+    if (marca.rows.length === 0) return 0
+    const marcaId = (marca.rows[0] as { id: string }).id
+
+    try {
+      const r = await repartirAhora(null, cliente)
+      await cliente.execute(sql`
+        update events
+           set payload_jsonb = payload_jsonb || ${JSON.stringify({ entregados: r.entregados })}::jsonb
+         where id = ${marcaId}::uuid
+      `)
+      return r.entregados
+    } catch (err) {
+      // Si el reparto falló, la marca se saca: dejarla puesta sería quemar el
+      // turno del día y que el equipo se quede sin tanda hasta mañana por un
+      // error que quizá ya no está.
+      await cliente.execute(sql`delete from events where id = ${marcaId}::uuid`).catch(() => {})
+      throw err
+    }
+  } catch (err) {
+    console.error('Falló el reparto automático del día.', err)
+    return 0
+  }
 }

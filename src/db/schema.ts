@@ -560,6 +560,20 @@ export const events = pgTable('events', {
 }, (t) => [
   index('events_contact_idx').on(t.contactId, sql`${t.createdAt} desc`),
   index('events_type_idx').on(t.type, sql`${t.createdAt} desc`),
+  /*
+   * El turno del reparto automático del día.
+   *
+   * No lo dispara un reloj externo sino la primera pantalla que se abre después
+   * de la hora, y la app corre en varias instancias: el candado tiene que
+   * ponerlo la base. El que logra insertar la marca del día reparte; el que
+   * choca con el índice no hace nada.
+   */
+  uniqueIndex('events_reparto_automatico_uq')
+    .on(sql`(${t.payload}->>'dia')`)
+    .where(
+      sql`${t.type} = 'leads_asignados' and ${t.payload}->>'automatico' = 'true'
+          and ${t.payload}->>'dia' is not null`,
+    ),
 ])
 
 /* ── Vistas guardadas y configuración global ──────────────────────────────*/
