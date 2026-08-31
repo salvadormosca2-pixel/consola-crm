@@ -291,8 +291,8 @@ function Resultado({
                 {creados.length} {creados.length === 1 ? 'acceso creado' : 'accesos creados'}
               </p>
               <p className="mt-0.5 text-[12.5px] leading-relaxed text-texto-2">
-                Las contraseñas se ven una sola vez. Copiálas ahora: si cerrás esta pantalla hay
-                que restablecer una por una desde cada ficha.
+                Las contraseñas se ven una sola vez. Copiálas ahora; si cerrás esta pantalla,
+                en Equipo podés generar accesos nuevos y copiarlos de ahí.
               </p>
               <Button variant="primaria" size="lg" className="mt-2" onClick={() => void copiarTodas()}>
                 <ClipboardCopy aria-hidden />

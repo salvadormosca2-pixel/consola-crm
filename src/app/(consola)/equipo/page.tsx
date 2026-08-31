@@ -13,6 +13,7 @@ import { leerConfigNotificaciones } from '@/server/setters/notificaciones'
 import { armarTablero, type FilaTablero } from '@/server/setters/panel'
 import { proponerReparto, repartoAutomaticoDelDia } from '@/server/setters/reparto'
 
+import { Accesos, type SetterParaAcceso } from './accesos'
 import { AvisosQueQuiero } from './avisos-que-quiero'
 import { Reparto } from './reparto'
 
@@ -41,6 +42,17 @@ export default async function PaginaEquipo() {
   ])
 
   const atrasados = filas.filter((f) => f.semaforo === 'rojo').length
+
+  // Los accesos son de quien todavía tiene que entrar: al que está de baja no
+  // le sirve una contraseña nueva, no puede entrar igual.
+  const paraAcceso: SetterParaAcceso[] = filas
+    .filter((f) => f.estado !== 'baja')
+    .map((f) => ({
+      setterId: f.setterId,
+      nombre: f.nombre,
+      email: f.email,
+      nuncaEntro: f.ultimoIngreso === null,
+    }))
 
   return (
     <div className="space-y-4">
@@ -113,6 +125,8 @@ export default async function PaginaEquipo() {
           </div>
         </Panel>
       )}
+
+      <Accesos setters={paraAcceso} esAdminMadre={sesion.rol === 'admin_madre'} />
 
       {filas.length > 0 ? <Reparto plan={plan} /> : null}
 

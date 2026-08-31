@@ -59,7 +59,7 @@ export function TarjetaDeAcceso({
       <div className="space-y-3 px-3 py-3">
         <p className="text-[12.5px] leading-relaxed text-texto-2">
           Mandale esto a {nombre}. La contraseña no se puede volver a ver: si se pierde, generás
-          otra desde su ficha.
+          otra desde Equipo, en la sección Accesos.
         </p>
 
         <dl className="space-y-1.5 rounded-[5px] border border-borde bg-fondo px-3 py-2.5">
