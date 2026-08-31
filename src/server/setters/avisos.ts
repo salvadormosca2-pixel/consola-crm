@@ -2,7 +2,7 @@ import 'server-only'
 
 import { sql } from 'drizzle-orm'
 
-import { db } from '@/db'
+import { db, type Ejecutor } from '@/db'
 import type { MensajeNivel, RecordatorioTipo } from '@/db/enums'
 
 /**
@@ -106,8 +106,8 @@ const SELECT_AVISOS = sql`
  * Se completa al abrir la app, y solo con los fijados: los avisos viejos que no
  * son regla no tienen por qué reaparecerle a nadie.
  */
-async function completarFijados(setterId: string): Promise<void> {
-  await db.execute(sql`
+async function completarFijados(setterId: string, cliente: Ejecutor): Promise<void> {
+  await cliente.execute(sql`
     insert into mensajes_destinatarios (mensaje_id, setter_id)
     select me.id, ${setterId}::uuid
       from mensajes_equipo me
@@ -120,10 +120,18 @@ async function completarFijados(setterId: string): Promise<void> {
   `)
 }
 
-export async function leerPuertaDeEntrada(setterId: string): Promise<PuertaDeEntrada> {
-  await completarFijados(setterId)
+/**
+ * `cliente` existe por los tests, igual que en `barrer`: corren contra una base
+ * aparte, y una función que se ata al pool global no se puede probar sin
+ * apuntar los tests a la base de verdad.
+ */
+export async function leerPuertaDeEntrada(
+  setterId: string,
+  cliente: Ejecutor = db,
+): Promise<PuertaDeEntrada> {
+  await completarFijados(setterId, cliente)
 
-  const filas = await db.execute(sql`
+  const filas = await cliente.execute(sql`
     ${SELECT_AVISOS}
      where md.setter_id = ${setterId}::uuid
        and (md.leido_at is null or me.fijado)
@@ -134,7 +142,7 @@ export async function leerPuertaDeEntrada(setterId: string): Promise<PuertaDeEnt
 
   const avisos = (filas.rows as unknown as FilaAviso[]).map(aAviso)
 
-  const recordatorios = await db.execute(sql`
+  const recordatorios = await cliente.execute(sql`
     select id, tipo, texto, created_at
       from recordatorios
      where setter_id = ${setterId}::uuid and visto_at is null
@@ -146,7 +154,7 @@ export async function leerPuertaDeEntrada(setterId: string): Promise<PuertaDeEnt
     | { id: string; tipo: RecordatorioTipo; texto: string; created_at: Date }
     | undefined
 
-  const sinLeer = await db.execute(sql`
+  const sinLeer = await cliente.execute(sql`
     select count(*)::int as n
       from mensajes_destinatarios
      where setter_id = ${setterId}::uuid and leido_at is null

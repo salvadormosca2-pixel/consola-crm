@@ -646,7 +646,7 @@ describe('lo que le llega al admin y lo que le llega al setter', () => {
     await crearAviso(viejo.userId, { fijado: true, destinatarios: [viejo.setterId] })
 
     const nuevo = await crearSetter(pool, { cupos: [30] })
-    const puerta = await leerPuertaDeEntrada(nuevo.setterId)
+    const puerta = await leerPuertaDeEntrada(nuevo.setterId, db)
 
     expect(puerta.fijados).toHaveLength(1)
     expect(puerta.fijados[0]!.titulo).toBe('Cambió el guion')
@@ -657,7 +657,7 @@ describe('lo que le llega al admin y lo que le llega al setter', () => {
     await crearAviso(viejo.userId, { fijado: false, destinatarios: [viejo.setterId] })
 
     const nuevo = await crearSetter(pool, { cupos: [30] })
-    const puerta = await leerPuertaDeEntrada(nuevo.setterId)
+    const puerta = await leerPuertaDeEntrada(nuevo.setterId, db)
 
     expect(puerta.fijados).toHaveLength(0)
     expect(puerta.sinLeer).toBe(0)
@@ -668,8 +668,8 @@ describe('lo que le llega al admin y lo que le llega al setter', () => {
     await crearAviso(admin.userId, { fijado: true })
 
     const nuevo = await crearSetter(pool, { cupos: [30] })
-    await leerPuertaDeEntrada(nuevo.setterId)
-    await leerPuertaDeEntrada(nuevo.setterId)
+    await leerPuertaDeEntrada(nuevo.setterId, db)
+    await leerPuertaDeEntrada(nuevo.setterId, db)
 
     const r = await pool.query<{ n: string }>(
       'select count(*) as n from mensajes_destinatarios where setter_id = $1',
