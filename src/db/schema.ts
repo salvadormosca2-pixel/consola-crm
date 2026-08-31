@@ -735,6 +735,15 @@ export const leadAssignments = pgTable('lead_assignments', {
     .on(t.respondidoAt)
     .where(sql`${t.respondioA} = 'segundo' and ${t.clasificadoAt} is null`),
   check('lead_interes_solo_con_oferta', sql`${t.interes} is null or ${t.respondioA} = 'segundo'`),
+  /*
+   * El paso que le toca y cuándo le toca son un par. Separados, la cola cae a
+   * su valor por defecto y le muestra la entrada a un lead con el que ya se
+   * viene hablando: no falla, manda el mensaje equivocado.
+   */
+  check(
+    'lead_proximo_par',
+    sql`(${t.proximoPaso} is null) = (${t.proximoSeguimientoAt} is null)`,
+  ),
 ])
 
 /**

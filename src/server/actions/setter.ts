@@ -573,6 +573,15 @@ export async function agendarReunion(
              interes = case when ${vioLaOferta} then coalesce(interes, 'interesa'::lead_interes)
                             else interes end,
              /*
+              * Agendar **es** clasificar, y la más alta que hay. Sin esto el
+              * lead quedaba figurando en la cola de clasificación como si nadie
+              * hubiera decidido nada, con la reunión ya cargada: el mejor
+              * resultado posible, contado como trabajo pendiente y sumando
+              * atraso al SLA.
+              */
+             clasificado_at = coalesce(clasificado_at, now()),
+             clasificado_por = coalesce(clasificado_por, ${sesion.userId}::uuid),
+             /*
               * Agendar no corta la conversación: la confirma. Antes esto ponía
               * el próximo paso en null y la reunión quedaba de palabra en un
               * chat de Instagram, que es a lo que no se presenta nadie.

@@ -18,6 +18,7 @@ import { ActivarAvisos, CintaInstalar } from '@/components/setter/pwa'
 import { Button } from '@/components/ui/button'
 import { Chip, Panel } from '@/components/ui/panel'
 import { PASO_META } from '@/lib/mensajes-config'
+import { consumeCupo } from '@/lib/pistas'
 import { abrirEnInstagram } from '@/lib/abrir-instagram'
 import { copiarAlPortapapeles } from '@/lib/copiar'
 import { motivoDelCambio } from '@/lib/setters-cupo'
@@ -512,8 +513,14 @@ function TarjetaDeLead({
    * el setter tenga activa: en Instagram el hilo vive ahí. Si esa cuenta llegó
    * a su tope, el lead espera a mañana — cambiar de cuenta no ayuda, porque la
    * conversación no se mudó.
+   *
+   * Pero el tope solo frena a los pasos que **abren** chat: la entrada, la
+   * oferta y el reintento. Un seguimiento sobre una conversación que ya existe
+   * no gasta cupo y el servidor lo deja pasar; si la app lo bloqueara igual, el
+   * lead que contestó se quedaría sin respuesta por el presupuesto de abrir
+   * desconocidos, que es justo al revés de lo que conviene.
    */
-  const sinCupoEnSuCuenta = item.cuentaSinCupo
+  const sinCupoEnSuCuenta = item.cuentaSinCupo && consumeCupo(item.paso)
   const bloqueado = item.mensaje === null || sinCupoEnSuCuenta
   const habilitado = (abierto || item.abierto) && !sinCupoEnSuCuenta
 
