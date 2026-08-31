@@ -15,6 +15,7 @@ import {
   mensajeDeReunion,
   ofertaTrasLaRespuesta,
   proximoSeguimiento,
+  type RespondioA,
   SETTERS_CONFIG_DEFAULT,
   settersConfigSchema,
   trasClasificar,
@@ -34,32 +35,39 @@ const cfg = SETTERS_CONFIG_DEFAULT
 const DIA = 86_400_000
 const T0 = new Date('2026-03-10T12:00:00Z')
 
-function siguiente(paso: Paso, yaContesto = false) {
-  return proximoSeguimiento(cfg, paso, T0, yaContesto)
+function siguiente(paso: Paso, respondioA: RespondioA = null) {
+  return proximoSeguimiento(cfg, paso, T0, respondioA)
 }
 
 describe('el primer contacto se bifurca según si habló', () => {
   it('mandada la entrada y sin respuesta, nunca ve la oferta: va al reintento', () => {
     // Es el cambio de fondo: antes la oferta salía igual a las 24 horas, a
     // alguien que jamás abrió el chat.
-    const s = siguiente(1, false)
+    const s = siguiente(1, null)
     expect(s?.paso).toBe(primerPasoDe('sin_abrir').paso)
     expect(s?.cuando.getTime()).toBe(T0.getTime() + diasDelPaso(cfg, s!.paso) * DIA)
   })
 
   it('si contestó la entrada, la cadena no programa nada: la oferta sale en el acto', () => {
     // La programa la acción que marca la respuesta, no el envío.
-    expect(siguiente(1, true)).toBeNull()
+    expect(siguiente(1, 'primero')).toBeNull()
     expect(ofertaTrasLaRespuesta(T0)).toEqual({ paso: 2, cuando: T0 })
   })
 
   it('mandada la oferta y sin respuesta, entra a silencio', () => {
-    const s = siguiente(2, false)
+    const s = siguiente(2, null)
     expect(s?.paso).toBe(primerPasoDe('silencio').paso)
   })
 
   it('si contestó la oferta, no decide la cadena: decide una persona', () => {
-    expect(siguiente(2, true)).toBeNull()
+    expect(siguiente(2, 'segundo')).toBeNull()
+  })
+
+  it('haber contestado la entrada no lo salva de silencio si se calla en la oferta', () => {
+    // Ya habló una vez, pero ante la oferta se calló igual. Sin esto el lead se
+    // caía del sistema: no entraba a ninguna pista y no le llegaba nada más.
+    const s = siguiente(2, 'primero')
+    expect(s?.paso).toBe(primerPasoDe('silencio').paso)
   })
 })
 
@@ -99,11 +107,11 @@ describe('las escaleras bajan un escalón por vez y terminan', () => {
     // Si alguien engancha un ciclo, esto falla acá en vez de mandarle mensajes
     // a un lead hasta que lo bloqueen.
     for (const arranque of [1, 2, 3, 6, 7, 8, 13, 17] as const) {
-      for (const yaContesto of [false, true]) {
+      for (const respondioA of [null, 'primero', 'segundo'] as const) {
         let paso: Paso | null = arranque
         let vistos = 0
         while (paso !== null) {
-          const s: ReturnType<typeof siguiente> = proximoSeguimiento(cfg, paso, T0, yaContesto)
+          const s: ReturnType<typeof siguiente> = proximoSeguimiento(cfg, paso, T0, respondioA)
           paso = s?.paso ?? null
           vistos += 1
           expect(vistos).toBeLessThanOrEqual(8)

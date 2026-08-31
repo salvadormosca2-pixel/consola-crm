@@ -740,7 +740,7 @@ describe('contestó la entrada: le toca la oferta', () => {
     expect(await contarCupoDeSetter(pool, cuenta)).toBe(2)
   })
 
-  it('después de la oferta le toca el reenganche, no el último intento', async () => {
+  it('haber contestado la entrada no lo salva de silencio si se calla en la oferta', async () => {
     const setter = await crearSetter(pool, { cupos: [30] })
     const cuenta = setter.cuentas[0]!
     const a = await asignar(pool, await crearLeadScrapeado(pool, 1), setter.setterId)
@@ -749,10 +749,12 @@ describe('contestó la entrada: le toca la oferta', () => {
     await contestaLaEntrada(a)
     await marcar(a, setter.setterId, cuenta, 2)
 
-    // Paso 4 es "contestó y se enfrió". Al que nunca dijo nada le tocaría el 3,
-    // que es otro mensaje: no se le habla igual a un desconocido que a alguien
-    // con quien ya se habló.
-    expect((await leerLead(a)).proximo_paso).toBe(4)
+    /*
+     * Ya había hablado una vez, pero ante la oferta se calló igual, y el que se
+     * calla ante la oferta entra a silencio. Sin esto se caía del sistema: no
+     * entraba a ninguna pista y no volvía a recibir nada.
+     */
+    expect((await leerLead(a)).proximo_paso).toBe(PISTA_META.silencio.pasos[0]!.paso)
   })
 
   it('al que nunca contestó le sigue tocando el último intento', async () => {
@@ -831,25 +833,24 @@ describe('las situaciones que marca el setter', () => {
     return a
   }
 
-  it('al reenganche le sigue el último de todos, y ahí se corta', async () => {
+  it('la escalera de silencio se recorre entera y ahí se corta', async () => {
     const setter = await crearSetter(pool, { cupos: [30] })
     const cuenta = setter.cuentas[0]!
     const a = await hastaLaOferta(setter.setterId, cuenta)
 
-    // Contestó la entrada, así que le tocó el 4 y no el 3.
-    expect(await leerPaso(a)).toBe(4)
+    const escalones = PISTA_META.silencio.pasos.map((x) => x.paso)
+    expect(await leerPaso(a)).toBe(escalones[0])
 
-    await dejarPendiente(a, 4)
-    await marcar(a, setter.setterId, cuenta, 4)
-    expect(await leerPaso(a)).toBe(9)
+    for (const paso of escalones) {
+      await dejarPendiente(a, paso)
+      await marcar(a, setter.setterId, cuenta, paso)
+    }
 
-    await dejarPendiente(a, 9)
-    await marcar(a, setter.setterId, cuenta, 9)
-    // Se acabó: al noveno no le sigue nada.
+    // Se acabó: después del último no le sigue nada y queda para nurture.
     expect(await leerPaso(a)).toBeNull()
   })
 
-  it('mandado el "le interesa", queda su reenganche por si se enfría', async () => {
+  it('mandado el "le interesa", la cadena no le engancha nada más', async () => {
     const setter = await crearSetter(pool, { cupos: [30] })
     const cuenta = setter.cuentas[0]!
     const a = await hastaLaOferta(setter.setterId, cuenta)
@@ -858,8 +859,13 @@ describe('las situaciones que marca el setter', () => {
     const r = await marcar(a, setter.setterId, cuenta, 6)
     expect(r.ok).toBe(true)
 
-    // El 5 es "le interesó y se enfrió": ya dijo que sí una vez.
-    expect(await leerPaso(a)).toBe(5)
+    /*
+     * Dijo que sí: lo que sigue es una reunión, no otro mensaje automático. Si
+     * después se enfría, quien lo mete en la pista de tibio es una persona
+     * desde la cola de clasificación — insistirle solo por reloj a alguien que
+     * ya dijo que sí es la forma de que deje de decir que sí.
+     */
+    expect(await leerPaso(a)).toBeNull()
   })
 
   it('un no se respeta: el cierre sale una vez y no encadena nada', async () => {
@@ -882,15 +888,24 @@ describe('las situaciones que marca el setter', () => {
     expect(await leerPaso(a)).toBeNull()
   })
 
-  it('las nueve situaciones consumen cupo del mismo modo', async () => {
+  it('con el cupo agotado el seguimiento sale igual, y la apertura no', async () => {
     const setter = await crearSetter(pool, { cupos: [2] })
     const cuenta = setter.cuentas[0]!
     const a = await hastaLaOferta(setter.setterId, cuenta)
 
-    // La entrada y la oferta ya gastaron las dos del cupo.
-    await dejarPendiente(a, 4)
-    const r = await marcar(a, setter.setterId, cuenta, 4)
-    expect(r.ok).toBe(false)
+    // La entrada y la oferta ya gastaron las dos del cupo del día.
+    const otro = await asignar(pool, await crearLeadScrapeado(pool, 2), setter.setterId)
+    expect((await marcar(otro, setter.setterId, cuenta, 1)).ok).toBe(false)
+
+    /*
+     * Pero el seguimiento sale igual: ese chat ya está abierto. Si el cupo lo
+     * frenara, el lead que contestó quedaría sin respuesta por culpa del
+     * presupuesto de abrir desconocidos, que es justo al revés de lo que
+     * conviene.
+     */
+    const escalon = PISTA_META.silencio.pasos[0]!.paso
+    await dejarPendiente(a, escalon)
+    expect((await marcar(a, setter.setterId, cuenta, escalon)).ok).toBe(true)
   })
 })
 

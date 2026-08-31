@@ -120,7 +120,9 @@ describe('las escaleras', () => {
 
   it('los días crecen a lo largo de cada escalera', () => {
     // Insistir cada vez más seguido es la forma más rápida de que te bloqueen.
+    // La apertura queda afuera: sus dos pasos salen en el acto, los dos en 0.
     for (const pista of PISTAS) {
+      if (pista === 'primer_contacto') continue
       const dias = PISTA_META[pista].pasos.map((p) => p.diasDefault)
       for (let i = 1; i < dias.length; i += 1) {
         expect(dias[i]!, `${pista}: el escalón ${i + 1} no espera más que el anterior`)

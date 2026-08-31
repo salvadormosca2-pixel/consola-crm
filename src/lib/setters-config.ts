@@ -220,23 +220,34 @@ export function entrarAPista(
 }
 
 /**
+ * A cuál de los dos mensajes contestó el lead, si contestó alguno.
+ *
+ * No alcanza con un sí o un no: contestar la entrada y contestar la oferta son
+ * hechos distintos y mandan al lead a lugares distintos.
+ */
+export type RespondioA = 'primero' | 'segundo' | null
+
+/**
  * Qué le toca después del mensaje que se acaba de mandar.
  *
  * Devuelve null cuando la escalera se terminó: de ahí en más el lead queda para
  * nurture y vuelve a entrar a los 30-60 días. Ninguna rama sigue para siempre,
  * porque cada intento de más es cupo gastado y riesgo para la cuenta.
  *
- * Las dos bifurcaciones están en el primer contacto, y las dos dependen de si
- * el lead abrió la boca:
+ * Las dos bifurcaciones están en el primer contacto, y cada una mira una
+ * respuesta distinta:
  *
- *   · mandada **la entrada** y sin respuesta, nunca ve la oferta: se va al
- *     reintento de apertura, que es la única pista que gasta cupo porque el
- *     chat jamás se abrió. Si contesta, la oferta se la programa la acción que
- *     marca la respuesta, y sale en el acto.
- *   · mandada **la oferta** y sin respuesta, entra a silencio. Si contesta, no
- *     se decide acá: lo decide una persona en la cola de clasificación, que es
- *     la que sabe si esa respuesta fue una objeción (tibio), ruido (silencio) o
- *     un sí (interesado).
+ *   · mandada **la entrada**, lo que importa es si contestó algo. Si no
+ *     contestó nunca ve la oferta: se va al reintento de apertura, la única
+ *     pista que gasta cupo porque el chat jamás se abrió. Si contestó, la
+ *     oferta se la programó la acción que marcó la respuesta y salió en el
+ *     acto, así que acá no hay nada que encadenar.
+ *   · mandada **la oferta**, lo que importa es si contestó *la oferta*. Haber
+ *     contestado la entrada no cuenta: ese lead ya habló una vez, pero ante la
+ *     oferta se calló igual, y el que se calla ante la oferta entra a silencio.
+ *     Solo si contestó la oferta se frena la cadena, porque ahí decide una
+ *     persona en la cola de clasificación — es la que sabe si eso fue una
+ *     objeción (tibio), ruido (silencio) o un sí (interesado).
  *
  * Dentro de una pista no hay bifurcación: se baja un escalón por vez.
  */
@@ -244,12 +255,12 @@ export function proximoSeguimiento(
   cfg: SettersConfig,
   paso: PasoDeSeguimiento,
   desde: Date = new Date(),
-  yaContesto = false,
+  respondioA: RespondioA = null,
 ): ProximoPaso | null {
   if (!esPaso(paso)) return null
 
-  if (paso === 1) return yaContesto ? null : entrarAPista(cfg, 'sin_abrir', desde)
-  if (paso === 2) return yaContesto ? null : entrarAPista(cfg, 'silencio', desde)
+  if (paso === 1) return respondioA !== null ? null : entrarAPista(cfg, 'sin_abrir', desde)
+  if (paso === 2) return respondioA === 'segundo' ? null : entrarAPista(cfg, 'silencio', desde)
 
   const siguiente = siguienteDeLaPista(paso)
   if (!siguiente) return null

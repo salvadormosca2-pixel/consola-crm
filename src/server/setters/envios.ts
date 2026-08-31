@@ -4,7 +4,12 @@ import { sql } from 'drizzle-orm'
 
 import { db, type Db } from '@/db'
 import type { SetterSendTipo } from '@/db/enums'
-import { diasDelPaso, proximoSeguimiento, type PasoDeSeguimiento } from '@/lib/setters-config'
+import {
+  diasDelPaso,
+  proximoSeguimiento,
+  type PasoDeSeguimiento,
+  type RespondioA,
+} from '@/lib/setters-config'
 import { consumeCupo, primerPasoDe } from '@/lib/pistas'
 import { leerConfigSetters } from '@/server/setters/config'
 import { PASOS_CON_CUPO } from '@/server/setters/cupo'
@@ -257,17 +262,17 @@ export async function registrarEnvio(
        *     al reintento de apertura. Si contestó, la oferta ya se la programó
        *     la acción que marcó la respuesta, y salió en el acto — acá no hay
        *     nada que encadenar.
-       *   · mandada la oferta y sin respuesta, entra a silencio. Si contestó,
-       *     tampoco se decide acá: lo decide una persona en la cola de
-       *     clasificación, que es la que sabe si eso fue una objeción, ruido o
-       *     un sí.
+       *   · mandada la oferta, lo que importa es si contestó *la oferta*.
+       *     Haber contestado la entrada no cuenta: ese lead ya habló una vez,
+       *     pero ante la oferta se calló igual, y el que se calla entra a
+       *     silencio. Solo si contestó la oferta se frena, porque ahí decide
+       *     una persona en la cola de clasificación.
        *
        * Dentro de una pista no hay bifurcación: se baja un escalón por vez, y
        * al final de la escalera no sigue nada. Las tres situaciones que salen
        * por marca del setter tampoco encadenan: las programa quien las marca.
        */
-      const yaContesto = asignacion.respondio_a !== null
-      const siguiente = proximoSeguimiento(cfg, paso, ahora, yaContesto)
+      const siguiente = proximoSeguimiento(cfg, paso, ahora, asignacion.respondio_a as RespondioA)
 
       /*
        * `segundo_programado_at` es el reloj que miran los recordatorios, las
