@@ -1,32 +1,86 @@
 /**
- * Abrir el chat de Instagram desde el celular.
+ * Abrir el chat de Instagram desde el celular, **en la app y no en el navegador**.
  *
- * `window.open` es lo primero que se intenta, pero devuelve `null` cuando el
- * navegador lo toma por una ventana emergente —pasa seguido en el celular, y
- * más todavía con la app instalada como PWA—. Ahí no hay error ni aviso: la
- * llamada simplemente no hace nada y el setter se queda mirando la pantalla.
+ * El problema que esto resuelve es el que se veía en la calle: el primer toque
+ * abría Instagram y el segundo caía en Chrome o Safari. No era del teléfono,
+ * eran dos aperturas por un solo toque.
  *
- * Por eso el respaldo: un enlace de verdad, creado y clickeado. Un click sobre
- * un `<a>` no cuenta como emergente, así que pasa donde `window.open` no pasa.
+ *   · `window.open(url, '_blank', 'noopener,noreferrer')` devuelve `null`
+ *     **siempre** que se le pasa `noopener` — así está en la especificación, no
+ *     es una falla del celular. El código de antes leía ese `null` como "no se
+ *     pudo abrir" y disparaba el respaldo, así que cada toque abría el chat dos
+ *     veces: la primera se la llevaba la app, y la segunda —que ya venía de
+ *     `ig.me`— se quedaba en el navegador.
+ *
+ *   · Y aunque abriera una sola vez, `window.open` tampoco sirve: ni Android ni
+ *     iOS le entregan un link a la app cuando la navegación la arrancó un
+ *     script. El gesto que sí reconocen es un click sobre un `<a href>` de
+ *     verdad. Por eso ya no se abre nada desde código: acá solo se decide **a
+ *     dónde** apunta el enlace, y el que abre es `AbrirInstagram`.
+ *
+ * En Android hay una forma de exigir la app y no pedirla: `intent://`, con el
+ * paquete de Instagram adentro. Si la app no está instalada, el propio Android
+ * manda al `browser_fallback_url`. En iOS no existe equivalente y el que
+ * resuelve es el link común de `ig.me`, que el sistema intercepta como
+ * Universal Link cuando el toque es sobre un enlace.
  */
-export function abrirEnInstagram(url: string): void {
-  try {
-    const ventana = window.open(url, '_blank', 'noopener,noreferrer')
-    if (ventana) return
-  } catch {
-    // Sigue por el respaldo.
-  }
 
-  try {
-    const a = document.createElement('a')
-    a.href = url
-    a.target = '_blank'
-    a.rel = 'noopener noreferrer'
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
-  } catch {
-    // Último recurso: salir de la app. Vuelve con el botón de atrás.
-    window.location.href = url
-  }
+/** El paquete de la app de Instagram en Android. */
+const PAQUETE_ANDROID = 'com.instagram.android'
+
+export type Plataforma = 'android' | 'ios' | 'escritorio'
+
+/** Qué teléfono es, mirando el `user agent`. Separado para poder probarlo. */
+export function plataformaDe(ua: string): Plataforma {
+  if (/android/i.test(ua)) return 'android'
+  if (/iphone|ipad|ipod/i.test(ua)) return 'ios'
+  return 'escritorio'
+}
+
+/**
+ * La plataforma de quien está mirando.
+ *
+ * El iPad moderno miente y se presenta como una Mac: lo delata que tenga
+ * pantalla táctil, que ninguna Mac tiene.
+ */
+export function plataformaActual(): Plataforma {
+  if (typeof navigator === 'undefined') return 'escritorio'
+
+  const p = plataformaDe(navigator.userAgent)
+  if (p !== 'escritorio') return p
+
+  const esMac = /Mac/i.test(navigator.userAgent)
+  return esMac && navigator.maxTouchPoints > 1 ? 'ios' : 'escritorio'
+}
+
+/**
+ * El usuario de Instagram que hay adentro de un link nuestro.
+ *
+ * Los links los arma el servidor (`linksDeInstagram`), así que las dos formas
+ * que llegan acá son `ig.me/m/usuario` y `instagram.com/usuario`.
+ */
+export function usuarioDelLink(url: string): string | null {
+  const m = /^https?:\/\/(?:www\.)?(?:ig\.me\/m\/|instagram\.com\/(?:_u\/)?)([A-Za-z0-9._]+)/i.exec(
+    url.trim(),
+  )
+  return m ? m[1] : null
+}
+
+/**
+ * A dónde tiene que apuntar el enlace en cada plataforma.
+ *
+ * Android se lleva el `intent://`, que no deja lugar a dudas: o abre la app de
+ * Instagram o, si no está instalada, el link común. iOS y escritorio se llevan
+ * el link tal cual.
+ */
+export function hrefDeInstagram(url: string, plataforma: Plataforma): string {
+  if (plataforma !== 'android') return url
+
+  const usuario = usuarioDelLink(url)
+  if (!usuario) return url
+
+  return (
+    `intent://ig.me/m/${usuario}#Intent;scheme=https;package=${PAQUETE_ANDROID};` +
+    `S.browser_fallback_url=${encodeURIComponent(url)};end`
+  )
 }

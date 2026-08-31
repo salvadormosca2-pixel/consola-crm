@@ -4,6 +4,7 @@ import { ExternalLink, X } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import * as React from 'react'
 
+import { AbrirInstagram } from '@/components/setter/abrir-instagram'
 import { Chip, Panel, PanelHeader } from '@/components/ui/panel'
 import { PASO_META } from '@/lib/mensajes-config'
 import {
@@ -216,15 +217,13 @@ function ListaDeLeads({
                 <Cuando clasificacion={clasificacion} lead={l} />
               </span>
 
-              <a
-                href={`https://ig.me/m/${l.igUsername}`}
-                target="_blank"
-                rel="noopener noreferrer"
+              <AbrirInstagram
+                link={`https://ig.me/m/${l.igUsername}`}
                 aria-label={`Abrir el chat con ${l.negocio}`}
                 className="flex h-7 w-7 items-center justify-center rounded-[5px] text-texto-2 hover:bg-elevada hover:text-texto"
               >
                 <ExternalLink className="h-3.5 w-3.5" aria-hidden />
-              </a>
+              </AbrirInstagram>
             </div>
           ))}
         </div>

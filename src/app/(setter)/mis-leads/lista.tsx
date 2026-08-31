@@ -5,11 +5,11 @@ import { useRouter } from 'next/navigation'
 import * as React from 'react'
 import { toast } from 'sonner'
 
+import { AbrirInstagram } from '@/components/setter/abrir-instagram'
 import { AccionDeLead, etapaDe } from '@/components/setter/acciones-lead'
 import { Input } from '@/components/ui/input'
 import { Chip, Panel, type Tono } from '@/components/ui/panel'
 import { INTERES_META } from '@/db/enums'
-import { abrirEnInstagram } from '@/lib/abrir-instagram'
 import { copiarAlPortapapeles } from '@/lib/copiar'
 import { formatCorto, haceCuanto } from '@/lib/tz'
 import { PESTANA_META, PESTANAS, type Pestana } from '@/lib/setters-vistas'
@@ -193,24 +193,23 @@ export function Lista({
  * copia nada y lo dice. Es preferible a pegarle un guion que no corresponde.
  */
 function AbrirChat({ lead }: { lead: MisLeads['filas'][number] }) {
-  function abrir(): void {
-    if (lead.mensaje) {
-      void copiarAlPortapapeles(lead.mensaje).then((ok) => {
-        if (ok) toast.success('Mensaje copiado — pegá con mantener presionado')
-        else toast.error('No se pudo copiar. Copiá el mensaje a mano desde la cola.')
-      })
-    }
-    abrirEnInstagram(lead.linkDirecto)
+  function copiar(): void {
+    if (!lead.mensaje) return
+    void copiarAlPortapapeles(lead.mensaje).then((ok) => {
+      if (ok) toast.success('Mensaje copiado — pegá con mantener presionado')
+      else toast.error('No se pudo copiar. Copiá el mensaje a mano desde la cola.')
+    })
   }
 
   return (
-    <button
-      onClick={abrir}
+    <AbrirInstagram
+      link={lead.linkDirecto}
+      onAbrir={copiar}
       className="mt-2.5 flex h-10 w-full items-center justify-center gap-1.5 rounded-[5px] border border-borde bg-elevada text-[12.5px] font-medium text-texto"
     >
       <ExternalLink className="h-3.5 w-3.5" aria-hidden />
       {lead.mensaje ? 'Copiar y abrir chat' : 'Abrir chat'}
-    </button>
+    </AbrirInstagram>
   )
 }
 

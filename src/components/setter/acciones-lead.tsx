@@ -14,6 +14,7 @@ import {
 import * as React from 'react'
 import { toast } from 'sonner'
 
+import { AbrirInstagram } from '@/components/setter/abrir-instagram'
 import { Button } from '@/components/ui/button'
 import { Field, Input } from '@/components/ui/input'
 import {
@@ -24,7 +25,6 @@ import {
   verMensajePreparado,
   type MensajeListo,
 } from '@/server/actions/setter'
-import { abrirEnInstagram } from '@/lib/abrir-instagram'
 import { copiarAlPortapapeles } from '@/lib/copiar'
 import { cn } from '@/lib/utils'
 
@@ -176,19 +176,21 @@ function HojaDeOferta({
     }
   }, [assignmentId])
 
-  function abrirInstagram(): void {
-    if (!mensaje?.texto || !mensaje.linkDirecto) return
-    /*
-     * Se copia ANTES de abrir: una vez que el navegador cambia de app ya no se
-     * puede escribir en el portapapeles. Y el copiado no puede impedir la
-     * apertura: sin HTTPS la API del portapapeles no existe, y la excepción se
-     * llevaba puesta la línea de abajo.
-     */
-    void copiarAlPortapapeles(mensaje.texto).then((ok) => {
-      if (ok) toast.success('Mensaje copiado — pegá con mantener presionado')
-      else toast.error('No se pudo copiar. Copiá el texto a mano.')
-    })
-    abrirEnInstagram(mensaje.linkDirecto)
+  /*
+   * Corre dentro del toque sobre el enlace, sin cancelarlo: la navegación a
+   * Instagram la maneja el `<a>`, que es lo único que el celular reconoce para
+   * entregarle el link a la app.
+   *
+   * Y el copiado va acá porque tiene que pasar antes de que la pantalla cambie
+   * de app: después ya no se puede escribir en el portapapeles.
+   */
+  function alAbrirInstagram(): void {
+    if (mensaje?.texto) {
+      void copiarAlPortapapeles(mensaje.texto).then((ok) => {
+        if (ok) toast.success('Mensaje copiado — pegá con mantener presionado')
+        else toast.error('No se pudo copiar. Copiá el texto a mano.')
+      })
+    }
     setAbierto(true)
     void abrirChat(assignmentId)
   }
@@ -225,14 +227,17 @@ function HojaDeOferta({
             </p>
           </div>
 
-          <Button
-            variant={abierto ? 'secundaria' : 'primaria'}
-            className="mt-3 h-12 w-full text-[14px]"
-            onClick={abrirInstagram}
-          >
-            <ExternalLink aria-hidden />
-            Abrir Instagram
-          </Button>
+          {mensaje.linkDirecto ? (
+            <AbrirInstagram
+              link={mensaje.linkDirecto}
+              onAbrir={alAbrirInstagram}
+              variant={abierto ? 'secundaria' : 'primaria'}
+              className="mt-3 h-12 w-full text-[14px]"
+            >
+              <ExternalLink aria-hidden />
+              Abrir Instagram
+            </AbrirInstagram>
+          ) : null}
 
           <Button
             variant="positiva"

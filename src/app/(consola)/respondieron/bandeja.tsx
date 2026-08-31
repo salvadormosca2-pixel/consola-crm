@@ -14,6 +14,7 @@ import { useRouter } from 'next/navigation'
 import * as React from 'react'
 import { toast } from 'sonner'
 
+import { AbrirInstagram } from '@/components/setter/abrir-instagram'
 import { Button } from '@/components/ui/button'
 import { Chip, Panel, PanelHeader } from '@/components/ui/panel'
 import { INTERES_META, STAGE_META, type ContactStage } from '@/db/enums'
@@ -204,15 +205,13 @@ export function Bandeja({
                     <div className="mt-0.5">puntaje</div>
                   </div>
                   {f.igUsername ? (
-                    <a
-                      href={`https://ig.me/m/${f.igUsername}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
+                    <AbrirInstagram
+                      link={`https://ig.me/m/${f.igUsername}`}
                       aria-label={`Abrir el chat con ${f.businessName}`}
                       className="flex h-7 w-7 items-center justify-center rounded-[5px] text-texto-2 hover:bg-elevada hover:text-texto"
                     >
                       <ExternalLink className="h-3.5 w-3.5" aria-hidden />
-                    </a>
+                    </AbrirInstagram>
                   ) : null}
                 </div>
               </div>

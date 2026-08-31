@@ -14,12 +14,12 @@ import { useRouter } from 'next/navigation'
 import * as React from 'react'
 import { toast } from 'sonner'
 
+import { AbrirInstagram } from '@/components/setter/abrir-instagram'
 import { ActivarAvisos, CintaInstalar } from '@/components/setter/pwa'
 import { Button } from '@/components/ui/button'
 import { Chip, Panel } from '@/components/ui/panel'
 import { PASO_META } from '@/lib/mensajes-config'
 import { consumeCupo } from '@/lib/pistas'
-import { abrirEnInstagram } from '@/lib/abrir-instagram'
 import { copiarAlPortapapeles } from '@/lib/copiar'
 import { motivoDelCambio } from '@/lib/setters-cupo'
 import * as outbox from '@/lib/outbox'
@@ -145,22 +145,21 @@ export function Cola({
       if (!item.mensaje) return
 
       /*
-       * No existe forma de precargar el texto de un DM de Instagram. El
-       * portapapeles es el camino: se copia primero y recién después se abre
-       * el chat, porque una vez que el navegador cambia de app ya no se puede
-       * escribir en el portapapeles.
+       * Esto corre **dentro** del toque sobre el enlace y sin cancelarlo: la
+       * navegación a Instagram sigue su camino sola. Es a propósito, porque el
+       * sistema operativo solo le entrega el link a la app cuando el toque fue
+       * sobre un enlace de verdad; abrirlo desde acá con código lo dejaba en
+       * el navegador.
        *
-       * El copiado no puede impedir la apertura. Antes iba directo a
-       * `navigator.clipboard`, que no existe sin HTTPS, y la excepción se
-       * llevaba puesto el `window.open` de abajo: se tocaba "Abrir Instagram"
-       * y no pasaba nada.
+       * No existe forma de precargar el texto de un DM de Instagram, así que
+       * el portapapeles es el camino, y el copiado tiene que pasar acá: una
+       * vez que la pantalla cambió de app ya no se puede escribir en él.
        */
       void copiarAlPortapapeles(item.mensaje).then((ok) => {
         if (ok) toast.success('Mensaje copiado — pegá con mantener presionado')
         else toast.error('No se pudo copiar. Mantené presionado el mensaje y copialo a mano.')
       })
 
-      abrirEnInstagram(item.linkDirecto)
       setAbiertos((s) => new Set(s).add(item.assignmentId))
       void abrirChat(item.assignmentId)
     },
@@ -524,6 +523,25 @@ function TarjetaDeLead({
   const bloqueado = item.mensaje === null || sinCupoEnSuCuenta
   const habilitado = (abierto || item.abierto) && !sinCupoEnSuCuenta
 
+  /*
+   * Guarda contra el toque fantasma.
+   *
+   * Al tocar "Enviado" la cola avanza en el acto y la tarjeta se reemplaza por
+   * la del lead siguiente **dentro del mismo toque**. El `click` llega después
+   * del cambio y le cae al botón nuevo que quedó abajo del dedo: se abría
+   * Instagram sin que nadie lo pidiera, y peor, sobre el lead equivocado.
+   *
+   * Un cuarto de segundo sin recibir toques lo corta. No se nota al usar la
+   * app —el dedo tarda más que eso en volver— y no hace falta cartel: nada
+   * cambia de aspecto.
+   */
+  const [listo, setListo] = React.useState(false)
+  React.useEffect(() => {
+    setListo(false)
+    const t = setTimeout(() => setListo(true), 250)
+    return () => clearTimeout(t)
+  }, [item.assignmentId])
+
   return (
     <Panel className="overflow-hidden">
       <div className="flex items-center justify-between gap-2 border-b border-borde px-3 py-1.5">
@@ -587,7 +605,7 @@ function TarjetaDeLead({
         ) : null}
       </div>
 
-      <div className="space-y-2 border-t border-borde px-3 py-3">
+      <div className={cn('space-y-2 border-t border-borde px-3 py-3', !listo && 'pointer-events-none')}>
         {/*
           Solo en el primer mensaje. Un DM de una cuenta que la persona no
           sigue le cae en solicitudes, donde puede no mirar nunca; respondiendo
@@ -607,14 +625,16 @@ function TarjetaDeLead({
         ) : null}
 
         {!bloqueado ? (
-          <Button
+          <AbrirInstagram
+            link={item.linkDirecto}
+            onAbrir={onAbrir}
+            bloqueado={!listo}
             variant={habilitado ? 'secundaria' : 'primaria'}
             className="h-12 w-full text-[14px]"
-            onClick={onAbrir}
           >
             <ExternalLink aria-hidden />
             Abrir Instagram
-          </Button>
+          </AbrirInstagram>
         ) : null}
 
         <div className="flex gap-2">
