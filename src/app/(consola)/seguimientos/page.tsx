@@ -2,7 +2,7 @@ import type { Metadata } from 'next'
 
 import { requerirAdmin } from '@/server/session'
 import { leerConfigSetters } from '@/server/setters/config'
-import { listarMensajes } from '@/server/setters/mensajes'
+import { leerConfigDeMensajes, listarMensajes, rubrosConLeads } from '@/server/setters/mensajes'
 
 import { Tiempos } from './tiempos'
 
@@ -10,15 +10,16 @@ export const metadata: Metadata = { title: 'Seguimientos · 101leads' }
 export const dynamic = 'force-dynamic'
 
 /**
- * Cuándo vuelve un lead a la cola, y con cuál de las situaciones.
+ * Los seguimientos: cuándo vuelve un lead a la cola, con cuál de las
+ * situaciones, y qué le decimos.
  *
- * Acá está la escalera completa y nada más: un seguimiento sale por los días
- * que pasaron y por la situación en la que quedó el lead, no por orden de
- * lista, y eso solo se entiende viendo las situaciones juntas y comparables.
+ * El día y el texto se editan juntos porque son una sola decisión: a los tres
+ * días se escribe distinto que a los quince, y tener el número en otra pantalla
+ * obligaba a escribir de memoria.
  *
- * El texto de cada una se escribe en Mensajes. De ahí solo se lee si está
- * escrito o no: una situación sin mensaje deja leads bloqueados, así que ese
- * dato tiene que estar acá aunque el texto viva en la otra pantalla.
+ * Los mensajes que no son un seguimiento —la entrada, la oferta y los tres que
+ * salen en el acto cuando el setter marca qué contestó— no dependen de ningún
+ * día y se escriben en Mensajes.
  *
  * Y el control de si el equipo los hace está en Equipo: esta pantalla define
  * las reglas, esa mide si se cumplen.
@@ -26,7 +27,12 @@ export const dynamic = 'force-dynamic'
 export default async function PaginaSeguimientos() {
   await requerirAdmin()
 
-  const [cfg, mensajes] = await Promise.all([leerConfigSetters(), listarMensajes()])
+  const [cfg, config, mensajes, rubros] = await Promise.all([
+    leerConfigSetters(),
+    leerConfigDeMensajes(),
+    listarMensajes(),
+    rubrosConLeads(),
+  ])
 
   return (
     <Tiempos
@@ -39,9 +45,9 @@ export default async function PaginaSeguimientos() {
         diasParaRetomarInteresado: cfg.diasParaRetomarInteresado,
         diasParaUltimoReenganche: cfg.diasParaUltimoReenganche,
       }}
-      mensajes={{
-        escritos: mensajes.filter((m) => m.rubro === null && m.activo).map((m) => m.paso),
-      }}
+      mensajes={mensajes}
+      config={config}
+      rubros={rubros}
     />
   )
 }

@@ -28,9 +28,11 @@ import type { FilaNotificacion } from '@/server/setters/notificaciones'
  * decimos, qué les contestamos cuando preguntan, y qué hizo cada uno. Todo lo
  * que no responde una pregunta que alguien se hace no está.
  *
- * Mensajes y Seguimientos van separadas porque son dos trabajos distintos: el
- * texto se reescribe todo el tiempo según qué contesta la gente, y los días se
- * tocan una vez y quedan.
+ * Mensajes y Seguimientos van separadas porque son dos mensajes distintos.
+ * Mensajes tiene los que salen sin esperar nada —la entrada, la oferta y los
+ * que salen en el acto cuando el setter marca qué contestó—; Seguimientos tiene
+ * los que vuelven solos por silencio, cada uno con su día y su texto juntos,
+ * porque a los tres días y a los quince no se escribe igual.
  */
 const SECCIONES = [
   { href: '/equipo', label: 'Equipo', icono: UserCog },

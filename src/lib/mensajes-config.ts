@@ -164,8 +164,42 @@ export const GRUPOS_DE_PASOS: readonly GrupoDePasos[] = [
   },
 ]
 
-/** Los que son reenganche: se disparan por silencio, no por una marca. */
-export const PASOS_DE_REENGANCHE: readonly Paso[] = [3, 4, 5, 9]
+/* ── Dónde se escribe cada texto ──────────────────────────────────────── */
+
+/**
+ * Los textos están partidos en dos pantallas, y el corte es si el mensaje es
+ * un seguimiento o no.
+ *
+ *   **De seguimiento** — los que vuelven solos por silencio, a los días. El
+ *   texto no se puede escribir sin saber cuántos días pasaron: a los tres días
+ *   se pregunta si vio el mensaje, a los quince se cierra la puerta. Por eso el
+ *   día y el texto se editan juntos, en Seguimientos.
+ *
+ *   **Principal** — los que salen sin esperar ningún día: la entrada y la
+ *   oferta, que el setter manda desde su cola, y los tres que salen en el acto
+ *   cuando marca qué contestó el lead. Esos se escriben en Mensajes.
+ *
+ * Los dos grupos guardan en la misma tabla y con el mismo número de paso: lo
+ * único que cambia es en qué pantalla se escriben.
+ */
+export const PASOS_DE_SEGUIMIENTO: readonly Paso[] = [3, 4, 5, 9]
+
+export function esDeSeguimiento(paso: Paso): boolean {
+  return PASOS_DE_SEGUIMIENTO.includes(paso)
+}
+
+/** Lo que le queda a Mensajes: los mismos grupos, sin los seguimientos. */
+export const GRUPOS_PRINCIPALES: readonly GrupoDePasos[] = GRUPOS_DE_PASOS.map((g) => ({
+  ...g,
+  pasos: g.pasos.filter((p) => !esDeSeguimiento(p)),
+})).filter((g) => g.pasos.length > 0)
+
+export const PASOS_PRINCIPALES: readonly Paso[] = GRUPOS_PRINCIPALES.flatMap((g) => [...g.pasos])
+
+/** Igual que `esPaso`, pero además exige que se escriba en Mensajes. */
+export function esPrincipal(n: unknown): n is Paso {
+  return esPaso(n) && !esDeSeguimiento(n)
+}
 
 /* ── Variables ────────────────────────────────────────────────────────── */
 

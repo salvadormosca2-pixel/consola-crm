@@ -183,7 +183,7 @@ export async function guardarMensaje(datos: unknown): Promise<EstadoAccion> {
            where id = ${previo.id}::uuid
         `)
         revalidatePath('/mensajes')
-    revalidatePath('/seguimientos')
+        revalidatePath('/seguimientos')
         revalidatePath('/hoy')
         return { ok: true, error: null }
       }

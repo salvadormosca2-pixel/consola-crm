@@ -3,7 +3,7 @@ import 'server-only'
 import { sql } from 'drizzle-orm'
 
 import { db } from '@/db'
-import { PASO_META } from '@/lib/mensajes-config'
+import { esDeSeguimiento, PASO_META } from '@/lib/mensajes-config'
 import type { PasoDeSeguimiento } from '@/lib/setters-config'
 import { datosDeContacto, renderTemplate } from '@/lib/templates/render'
 import { leerConfigDeMensajes } from '@/server/setters/mensajes'
@@ -114,9 +114,13 @@ export function armarMensaje(
   paso: PasoDeSeguimiento,
 ): MensajeArmado {
   if (!plantilla) {
+    /* Cada texto se escribe en una pantalla distinta según sea un seguimiento
+       o no, así que el motivo tiene que nombrar la correcta: mandarlo a Mensajes
+       a buscar un texto que se escribe en Seguimientos es un callejón. */
+    const donde = esDeSeguimiento(paso) ? 'Seguimientos' : 'Mensajes'
     return {
       ok: false,
-      motivo: `Todavía no escribiste el mensaje de "${PASO_META[paso].label}". Cargalo en Mensajes.`,
+      motivo: `Todavía no escribiste el mensaje de "${PASO_META[paso].label}". Cargalo en ${donde}.`,
     }
   }
 

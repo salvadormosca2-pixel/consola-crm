@@ -5,23 +5,38 @@ import { useRouter } from 'next/navigation'
 import * as React from 'react'
 import { toast } from 'sonner'
 
+import { MensajesDeLaSituacion, Variables } from '@/components/mensaje-editable'
 import { Button } from '@/components/ui/button'
 import { Field, Input } from '@/components/ui/input'
 import { Panel, PanelHeader } from '@/components/ui/panel'
-import { GRUPOS_DE_PASOS, PASO_META, type Paso } from '@/lib/mensajes-config'
+import {
+  esDeSeguimiento,
+  GRUPOS_DE_PASOS,
+  PASO_META,
+  PASOS_DE_SEGUIMIENTO,
+  type MensajesConfig,
+  type Paso,
+} from '@/lib/mensajes-config'
 import { cn } from '@/lib/utils'
 import { guardarTiempos } from '@/server/actions/mensajes'
+import type { MensajeGuardado } from '@/server/setters/mensajes'
 
 /**
- * Cuándo vuelve un lead, y con cuál de las situaciones.
+ * Los seguimientos: cuándo vuelve un lead, y con qué texto.
  *
- * Esta pantalla es **el tiempo**; el texto que sale en cada situación se
- * escribe en Mensajes. Son dos decisiones distintas y se toman en momentos
- * distintos: los días se tocan una vez y quedan, y los textos se reescriben
- * todo el tiempo según qué contesta la gente.
+ * Las dos cosas viven acá porque son una sola decisión. El texto de un
+ * seguimiento no se puede escribir sin el día delante: a los tres días le
+ * preguntás si llegó a ver el mensaje, a los quince ya no preguntás nada y le
+ * dejás la puerta abierta. Tenerlos en pantallas separadas obligaba a escribir
+ * a ciegas y a cruzar de una a la otra para acordarse del número.
  *
- * Lo que las mantiene unidas es esta lista: cada situación muestra si ya tiene
- * mensaje escrito, y si no lo tiene se entra a escribirlo desde acá.
+ * Los mensajes que **no** son un seguimiento —la entrada, la oferta y los tres
+ * que salen en el acto cuando el setter marca qué contestó— no dependen de
+ * ningún día y se escriben en Mensajes.
+ *
+ * La escalera de arriba sigue mostrando las nueve situaciones, de seguimiento o
+ * no: un seguimiento sale por los días que pasaron y por dónde quedó el lead, y
+ * eso solo se entiende viendo el recorrido entero.
  */
 
 export interface TiemposDeSeguimiento {
@@ -34,29 +49,42 @@ export interface TiemposDeSeguimiento {
   diasParaUltimoReenganche: number
 }
 
-/** Solo lo que la escalera necesita saber de los textos: si están o no. */
-export interface EstadoDeMensajes {
-  escritos: Paso[]
-}
-
 export function Tiempos({
   tiempos,
   mensajes,
+  config,
+  rubros,
 }: {
   tiempos: TiemposDeSeguimiento
-  mensajes: EstadoDeMensajes
+  /** Todos los guardados. Acá se usan los de seguimiento y se mira si el resto está escrito. */
+  mensajes: MensajeGuardado[]
+  config: MensajesConfig
+  rubros: Array<{ rubro: string; leads: number }>
 }) {
   const reloj = useTiempos(tiempos)
-  const escritos = new Set(mensajes.escritos)
+  const [paso, setPaso] = React.useState<Paso>(PASOS_DE_SEGUIMIENTO[0]!)
+  const textos = React.useRef<HTMLDivElement>(null)
+
+  const escritos = new Set(
+    mensajes.filter((m) => m.rubro === null && m.activo).map((m) => m.paso),
+  )
+
+  /* Tocar un seguimiento en la escalera lleva a su texto, que está más abajo en
+     esta misma pantalla. Los que no son seguimiento siguen yendo a Mensajes. */
+  function irAlTexto(p: Paso): void {
+    setPaso(p)
+    textos.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
 
   return (
     <div className="space-y-3">
       <div>
         <h1 className="text-[22px]">Seguimientos</h1>
         <p className="mt-1 max-w-[720px] text-[13px] leading-relaxed text-texto-2">
-          Cuándo vuelve un lead a la cola del setter, y con cuál de las situaciones. Un seguimiento
-          no sale por orden de lista: sale por los días que pasaron y por la situación en la que
-          quedó el lead. Acá se define esa escalera; el texto de cada una se escribe en{' '}
+          Cuándo vuelve un lead a la cola del setter, con cuál de las situaciones, y qué le decimos
+          en cada una. Un seguimiento no sale por orden de lista: sale por los días que pasaron y
+          por la situación en la que quedó el lead. Los mensajes que no son seguimiento —la entrada,
+          la oferta y los que salen en el acto— se escriben en{' '}
           <Link href="/mensajes" className="text-acento hover:underline">
             Mensajes
           </Link>
@@ -64,7 +92,19 @@ export function Tiempos({
         </p>
       </div>
 
-      <Escalera reloj={reloj} escritos={escritos} />
+      <Escalera reloj={reloj} escritos={escritos} irAlTexto={irAlTexto} />
+
+      <TextosDeSeguimiento
+        ancla={textos}
+        reloj={reloj}
+        paso={paso}
+        elegir={setPaso}
+        mensajes={mensajes}
+        config={config}
+        rubros={rubros}
+        escritos={escritos}
+      />
+
       <Generales reloj={reloj} />
     </div>
   )
@@ -74,10 +114,18 @@ export function Tiempos({
 
 type ClaveDeEspera = Exclude<keyof TiemposDeSeguimiento, 'horasVencimiento' | 'diasAtrasoParaAlerta'>
 
+interface Espera {
+  campo: ClaveDeEspera
+  unidad: string
+  desde: string
+  min: number
+  max: number
+}
+
 interface Disparo {
   /** En qué situación tiene que estar el lead para que le toque este mensaje. */
   situacion: string
-  espera: { campo: ClaveDeEspera; unidad: string; desde: string; min: number; max: number } | null
+  espera: Espera | null
 }
 
 const DISPARO: Record<Paso, Disparo> = {
@@ -198,9 +246,9 @@ function useTiempos(inicial: TiemposDeSeguimiento) {
 /**
  * El botón que guarda todos los números de una, esté donde esté el que tocaste.
  *
- * Son una sola configuración aunque estén repartidos en dos paneles: mover los
- * días de una situación y el vencimiento en la misma pasada tiene que llegar
- * junto, sin que uno pise al otro.
+ * Son una sola configuración aunque estén repartidos en varios paneles: mover
+ * los días de una situación y el vencimiento en la misma pasada tiene que
+ * llegar junto, sin que uno pise al otro.
  */
 function GuardarTiempos({ reloj, className }: { reloj: Reloj; className?: string }) {
   return (
@@ -215,16 +263,51 @@ function GuardarTiempos({ reloj, className }: { reloj: Reloj; className?: string
   )
 }
 
+/** El número de días u horas de una situación, editable donde se lo muestre. */
+function CampoDeEspera({
+  reloj,
+  espera,
+  etiqueta,
+}: {
+  reloj: Reloj
+  espera: Espera
+  etiqueta: string
+}) {
+  return (
+    <div className="flex items-center gap-1.5">
+      <Input
+        type="number"
+        min={espera.min}
+        max={espera.max}
+        aria-label={etiqueta}
+        className="w-[68px]"
+        value={reloj.valores[espera.campo]}
+        onChange={(e) => reloj.poner(espera.campo, e.target.value)}
+      />
+      <span className="text-[12px] text-texto-2">{espera.unidad}</span>
+    </div>
+  )
+}
+
 /* ── La escalera ──────────────────────────────────────────────────────── */
 
 /**
  * Las situaciones en orden, con sus días editables en la misma fila.
  *
- * Una fila por situación y todo lo suyo ahí: cuánto espera, qué la dispara, y
- * si ya tiene mensaje. Es la pantalla que faltaba — antes los días vivían en un
- * panel de configuración y nunca se veía la escalera entera.
+ * Están las nueve, sean seguimiento o no: el recorrido del lead es uno solo y
+ * cortarlo por la mitad haría imposible ver cuánto tarda de punta a punta. Lo
+ * que cambia es adónde lleva el botón del texto — el de un seguimiento baja a
+ * escribirlo acá mismo, el del resto va a Mensajes.
  */
-function Escalera({ reloj, escritos }: { reloj: Reloj; escritos: Set<Paso> }) {
+function Escalera({
+  reloj,
+  escritos,
+  irAlTexto,
+}: {
+  reloj: Reloj
+  escritos: Set<Paso>
+  irAlTexto: (p: Paso) => void
+}) {
   return (
     <Panel>
       <PanelHeader
@@ -241,22 +324,22 @@ function Escalera({ reloj, escritos }: { reloj: Reloj; escritos: Set<Paso> }) {
           <ol className="divide-y divide-borde/60">
             {grupo.pasos.map((p) => {
               const espera = DISPARO[p].espera
+              const cargado = escritos.has(p)
+              const claseTexto = cn(
+                'flex h-7.5 shrink-0 items-center gap-1.5 rounded-[5px] border px-2.5 text-[12px]',
+                cargado
+                  ? 'border-borde bg-elevada text-texto-2 hover:text-texto'
+                  : 'border-rojo/40 bg-rojo-tenue text-rojo',
+              )
               return (
                 <li key={p} className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-2.5">
                   <div className="w-[136px] shrink-0">
                     {espera ? (
-                      <div className="flex items-center gap-1.5">
-                        <Input
-                          type="number"
-                          min={espera.min}
-                          max={espera.max}
-                          aria-label={`Días u horas de "${PASO_META[p].label}"`}
-                          className="w-[68px]"
-                          value={reloj.valores[espera.campo]}
-                          onChange={(e) => reloj.poner(espera.campo, e.target.value)}
-                        />
-                        <span className="text-[12px] text-texto-2">{espera.unidad}</span>
-                      </div>
+                      <CampoDeEspera
+                        reloj={reloj}
+                        espera={espera}
+                        etiqueta={`Días u horas de "${PASO_META[p].label}"`}
+                      />
                     ) : (
                       <span className="dato text-[12px] text-acento">en el acto</span>
                     )}
@@ -277,17 +360,15 @@ function Escalera({ reloj, escritos }: { reloj: Reloj; escritos: Set<Paso> }) {
                   {/* El estado del texto, y la puerta para ir a escribirlo. Sin
                       mensaje esta situación no se puede trabajar, así que el
                       dato tiene que estar acá y no a dos pantallas. */}
-                  <Link
-                    href={`/mensajes?situacion=${p}`}
-                    className={cn(
-                      'flex h-7.5 shrink-0 items-center gap-1.5 rounded-[5px] border px-2.5 text-[12px]',
-                      escritos.has(p)
-                        ? 'border-borde bg-elevada text-texto-2 hover:text-texto'
-                        : 'border-rojo/40 bg-rojo-tenue text-rojo',
-                    )}
-                  >
-                    {escritos.has(p) ? 'Ver el mensaje' : 'Falta el mensaje'}
-                  </Link>
+                  {esDeSeguimiento(p) ? (
+                    <button type="button" onClick={() => irAlTexto(p)} className={claseTexto}>
+                      {cargado ? 'Ver el mensaje' : 'Falta el mensaje'}
+                    </button>
+                  ) : (
+                    <Link href={`/mensajes?situacion=${p}`} className={claseTexto}>
+                      {cargado ? 'Ver el mensaje' : 'Falta el mensaje'}
+                    </Link>
+                  )}
                 </li>
               )
             })}
@@ -301,6 +382,115 @@ function Escalera({ reloj, escritos }: { reloj: Reloj; escritos: Set<Paso> }) {
     </Panel>
   )
 }
+
+/* ── El texto de cada seguimiento ─────────────────────────────────────── */
+
+/**
+ * Los cuatro seguimientos, uno a la vez, con el día arriba del texto.
+ *
+ * El día está en la pestaña y otra vez al lado del cuadro de escribir, y es el
+ * mismo número de la escalera: cambiarlo desde acá es cambiarlo allá. Está
+ * repetido a propósito — es el dato que decide cómo se redacta, y mandarte a
+ * buscarlo arriba cada vez es lo que hacía que se escribiera a ojo.
+ */
+function TextosDeSeguimiento({
+  ancla,
+  reloj,
+  paso,
+  elegir,
+  mensajes,
+  config,
+  rubros,
+  escritos,
+}: {
+  ancla: React.RefObject<HTMLDivElement | null>
+  reloj: Reloj
+  paso: Paso
+  elegir: (p: Paso) => void
+  mensajes: MensajeGuardado[]
+  config: MensajesConfig
+  rubros: Array<{ rubro: string; leads: number }>
+  escritos: Set<Paso>
+}) {
+  const espera = DISPARO[paso].espera
+
+  return (
+    <div ref={ancla} className="space-y-3 scroll-mt-16">
+      <div className="pt-2">
+        <h2 className="text-[17px] font-semibold text-texto">Qué le decimos en cada seguimiento</h2>
+        <p className="mt-1 max-w-[720px] text-[13px] leading-relaxed text-texto-2">
+          Un texto por seguimiento, escrito para el día en que le llega. A los pocos días conviene
+          preguntar si llegó a verlo; al último ya no se pregunta nada, se deja la puerta abierta.
+          Por eso el día está acá arriba y no en otra pantalla.
+        </p>
+      </div>
+
+      <nav className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-1" aria-label="Seguimientos">
+        {PASOS_DE_SEGUIMIENTO.map((p) => {
+          const suEspera = DISPARO[p].espera
+          return (
+            <button
+              key={p}
+              onClick={() => elegir(p)}
+              aria-current={paso === p ? 'page' : undefined}
+              className={cn(
+                'flex h-9 shrink-0 items-center gap-1.5 rounded-[8px] border px-3 text-[13px] font-medium',
+                'transition-colors duration-150',
+                paso === p
+                  ? 'border-acento/40 bg-acento-tenue text-acento'
+                  : 'border-borde bg-superficie text-texto-2 hover:text-texto',
+              )}
+            >
+              {/* El día en la pestaña: es lo que distingue un seguimiento de
+                  otro más que el nombre. */}
+              {suEspera ? (
+                <span className="dato text-[12px] opacity-80">
+                  {reloj.valores[suEspera.campo]} {suEspera.unidad}
+                </span>
+              ) : null}
+              {PASO_META[p].label}
+              {!escritos.has(p) ? (
+                <span className="h-1.5 w-1.5 rounded-full bg-rojo" aria-label="sin cargar" />
+              ) : null}
+            </button>
+          )
+        })}
+      </nav>
+
+      <Panel className="border-borde bg-elevada">
+        <div className="flex flex-wrap items-start gap-x-4 gap-y-3 px-4 py-3">
+          {espera ? (
+            <div>
+              <div className="rotulo mb-1">Sale a los</div>
+              <CampoDeEspera
+                reloj={reloj}
+                espera={espera}
+                etiqueta={`Días de "${PASO_META[paso].label}"`}
+              />
+              <p className="mt-0.5 text-[11px] leading-tight text-texto-2">{espera.desde}</p>
+            </div>
+          ) : null}
+
+          <div className="min-w-[260px] flex-1">
+            <div className="rotulo mb-1">A quién le llega</div>
+            <p className="text-[13px] font-medium text-texto">{DISPARO[paso].situacion}</p>
+            <p className="mt-1 text-[12.5px] leading-relaxed text-texto-2">
+              {PASO_META[paso].objetivo}
+            </p>
+          </div>
+
+          <GuardarTiempos reloj={reloj} className="mt-4" />
+        </div>
+      </Panel>
+
+      <MensajesDeLaSituacion paso={paso} mensajes={mensajes} config={config} rubros={rubros} />
+
+      <Variables />
+    </div>
+  )
+}
+
+/* ── Vencimiento y alertas ────────────────────────────────────────────── */
 
 function Generales({ reloj }: { reloj: Reloj }) {
   return (
