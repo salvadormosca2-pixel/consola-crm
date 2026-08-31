@@ -24,7 +24,7 @@ export default async function PaginaAltaEnLote() {
         </p>
       </div>
 
-      <Lote tandaPorDefecto={SETTERS_CONFIG_DEFAULT.cupoPorCuentaDefault} />
+      <Lote cupoPorDefecto={SETTERS_CONFIG_DEFAULT.cupoPorCuentaDefault} />
     </div>
   )
 }

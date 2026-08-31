@@ -13,6 +13,7 @@ import { copiarAlPortapapeles } from '@/lib/copiar'
 import {
   filasValidas,
   MAXIMO_POR_LOTE,
+  normalizarInstagram,
   parsearLote,
   type FilaDeLote,
 } from '@/lib/equipo-lote'
@@ -28,18 +29,28 @@ import { crearSettersEnLote, type TarjetaDeAlta } from '@/server/actions/equipo'
  * ficha, y nadie la hace.
  */
 
-const EJEMPLO = ['benja@ejemplo.com', 'pilar@ejemplo.com, Pilar Girardi'].join('\n')
+const EJEMPLO = [
+  'benja@ejemplo.com',
+  'pilar@ejemplo.com, Pilar Girardi',
+  'santi@ejemplo.com, Santi Vergara, @cuenta_de_santi',
+].join('\n')
 
 type Paso =
   | { fase: 'pegar' }
   | { fase: 'revisar'; filas: FilaDeLote[] }
   | { fase: 'listo'; creados: TarjetaDeAlta[]; omitidos: Array<{ email: string; motivo: string }> }
 
-export function Lote({ tandaPorDefecto }: { tandaPorDefecto: number }) {
+export function Lote({ cupoPorDefecto }: { cupoPorDefecto: number }) {
   const [texto, setTexto] = React.useState('')
-  const [tanda, setTanda] = React.useState(String(tandaPorDefecto))
+  const [cupo, setCupo] = React.useState(String(cupoPorDefecto))
+  const [tandaManual, setTandaManual] = React.useState<string | null>(null)
   const [paso, setPaso] = React.useState<Paso>({ fase: 'pegar' })
   const [pendiente, iniciar] = React.useTransition()
+
+  // Entregarle más leads por día que mensajes puede mandar es entregarle una
+  // forma de quemar la cuenta, así que la tanda sigue al cupo salvo que se
+  // escriba otra cosa a mano.
+  const tanda = tandaManual ?? cupo
 
   /*
    * Las contraseñas están en memoria y en ningún otro lado: recargar la
@@ -68,6 +79,14 @@ export function Lote({ tandaPorDefecto }: { tandaPorDefecto: number }) {
     setPaso({ fase: 'revisar', filas })
   }
 
+  /** Cambiar el nombre o el Instagram de una fila, sin tocar el resto. */
+  function editar(filas: FilaDeLote[], linea: number, cambio: Partial<FilaDeLote>): void {
+    setPaso({
+      fase: 'revisar',
+      filas: filas.map((f) => (f.linea === linea ? { ...f, ...cambio } : f)),
+    })
+  }
+
   function crear(filas: FilaDeLote[]): void {
     const listos = filasValidas(filas)
     if (listos.some((f) => f.nombre.trim().length < 2)) {
@@ -78,7 +97,12 @@ export function Lote({ tandaPorDefecto }: { tandaPorDefecto: number }) {
     iniciar(async () => {
       const r = await crearSettersEnLote({
         tanda: Number(tanda),
-        setters: listos.map((f) => ({ nombre: f.nombre.trim(), email: f.email })),
+        cupo: Number(cupo),
+        setters: listos.map((f) => ({
+          nombre: f.nombre.trim(),
+          email: f.email,
+          instagram: normalizarInstagram(f.instagram),
+        })),
       })
 
       if (!r.ok) {
@@ -120,47 +144,67 @@ export function Lote({ tandaPorDefecto }: { tandaPorDefecto: number }) {
                   </div>
                 </div>
               ) : (
-                <div key={fila.linea} className="flex flex-wrap items-center gap-2 px-3 py-2">
-                  <Input
-                    value={fila.nombre}
-                    aria-label={`Nombre de ${fila.email}`}
-                    onChange={(e) =>
-                      setPaso({
-                        fase: 'revisar',
-                        filas: filas.map((f) =>
-                          f.linea === fila.linea ? { ...f, nombre: e.target.value } : f,
-                        ),
-                      })
-                    }
-                    className="w-[180px] shrink-0"
-                  />
-                  <span className="dato min-w-0 flex-1 break-all text-[12.5px] text-texto-2">
-                    {fila.email}
-                  </span>
+                <div key={fila.linea} className="space-y-1.5 px-3 py-2">
+                  <div className="flex items-center gap-1.5">
+                    <Input
+                      value={fila.nombre}
+                      aria-label={`Nombre de ${fila.email}`}
+                      onChange={(e) => editar(filas, fila.linea, { nombre: e.target.value })}
+                      className="min-w-0 flex-1"
+                    />
+                    <div className="relative min-w-0 flex-1">
+                      <span className="dato pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-[12.5px] text-texto-2">
+                        @
+                      </span>
+                      <Input
+                        value={fila.instagram}
+                        aria-label={`Instagram de ${fila.email} (opcional)`}
+                        placeholder="instagram, opcional"
+                        spellCheck={false}
+                        onChange={(e) => editar(filas, fila.linea, { instagram: e.target.value })}
+                        className="pl-5"
+                      />
+                    </div>
+                  </div>
+                  <div className="dato break-all text-[12px] text-texto-2">{fila.email}</div>
                 </div>
               ),
             )}
           </div>
 
           <div className="space-y-2 border-t border-borde px-3 py-3">
-            <Field
-              label="Leads por día"
-              hint="El mismo para todos. Se ajusta después desde la ficha de cada uno."
-            >
-              <Input
-                type="number"
-                min={1}
-                max={500}
-                value={tanda}
-                onChange={(e) => setTanda(e.target.value)}
-                className="w-[110px]"
-              />
-            </Field>
+            <div className="flex flex-wrap gap-3">
+              <Field
+                label="Mensajes por día"
+                hint="Por cuenta de Instagram. Más de 30 la hace restringir."
+              >
+                <Input
+                  type="number"
+                  min={1}
+                  max={100}
+                  value={cupo}
+                  onChange={(e) => setCupo(e.target.value)}
+                  className="w-[110px]"
+                />
+              </Field>
+
+              <Field label="Leads por día" hint="Cuántos se le entregan a cada uno por jornada.">
+                <Input
+                  type="number"
+                  min={1}
+                  max={500}
+                  value={tanda}
+                  onChange={(e) => setTandaManual(e.target.value)}
+                  className="w-[110px]"
+                />
+              </Field>
+            </div>
 
             <p className="text-[12px] leading-relaxed text-texto-2">
-              Entran <strong className="font-semibold text-texto">sin cuenta de Instagram</strong>:
-              pueden ingresar y elegir su contraseña, pero no reciben leads hasta que les cargues
-              una desde su ficha.
+              El Instagram es <strong className="font-semibold text-texto">opcional</strong>: el que
+              quede vacío entra igual y se le carga después desde{' '}
+              <strong className="font-semibold text-texto">Equipo → Cuentas de Instagram</strong>,
+              que edita solo eso. Hasta que tenga una, no recibe leads.
             </p>
           </div>
 
@@ -185,7 +229,7 @@ export function Lote({ tandaPorDefecto }: { tandaPorDefecto: number }) {
     <Panel>
       <PanelHeader
         titulo="La lista"
-        descripcion="Uno por línea. Con el mail alcanza; si ya tenés el nombre, poné una coma y el nombre."
+        descripcion="Uno por línea. Con el mail alcanza; después de una coma podés agregar el nombre y, si ya la tenés, la cuenta de Instagram con arroba."
       />
 
       <div className="px-3 py-3">

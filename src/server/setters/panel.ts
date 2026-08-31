@@ -846,6 +846,65 @@ export async function conteosDeFicha(
   }
 }
 
+export interface CuentaEditable {
+  id: string
+  igUsername: string
+  cupoDiario: number
+  activa: boolean
+  /** Mensajes ya mandados con ella. Si mandó, la cuenta no se borra: se apaga. */
+  mandados: number
+}
+
+export interface SetterConCuentas {
+  setterId: string
+  nombre: string
+  email: string
+  estado: UserStatus
+  cuentas: CuentaEditable[]
+}
+
+/**
+ * El equipo con sus cuentas de Instagram, y nada más.
+ *
+ * Es lo que hace falta para la pantalla que edita solo eso: después de un alta
+ * en lote hay dieciséis setters sin cuenta, y abrir dieciséis fichas para
+ * escribir un usuario en cada una es donde la carga se abandona por la mitad.
+ * Mientras un setter no tenga cuenta su cupo es cero y el reparto lo saltea, así
+ * que esta es la pantalla que decide quién empieza a trabajar.
+ */
+export async function listarCuentasDelEquipo(): Promise<SetterConCuentas[]> {
+  const filas = await db.execute(sql`
+    -- Los alias van entre comillas para que Postgres respete la mayúscula y
+    -- las filas lleguen con la forma que espera la pantalla.
+    select s.id as "setterId", u.name as nombre, u.email, u.status as estado,
+           coalesce(
+             json_agg(
+               json_build_object(
+                 'id', sa.id,
+                 'igUsername', sa.ig_username,
+                 'cupoDiario', sa.cupo_diario,
+                 'activa', sa.activa,
+                 'mandados', coalesce(e.n, 0)
+               ) order by sa.orden asc, sa.ig_username asc
+             ) filter (where sa.id is not null),
+             '[]'::json
+           ) as cuentas
+      from setters s
+      join users u on u.id = s.user_id
+      left join setter_accounts sa on sa.setter_id = s.id
+      left join (
+        select setter_account_id, count(*)::int as n
+          from setter_sends where undone_at is null
+         group by setter_account_id
+      ) e on e.setter_account_id = sa.id
+     where u.status <> 'baja'
+     group by s.id, u.name, u.email, u.status
+     order by u.name asc
+  `)
+
+  return filas.rows as unknown as SetterConCuentas[]
+}
+
 /** Setters activos, para los selectores de reasignación y de mensajes. */
 export async function listarSettersActivos(): Promise<
   Array<{ id: string; nombre: string; estado: UserStatus }>

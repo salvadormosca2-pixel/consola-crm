@@ -7,7 +7,7 @@ import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 
 import { db, type Ejecutor } from '@/db'
-import { MAXIMO_POR_LOTE } from '@/lib/equipo-lote'
+import { MAXIMO_POR_LOTE, normalizarInstagram } from '@/lib/equipo-lote'
 import type { EstadoAccion } from '@/lib/form-state'
 import {
   NOTIFICACIONES_CONFIG_KEY,
@@ -232,11 +232,18 @@ export async function crearSetter(datos: unknown): Promise<ResultadoAlta> {
 
 const loteSchema = z.object({
   tanda: z.coerce.number().int().min(1).max(500),
+  cupo: z.coerce.number().int().min(1).max(100),
   setters: z
     .array(
       z.object({
         nombre: z.string().trim().min(2, 'Hay alguien sin nombre en la lista.').max(80),
         email: z.string().trim().toLowerCase().email('Hay un email con formato inválido.'),
+        /** Opcional: el que no la tenga entra igual y se le carga después. */
+        instagram: z
+          .string()
+          .max(60)
+          .default('')
+          .transform((v) => normalizarInstagram(v)),
       }),
     )
     .min(1, 'La lista está vacía.')
@@ -275,19 +282,26 @@ export async function crearSettersEnLote(
       return { ok: false, error: parsed.error.issues[0]?.message ?? 'Revisá la lista.' }
     }
 
-    const { tanda, setters } = parsed.data
+    const { tanda, cupo, setters } = parsed.data
     const url = await urlDeLaApp()
 
     const creados: TarjetaDeAlta[] = []
     const omitidos: Array<{ email: string; motivo: string }> = []
     const vistos = new Set<string>()
+    const cuentasVistas = new Set<string>()
 
-    for (const { nombre, email } of setters) {
+    for (const { nombre, email, instagram } of setters) {
       if (vistos.has(email)) {
         omitidos.push({ email, motivo: 'Estaba repetido en la lista.' })
         continue
       }
       vistos.add(email)
+
+      if (instagram && cuentasVistas.has(instagram)) {
+        omitidos.push({ email, motivo: `La cuenta @${instagram} estaba repetida en la lista.` })
+        continue
+      }
+      if (instagram) cuentasVistas.add(instagram)
 
       const password = generarPasswordTemporal()
       const passwordHash = await hashear(password)
@@ -298,7 +312,7 @@ export async function crearSettersEnLote(
             nombre,
             email,
             tanda,
-            cuentas: [],
+            cuentas: instagram ? [{ usuario: instagram, cupo }] : [],
             passwordHash,
             creadoPor: sesion.userId,
           }),
@@ -315,6 +329,9 @@ export async function crearSettersEnLote(
       } catch (err) {
         if (err instanceof Error && err.message === 'EMAIL_REPETIDO') {
           omitidos.push({ email, motivo: 'Ya tenía una cuenta en el sistema.' })
+        } else if (/setter_accounts_ig_uq/.test((err as { message?: string }).message ?? '')) {
+          // El alta entera se deshizo con la transacción: no quedó a medias.
+          omitidos.push({ email, motivo: `La cuenta @${instagram} ya está cargada en otro setter.` })
         } else {
           console.error('No se pudo crear un setter del lote.', err)
           omitidos.push({ email, motivo: 'Falló el alta. Probá de nuevo con este solo.' })
@@ -461,6 +478,100 @@ export async function guardarSetter(datos: unknown): Promise<EstadoAccion> {
       return { ok: false, error: 'Esa cuenta de Instagram ya está cargada en otro setter.' }
     }
     return alFallar(err, 'No se pudieron guardar los cambios.')
+  }
+}
+
+/* ── Solo las cuentas de Instagram ────────────────────────────────────── */
+
+const instagramSchema = z.object({
+  setterId: z.string().uuid(),
+  cuentas: z
+    .array(cuentaSchema.extend({ id: z.string().uuid().nullable(), activa: z.boolean() }))
+    .max(5, 'Cinco cuentas por setter es el tope.'),
+})
+
+/**
+ * Guarda las cuentas de Instagram de un setter y **nada más**.
+ *
+ * Existe separada de `guardarSetter` porque es otra tarea: aquella es "editar a
+ * esta persona" —nombre, tanda, recordatorio, todo junto— y esta es "cargar con
+ * qué cuenta trabaja el equipo", que es lo que hay que hacer dieciséis veces
+ * seguidas después de un alta en lote. Mandar el resto de los campos en cada
+ * guardado es abrir la puerta a pisar un nombre o una tanda sin querer, en una
+ * pantalla donde nadie los estaba mirando.
+ *
+ * La cuenta que se saca **se apaga, no se borra**: `setter_sends` la referencia
+ * con `on delete restrict`, y borrarla sería perder de qué cuenta salió cada
+ * mensaje que ya se mandó. Apagada deja de contar para el cupo y de recibir
+ * reparto, que es lo que se quería.
+ */
+export async function guardarInstagram(datos: unknown): Promise<EstadoAccion> {
+  try {
+    const sesion = await exigirAdmin()
+    const parsed = instagramSchema.safeParse(datos)
+    if (!parsed.success) {
+      return { ok: false, error: parsed.error.issues[0]?.message ?? 'Revisá las cuentas.' }
+    }
+    const { setterId, cuentas } = parsed.data
+
+    const usuarios = cuentas.map((c) => c.usuario)
+    if (new Set(usuarios).size !== usuarios.length) {
+      return { ok: false, error: 'Repetiste una cuenta de Instagram.' }
+    }
+
+    await db.transaction(async (tx) => {
+      const filas = await tx.execute(sql`
+        select 1 from setters where id = ${setterId}::uuid limit 1
+      `)
+      if (filas.rows.length === 0) throw new Error('NO_EXISTE')
+
+      const conservadas = cuentas.map((c) => c.id).filter((id): id is string => id !== null)
+
+      // Las que estaban y ya no vienen en la pantalla: apagadas, no borradas.
+      await tx.execute(sql`
+        update setter_accounts set activa = false
+         where setter_id = ${setterId}::uuid and activa
+           ${
+             conservadas.length > 0
+               ? sql`and id not in (${listaDeIds(conservadas)})`
+               : sql``
+           }
+      `)
+
+      for (const [i, cuenta] of cuentas.entries()) {
+        if (cuenta.id) {
+          await tx.execute(sql`
+            update setter_accounts
+               set ig_username = ${cuenta.usuario}, cupo_diario = ${cuenta.cupo},
+                   activa = ${cuenta.activa}, orden = ${i + 1}
+             where id = ${cuenta.id}::uuid and setter_id = ${setterId}::uuid
+          `)
+        } else {
+          await tx.execute(sql`
+            insert into setter_accounts (setter_id, ig_username, cupo_diario, orden, activa)
+            values (${setterId}::uuid, ${cuenta.usuario}, ${cuenta.cupo}, ${i + 1}, ${cuenta.activa})
+          `)
+        }
+      }
+
+      await tx.execute(sql`
+        insert into events (type, actor_user_id, payload_jsonb)
+        values ('setter_editado', ${sesion.userId}::uuid,
+                ${JSON.stringify({ setterId, cuentas: cuentas.length })}::jsonb)
+      `)
+    })
+
+    refrescarPanel(setterId)
+    revalidatePath('/equipo/instagram')
+    return { ok: true, error: null }
+  } catch (err) {
+    if (err instanceof Error && err.message === 'NO_EXISTE') {
+      return { ok: false, error: 'Ese setter ya no existe.' }
+    }
+    if (/setter_accounts_ig_uq/.test((err as { message?: string }).message ?? '')) {
+      return { ok: false, error: 'Esa cuenta de Instagram ya está cargada en otro setter.' }
+    }
+    return alFallar(err, 'No se pudieron guardar las cuentas.')
   }
 }
 

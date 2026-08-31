@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { filasValidas, nombreDesdeEmail, parsearLote } from './equipo-lote'
+import { filasValidas, nombreDesdeEmail, normalizarInstagram, parsearLote } from './equipo-lote'
 
 describe('nombreDesdeEmail', () => {
   it('separa por punto', () => {
@@ -29,12 +29,13 @@ describe('nombreDesdeEmail', () => {
 })
 
 describe('parsearLote — las tres formas en que llega la lista', () => {
-  it('solo el mail: el nombre se propone', () => {
+  it('solo el mail: el nombre se propone y no hay Instagram', () => {
     const [fila] = parsearLote('benjaleiva35@gmail.com')
     expect(fila).toMatchObject({
       linea: 1,
       email: 'benjaleiva35@gmail.com',
       nombre: 'Benjaleiva',
+      instagram: '',
       error: null,
     })
   })
@@ -52,6 +53,51 @@ describe('parsearLote — las tres formas en que llega la lista', () => {
   it('el mail se guarda en minúsculas', () => {
     const [fila] = parsearLote('Pilargirardi9@Gmail.com')
     expect(fila?.email).toBe('pilargirardi9@gmail.com')
+  })
+})
+
+describe('parsearLote — la cuenta de Instagram', () => {
+  it('mail, nombre y cuenta en la misma línea', () => {
+    const [fila] = parsearLote('benjaleiva35@gmail.com, Benja Leiva, @cuenta_de_benja')
+    expect(fila).toMatchObject({
+      email: 'benjaleiva35@gmail.com',
+      nombre: 'Benja Leiva',
+      instagram: 'cuenta_de_benja',
+      error: null,
+    })
+  })
+
+  it('la arroba adelante es Instagram; la arroba en el medio, el mail', () => {
+    const [fila] = parsearLote('@cuentabenja benjaleiva35@gmail.com')
+    expect(fila).toMatchObject({
+      email: 'benjaleiva35@gmail.com',
+      instagram: 'cuentabenja',
+    })
+  })
+
+  it('la cuenta llega sin arroba y en minúsculas, como la guarda la base', () => {
+    const [fila] = parsearLote('benja@ejemplo.com, @Cuenta_De_Benja')
+    expect(fila?.instagram).toBe('cuenta_de_benja')
+  })
+
+  it('la cuenta no se cuela dentro del nombre', () => {
+    const [fila] = parsearLote('Benja Leiva <benja@ejemplo.com> @cuentabenja')
+    expect(fila?.nombre).toBe('Benja Leiva')
+  })
+
+  it('una línea que es solo una cuenta de Instagram no alcanza', () => {
+    const [fila] = parsearLote('@cuentabenja')
+    expect(fila?.error).toBe('No encuentro ningún email en esta línea.')
+  })
+})
+
+describe('normalizarInstagram', () => {
+  it('saca la arroba y baja a minúsculas', () => {
+    expect(normalizarInstagram('  @Cuenta_De_Benja ')).toBe('cuenta_de_benja')
+  })
+
+  it('aguanta la arroba repetida de un copiado y pegado', () => {
+    expect(normalizarInstagram('@@cuenta')).toBe('cuenta')
   })
 })
 

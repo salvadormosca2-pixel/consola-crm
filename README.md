@@ -69,6 +69,9 @@ acá: se dan de alta desde el panel, en **Equipo → Nuevo setter**, que además
 genera su tarjeta de acceso. Si entran varios de una, **Equipo → Nuevo setter →
 Pegá la lista de mails** los crea a todos juntos y devuelve las tarjetas de
 todos: alcanza con los mails, el nombre se propone y se corrige antes de crear.
+La cuenta de Instagram ahí es opcional; **Equipo → Cuentas de Instagram** es la
+pantalla que edita solo eso, para todo el equipo en una lista. Sin cuenta
+prendida el cupo es cero y el reparto saltea a esa persona.
 
 ---
 

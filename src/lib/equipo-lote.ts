@@ -29,6 +29,12 @@ export interface FilaDeLote {
   email: string
   /** Propuesto a partir del email, o el que venía escrito en la línea. */
   nombre: string
+  /**
+   * La cuenta de Instagram con la que va a trabajar, sin la arroba. Vacía si no
+   * vino en la línea: es opcional, y se puede escribir en la pantalla antes de
+   * crear o cargar más tarde desde la ficha.
+   */
+  instagram: string
   /** Si tiene algo, esta línea no se da de alta. */
   error: string | null
 }
@@ -67,15 +73,30 @@ export function nombreDesdeEmail(email: string): string {
 }
 
 /**
+ * Deja el usuario de Instagram como lo espera la base: sin la arroba y en
+ * minúsculas. El índice único que impide que dos setters compartan una cuenta
+ * —y con eso que el cupo de 30 se cuente dos veces sobre la misma— es sobre el
+ * nombre en minúsculas, así que `@Cuenta` y `cuenta` tienen que llegar iguales.
+ */
+export function normalizarInstagram(valor: string): string {
+  return valor.trim().replace(/^@+/, '').toLowerCase()
+}
+
+/**
  * Parte el texto pegado en filas.
  *
- * Una línea, una persona. De la línea se toma como email el primer pedazo que
- * tenga arroba, y lo que sobra —si dice algo— es el nombre. Con eso entran sin
- * retocar nada las tres formas en las que la lista llega en la práctica:
+ * Una línea, una persona. El email es el primer pedazo con arroba **en el
+ * medio**; un pedazo que arranca con arroba es una cuenta de Instagram, no un
+ * mail. Lo que sobra —si dice algo— es el nombre. Con eso entran sin retocar
+ * nada las formas en las que la lista llega en la práctica:
  *
  *     benja@ejemplo.com
  *     benja@ejemplo.com, Benja Leiva
  *     Benja Leiva <benja@ejemplo.com>
+ *     benja@ejemplo.com, Benja Leiva, @cuenta_de_benja
+ *
+ * La cuenta de Instagram es opcional acá y en la pantalla: se puede cargar
+ * ahora o después desde la ficha. Lo que no se puede es adivinarla.
  *
  * Las líneas vacías se ignoran. Las que están mal no se descartan en silencio:
  * vuelven con su número de línea y su motivo, porque un mail que desaparece sin
@@ -89,38 +110,52 @@ export function parsearLote(texto: string): FilaDeLote[] {
     const original = cruda.trim()
     if (original.length === 0) return
 
-    const fila = (email: string, nombre: string, error: string | null): void => {
-      filas.push({ linea: i + 1, original, email, nombre, error })
+    const fila = (
+      email: string,
+      nombre: string,
+      instagram: string,
+      error: string | null,
+    ): void => {
+      filas.push({ linea: i + 1, original, email, nombre, instagram, error })
     }
 
-    const token = original.split(/[\s,;<>()]+/).find((p) => p.includes('@'))
+    const pedazos = original.split(/[\s,;<>()]+/).filter((p) => p.length > 0)
+
+    // Con arroba adelante es una cuenta de Instagram; con arroba en el medio,
+    // un mail. Es lo único que los distingue cuando vienen en la misma línea.
+    const token = pedazos.find((p) => p.includes('@') && !p.startsWith('@'))
+    const tokenIg = pedazos.find((p) => p.startsWith('@') && p !== token)
+    const instagram = tokenIg ? normalizarInstagram(tokenIg) : ''
+
     if (!token) {
-      fila('', '', 'No encuentro ningún email en esta línea.')
+      fila('', '', instagram, 'No encuentro ningún email en esta línea.')
       return
     }
 
     const email = token.toLowerCase().replace(/^mailto:/, '')
     if (!emailSchema.safeParse(email).success) {
-      fila(email, '', 'Ese email no tiene formato válido.')
+      fila(email, '', instagram, 'Ese email no tiene formato válido.')
       return
     }
 
-    // El nombre es lo que quede de la línea sacándole el mail y la puntuación
-    // que lo rodeaba. Si eso no tiene ni una letra, no era un nombre.
-    const resto = original
-      .replace(token, ' ')
+    // El nombre es lo que quede de la línea sacándole el mail, la cuenta de
+    // Instagram y la puntuación que los rodeaba. Si eso no tiene ni una letra,
+    // no era un nombre.
+    let sinDatos = original.replace(token, ' ')
+    if (tokenIg) sinDatos = sinDatos.replace(tokenIg, ' ')
+    const resto = sinDatos
       .replace(/[<>,;:()]/g, ' ')
       .replace(/\s+/g, ' ')
       .trim()
     const nombre = resto.length >= 2 && /\p{L}/u.test(resto) ? resto : nombreDesdeEmail(email)
 
     if (vistos.has(email)) {
-      fila(email, nombre, 'Este email ya estaba más arriba en la lista.')
+      fila(email, nombre, instagram, 'Este email ya estaba más arriba en la lista.')
       return
     }
     vistos.add(email)
 
-    fila(email, nombre, null)
+    fila(email, nombre, instagram, null)
   })
 
   return filas

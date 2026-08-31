@@ -1,4 +1,4 @@
-import { Megaphone, Plus, Repeat, UserCog } from 'lucide-react'
+import { Instagram, Megaphone, Plus, Repeat, UserCog } from 'lucide-react'
 import Link from 'next/link'
 import type { Metadata } from 'next'
 
@@ -57,6 +57,7 @@ export default async function PaginaEquipo() {
             alerta={atrasados}
           />
           <Atajo href="/equipo/leads" icono={UserCog} texto="Vistas de leads" />
+          <Atajo href="/equipo/instagram" icono={Instagram} texto="Cuentas de Instagram" />
           <Atajo href="/equipo/avisos" icono={Megaphone} texto="Mensajes al equipo" />
           {sesion.rol === 'admin_madre' ? (
             <Link
