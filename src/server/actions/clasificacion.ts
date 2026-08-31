@@ -65,12 +65,25 @@ export async function clasificarLead(datos: unknown): Promise<EstadoAccion> {
        where id = ${assignmentId}::uuid
          and respondio_a = 'segundo'
          and clasificado_at is null
-      returning id
+      returning id, contact_id
     `)
 
     if (filas.rows.length === 0) {
       return { ok: false, error: 'Ese lead ya lo clasificó alguien.' }
     }
+
+    /*
+     * Queda en la bitácora. Clasificar es la decisión que más cambia el destino
+     * de un lead —manda a pistas distintas y a mensajes distintos— y hasta acá
+     * era la única del sistema que no dejaba rastro: se veía el resultado, pero
+     * no quién ni cuándo lo había decidido, ni desde qué respuesta.
+     */
+    const fila = filas.rows[0] as { id: string; contact_id: string }
+    await db.execute(sql`
+      insert into events (type, contact_id, actor_user_id, payload_jsonb)
+      values ('lead_clasificado', ${fila.contact_id}::uuid, ${sesion.userId}::uuid,
+              ${JSON.stringify({ destino, pista: DESTINO_META[destino].pista })}::jsonb)
+    `)
 
     revalidatePath('/clasificar')
     revalidatePath('/respondieron')

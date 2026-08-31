@@ -14,6 +14,7 @@ import {
 } from '@/test/db'
 
 import { asignarLeads, barrer, contarPozo, devolverPendientes } from './asignacion'
+import { leerPuertaDeEntrada } from './avisos'
 import { deshacerEnvio, registrarEnvio } from './envios'
 import { repartirAhora } from './reparto'
 
@@ -600,6 +601,122 @@ describe('las pistas: por dónde sigue el que no contesta', () => {
 
     // Si se marcó sin querer, el lead no puede perder ese escalón.
     expect(await leerPaso(a)).toBe(SILENCIO[0])
+  })
+})
+
+describe('lo que le llega al admin y lo que le llega al setter', () => {
+  /** Un anuncio del equipo, como lo deja la pantalla de avisos del admin. */
+  async function crearAviso(
+    autorUserId: string,
+    opts: { fijado?: boolean; nivel?: string; destinatarios?: string[] } = {},
+  ): Promise<string> {
+    const m = await pool.query<{ id: string }>(
+      `insert into mensajes_equipo (autor_admin, nivel, titulo, cuerpo, fijado)
+       values ($1, $2, 'Cambió el guion', 'No uses el mensaje anterior.', $3)
+       returning id`,
+      [autorUserId, opts.nivel ?? 'aviso', opts.fijado ?? false],
+    )
+    const id = m.rows[0]!.id
+    for (const setterId of opts.destinatarios ?? []) {
+      await pool.query(
+        `insert into mensajes_destinatarios (mensaje_id, setter_id) values ($1, $2)
+         on conflict do nothing`,
+        [id, setterId],
+      )
+    }
+    return id
+  }
+
+  async function contarEventos(tipo: string): Promise<number> {
+    const r = await pool.query<{ n: string }>(
+      'select count(*) as n from events where type = $1',
+      [tipo],
+    )
+    return Number(r.rows[0]?.n ?? 0)
+  }
+
+  it('un anuncio fijado le llega también al que entró después', async () => {
+    /*
+     * Un aviso común es un momento; uno fijado es una regla que queda. Los
+     * destinatarios se congelaban al mandarlo, así que el que entraba la semana
+     * siguiente no veía ninguna regla vigente — y para el admin figuraba
+     * "leído por todos", porque el nuevo nunca fue de los destinatarios.
+     */
+    const viejo = await crearSetter(pool, { cupos: [30] })
+    await crearAviso(viejo.userId, { fijado: true, destinatarios: [viejo.setterId] })
+
+    const nuevo = await crearSetter(pool, { cupos: [30] })
+    const puerta = await leerPuertaDeEntrada(nuevo.setterId)
+
+    expect(puerta.fijados).toHaveLength(1)
+    expect(puerta.fijados[0]!.titulo).toBe('Cambió el guion')
+  })
+
+  it('un aviso común no le reaparece al que entró después', async () => {
+    const viejo = await crearSetter(pool, { cupos: [30] })
+    await crearAviso(viejo.userId, { fijado: false, destinatarios: [viejo.setterId] })
+
+    const nuevo = await crearSetter(pool, { cupos: [30] })
+    const puerta = await leerPuertaDeEntrada(nuevo.setterId)
+
+    expect(puerta.fijados).toHaveLength(0)
+    expect(puerta.sinLeer).toBe(0)
+  })
+
+  it('completar los fijados es idempotente: no duplica ni marca como no leído', async () => {
+    const admin = await crearSetter(pool, { cupos: [30] })
+    await crearAviso(admin.userId, { fijado: true })
+
+    const nuevo = await crearSetter(pool, { cupos: [30] })
+    await leerPuertaDeEntrada(nuevo.setterId)
+    await leerPuertaDeEntrada(nuevo.setterId)
+
+    const r = await pool.query<{ n: string }>(
+      'select count(*) as n from mensajes_destinatarios where setter_id = $1',
+      [nuevo.setterId],
+    )
+    expect(Number(r.rows[0]!.n)).toBe(1)
+  })
+
+  it('un lead que vence deja su línea en la bitácora', async () => {
+    /*
+     * Es lo único que le pasa a un lead sin que lo decida nadie: lo mueve el
+     * reloj. Sin registro, un negocio podía pasar por tres setters sin que
+     * quedara escrito por qué.
+     */
+    const setter = await crearSetter(pool, { cupos: [30] })
+    const a = await asignar(pool, await crearLeadScrapeado(pool, 1), setter.setterId)
+    await pool.query(`update lead_assignments set vence_at = now() - interval '1 hour' where id = $1`, [a])
+
+    const antes = await contarEventos('lead_vencido')
+    const r = await barrer(db)
+
+    expect(r.vencidos).toBe(1)
+    expect(await contarEventos('lead_vencido')).toBe(antes + 1)
+  })
+
+  it('barrer dos veces no vence ni registra de nuevo', async () => {
+    const setter = await crearSetter(pool, { cupos: [30] })
+    const a = await asignar(pool, await crearLeadScrapeado(pool, 1), setter.setterId)
+    await pool.query(`update lead_assignments set vence_at = now() - interval '1 hour' where id = $1`, [a])
+
+    await barrer(db)
+    const despues = await contarEventos('lead_vencido')
+    const segunda = await barrer(db)
+
+    expect(segunda.vencidos).toBe(0)
+    expect(await contarEventos('lead_vencido')).toBe(despues)
+  })
+
+  it('sin nada vencido, barrer no escribe nada y no rompe', async () => {
+    // Corre en cada carga de la cola y del tablero: el camino vacío es el que
+    // más se ejecuta y el que no puede fallar.
+    const setter = await crearSetter(pool, { cupos: [30] })
+    await asignar(pool, await crearLeadScrapeado(pool, 1), setter.setterId)
+
+    const r = await barrer(db)
+    expect(r.vencidos).toBe(0)
+    expect(await contarEventos('lead_vencido')).toBe(0)
   })
 })
 

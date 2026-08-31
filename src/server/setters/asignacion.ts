@@ -34,13 +34,33 @@ import { OPS_TZ } from '@/lib/tz'
 export async function barrer(
   cliente: Ejecutor = db,
 ): Promise<{ vencidos: number; desalteados: number }> {
+  /*
+   * Vencer y registrarlo, en una sola sentencia.
+   *
+   * Va con CTE y no con dos consultas por dos motivos. Uno: es atómico — no
+   * puede quedar el lead vencido sin su línea en la bitácora si algo falla en
+   * el medio. Dos: `barrer()` corre en cada carga de la cola del setter y del
+   * tablero del admin, así que un viaje de más se paga muchas veces por día.
+   *
+   * El evento va sin actor porque no lo hizo nadie: es lo único que le pasa a
+   * un lead por el reloj. Antes no se registraba, y un negocio podía pasar por
+   * tres setters sin dejar una sola línea que explicara por qué.
+   */
   const vencidos = await cliente.execute(sql`
-    update lead_assignments
-       set estado = 'vencido', devuelto_at = now(),
-           devuelto_motivo = 'Pasaron las horas sin trabajarlo y volvió al pozo.'
-     where estado in ('asignado', 'abierto', 'saltado')
-       and vence_at <= now()
-    returning id
+    with caducados as (
+      update lead_assignments
+         set estado = 'vencido', devuelto_at = now(),
+             devuelto_motivo = 'Pasaron las horas sin trabajarlo y volvió al pozo.'
+       where estado in ('asignado', 'abierto', 'saltado')
+         and vence_at <= now()
+      returning id, contact_id, setter_id
+    ), registro as (
+      insert into events (type, contact_id, payload_jsonb)
+      select 'lead_vencido', c.contact_id,
+             jsonb_build_object('setterId', c.setter_id, 'assignmentId', c.id)
+        from caducados c
+    )
+    select id from caducados
   `)
 
   // Saltear deja el lead para el final de la cola de HOY, no lo saca de la cola.

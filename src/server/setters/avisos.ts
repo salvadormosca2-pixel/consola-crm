@@ -89,7 +89,40 @@ const SELECT_AVISOS = sql`
     left join users u on u.id = me.autor_admin
 `
 
+/**
+ * Los anuncios fijados alcanzan también a quien entró después.
+ *
+ * Un aviso común es un momento: se manda a los que están y se acabó. Un aviso
+ * **fijado** no: es una regla que queda —"el guion de apertura cambió", "los
+ * domingos no se manda"—, y por eso se muestra arriba de la cola todos los
+ * días en vez de desaparecer al leerlo.
+ *
+ * Los destinatarios se congelaban al mandarlo, así que un setter que entraba al
+ * equipo la semana siguiente no tenía fila y no veía **ninguna** de las reglas
+ * vigentes. Nadie se enteraba: para el admin figuraba "leído por 4 de 4",
+ * porque el nuevo nunca fue de los cuatro. Justo el caso en que el aviso
+ * importa más, que es alguien que todavía no sabe cómo se trabaja acá.
+ *
+ * Se completa al abrir la app, y solo con los fijados: los avisos viejos que no
+ * son regla no tienen por qué reaparecerle a nadie.
+ */
+async function completarFijados(setterId: string): Promise<void> {
+  await db.execute(sql`
+    insert into mensajes_destinatarios (mensaje_id, setter_id)
+    select me.id, ${setterId}::uuid
+      from mensajes_equipo me
+     where me.fijado
+       and not exists (
+         select 1 from mensajes_destinatarios md
+          where md.mensaje_id = me.id and md.setter_id = ${setterId}::uuid
+       )
+    on conflict do nothing
+  `)
+}
+
 export async function leerPuertaDeEntrada(setterId: string): Promise<PuertaDeEntrada> {
+  await completarFijados(setterId)
+
   const filas = await db.execute(sql`
     ${SELECT_AVISOS}
      where md.setter_id = ${setterId}::uuid

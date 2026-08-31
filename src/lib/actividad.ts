@@ -43,6 +43,7 @@ export const EVENTO_META: Record<string, MetaDeEvento> = {
 
   /* Respuestas */
   lead_respondio: { label: 'Contestó', grupo: 'respuestas', tono: 'positivo' },
+  lead_clasificado: { label: 'Clasificó una respuesta', grupo: 'respuestas', tono: 'activo' },
   reunion_agendada: { label: 'Agendó reunión', grupo: 'respuestas', tono: 'positivo' },
 
   cuenta_setter_al_tope: { label: 'Cuenta al tope', grupo: 'mensajes', tono: 'activo' },

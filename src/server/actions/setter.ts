@@ -798,6 +798,17 @@ export async function responderAviso(
     `)
     if (filas.rows.length === 0) return { ok: false, error: 'Ese aviso no es tuyo.' }
 
+    /*
+     * El tipo de evento existía desde siempre y nadie lo insertaba: leer un
+     * aviso quedaba registrado y responderlo no. Justo al revés de lo que
+     * conviene — "no me anda la cuenta B" es más importante que "lo vi".
+     */
+    await db.execute(sql`
+      insert into events (type, actor_user_id, payload_jsonb)
+      values ('mensaje_equipo_respondido', ${sesion.userId}::uuid,
+              ${JSON.stringify({ destinatarioId, texto: parsed.data })}::jsonb)
+    `)
+
     await notificarYAvisar(
       {
         tipo: 'respuesta_de_setter',
