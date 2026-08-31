@@ -66,7 +66,9 @@ La primera cuenta que se crea es la **admin madre**: la que ve todo, la única
 que da de alta y de baja gente, y la que la base protege de ser borrada o
 degradada. Las siguientes son admins comunes. Los setters no se crean desde
 acá: se dan de alta desde el panel, en **Equipo → Nuevo setter**, que además
-genera su tarjeta de acceso.
+genera su tarjeta de acceso. Si entran varios de una, **Equipo → Nuevo setter →
+Pegá la lista de mails** los crea a todos juntos y devuelve las tarjetas de
+todos: alcanza con los mails, el nombre se propone y se corrige antes de crear.
 
 ---
 
@@ -276,7 +278,8 @@ railway ssh --service ecosystem \
   "node --import tsx scripts/create-user.ts --email vos@dominio --name 'Tu Nombre' --password unaclavelarga"
 ```
 
-Los setters se dan de alta después desde el panel, en **Equipo → Nuevo setter**.
+Los setters se dan de alta después desde el panel, en **Equipo → Nuevo setter**
+(o **Alta en lote**, si entra el equipo entero de una).
 
 ### Las tareas del reloj
 

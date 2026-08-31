@@ -6,7 +6,8 @@ import { headers } from 'next/headers'
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 
-import { db } from '@/db'
+import { db, type Ejecutor } from '@/db'
+import { MAXIMO_POR_LOTE } from '@/lib/equipo-lote'
 import type { EstadoAccion } from '@/lib/form-state'
 import {
   NOTIFICACIONES_CONFIG_KEY,
@@ -105,6 +106,74 @@ export interface TarjetaDeAlta {
 
 export type ResultadoAlta = TarjetaDeAlta | { ok: false; error: string }
 
+interface DatosDeAlta {
+  nombre: string
+  email: string
+  tanda: number
+  cuentas: Array<{ usuario: string; cupo: number }>
+  passwordHash: string
+  creadoPor: string
+}
+
+/**
+ * El alta en sí, adentro de una transacción. Devuelve el id del setter.
+ *
+ * La comparten el alta de a uno y la de a muchos: es la misma operación con
+ * distinta pantalla adelante. Duplicarla es la forma de que dentro de un mes
+ * una cree la fila de `setters` y la otra no, y que el que entró por la
+ * pantalla equivocada no tenga cola ni cupo y nadie sepa por qué.
+ */
+async function altaDeSetter(tx: Ejecutor, datos: DatosDeAlta): Promise<string> {
+  const yaEsta = await tx.execute(sql`
+    select 1 from users where lower(email) = ${datos.email} limit 1
+  `)
+  if (yaEsta.rows.length > 0) throw new Error('EMAIL_REPETIDO')
+
+  const usuarios = await tx.execute(sql`
+    insert into users (email, name, password_hash, role, status,
+                       must_change_password, created_by, sessions_valid_from)
+    values (${datos.email}, ${datos.nombre}, ${datos.passwordHash}, 'setter', 'activo',
+            true, ${datos.creadoPor}::uuid, now())
+    returning id
+  `)
+  const userId = (usuarios.rows[0] as { id: string }).id
+
+  /*
+   * Cada setter recibe una variante distinta del mensaje de apertura. Se
+   * reparten por orden de alta: mil DMs con el mismo texto exacto es lo
+   * que dispara las restricciones de Instagram.
+   */
+  const cuantos = await tx.execute(sql`select count(*)::int as n from setters`)
+  const variante = (cuantos.rows[0] as { n: number }).n
+
+  const filas = await tx.execute(sql`
+    insert into setters (user_id, tanda_diaria, variante, hora_recordatorio)
+    values (${userId}::uuid, ${datos.tanda}, ${variante},
+            ${SETTERS_CONFIG_DEFAULT.horaRecordatorioDefault}::time)
+    returning id
+  `)
+  const id = (filas.rows[0] as { id: string }).id
+
+  for (const [i, cuenta] of datos.cuentas.entries()) {
+    await tx.execute(sql`
+      insert into setter_accounts (setter_id, ig_username, cupo_diario, orden)
+      values (${id}::uuid, ${cuenta.usuario}, ${cuenta.cupo}, ${i + 1})
+    `)
+  }
+
+  await tx.execute(sql`
+    insert into events (type, actor_user_id, payload_jsonb)
+    values ('setter_creado', ${datos.creadoPor}::uuid,
+            ${JSON.stringify({
+              nombre: datos.nombre,
+              email: datos.email,
+              cuentas: datos.cuentas.length,
+            })}::jsonb)
+  `)
+
+  return id
+}
+
 /**
  * Crea un setter y devuelve su tarjeta de acceso.
  *
@@ -130,52 +199,9 @@ export async function crearSetter(datos: unknown): Promise<ResultadoAlta> {
     const passwordHash = await hashear(password)
     const url = await urlDeLaApp()
 
-    const setterId = await db.transaction(async (tx) => {
-      const yaEsta = await tx.execute(sql`
-        select 1 from users where lower(email) = ${email} limit 1
-      `)
-      if (yaEsta.rows.length > 0) throw new Error('EMAIL_REPETIDO')
-
-      const usuarios = await tx.execute(sql`
-        insert into users (email, name, password_hash, role, status,
-                           must_change_password, created_by, sessions_valid_from)
-        values (${email}, ${nombre}, ${passwordHash}, 'setter', 'activo',
-                true, ${sesion.userId}::uuid, now())
-        returning id
-      `)
-      const userId = (usuarios.rows[0] as { id: string }).id
-
-      /*
-       * Cada setter recibe una variante distinta del mensaje de apertura. Se
-       * reparten por orden de alta: mil DMs con el mismo texto exacto es lo
-       * que dispara las restricciones de Instagram.
-       */
-      const cuantos = await tx.execute(sql`select count(*)::int as n from setters`)
-      const variante = (cuantos.rows[0] as { n: number }).n
-
-      const setters = await tx.execute(sql`
-        insert into setters (user_id, tanda_diaria, variante, hora_recordatorio)
-        values (${userId}::uuid, ${tanda}, ${variante},
-                ${SETTERS_CONFIG_DEFAULT.horaRecordatorioDefault}::time)
-        returning id
-      `)
-      const id = (setters.rows[0] as { id: string }).id
-
-      for (const [i, cuenta] of cuentas.entries()) {
-        await tx.execute(sql`
-          insert into setter_accounts (setter_id, ig_username, cupo_diario, orden)
-          values (${id}::uuid, ${cuenta.usuario}, ${cuenta.cupo}, ${i + 1})
-        `)
-      }
-
-      await tx.execute(sql`
-        insert into events (type, actor_user_id, payload_jsonb)
-        values ('setter_creado', ${sesion.userId}::uuid,
-                ${JSON.stringify({ nombre, email, cuentas: cuentas.length })}::jsonb)
-      `)
-
-      return id
-    })
+    const setterId = await db.transaction((tx) =>
+      altaDeSetter(tx, { nombre, email, tanda, cuentas, passwordHash, creadoPor: sesion.userId }),
+    )
 
     refrescarPanel()
     return {
@@ -199,6 +225,108 @@ export async function crearSetter(datos: unknown): Promise<ResultadoAlta> {
     }
     const r = alFallar(err, 'No se pudo crear el setter.')
     return { ok: false, error: r.error ?? 'No se pudo crear el setter.' }
+  }
+}
+
+/* ── Alta en lote ─────────────────────────────────────────────────────── */
+
+const loteSchema = z.object({
+  tanda: z.coerce.number().int().min(1).max(500),
+  setters: z
+    .array(
+      z.object({
+        nombre: z.string().trim().min(2, 'Hay alguien sin nombre en la lista.').max(80),
+        email: z.string().trim().toLowerCase().email('Hay un email con formato inválido.'),
+      }),
+    )
+    .min(1, 'La lista está vacía.')
+    .max(MAXIMO_POR_LOTE, `No más de ${MAXIMO_POR_LOTE} por tanda.`),
+})
+
+export interface ResultadoLote {
+  ok: true
+  creados: TarjetaDeAlta[]
+  /** Los que no se crearon, con el motivo. Ninguno se pierde en silencio. */
+  omitidos: Array<{ email: string; motivo: string }>
+}
+
+/**
+ * Da de alta a varios setters de una, con la tarjeta de acceso de cada uno.
+ *
+ * Sin cuentas de Instagram: entran para poder ingresar y cambiar su
+ * contraseña, y la cuenta con la que va a trabajar cada uno se le carga después
+ * desde su ficha. Mientras no tenga ninguna, su cupo es cero y el reparto no le
+ * entrega nada — no es que quede a medio crear, es que todavía no tiene con qué
+ * mandar.
+ *
+ * Cada uno va en **su propia transacción**, y esa es la decisión importante:
+ * con una sola para las dieciséis, un mail repetido en la línea nueve tira
+ * abajo las ocho altas anteriores, y las ocho contraseñas que ya se habían
+ * mostrado en pantalla dejan de existir sin que nadie se entere. Así, el que
+ * falla es el único que falla y vuelve con su motivo.
+ */
+export async function crearSettersEnLote(
+  datos: unknown,
+): Promise<ResultadoLote | { ok: false; error: string }> {
+  try {
+    const sesion = await exigirAdminMadre()
+    const parsed = loteSchema.safeParse(datos)
+    if (!parsed.success) {
+      return { ok: false, error: parsed.error.issues[0]?.message ?? 'Revisá la lista.' }
+    }
+
+    const { tanda, setters } = parsed.data
+    const url = await urlDeLaApp()
+
+    const creados: TarjetaDeAlta[] = []
+    const omitidos: Array<{ email: string; motivo: string }> = []
+    const vistos = new Set<string>()
+
+    for (const { nombre, email } of setters) {
+      if (vistos.has(email)) {
+        omitidos.push({ email, motivo: 'Estaba repetido en la lista.' })
+        continue
+      }
+      vistos.add(email)
+
+      const password = generarPasswordTemporal()
+      const passwordHash = await hashear(password)
+
+      try {
+        const setterId = await db.transaction((tx) =>
+          altaDeSetter(tx, {
+            nombre,
+            email,
+            tanda,
+            cuentas: [],
+            passwordHash,
+            creadoPor: sesion.userId,
+          }),
+        )
+        creados.push({
+          ok: true,
+          setterId,
+          nombre,
+          email,
+          password,
+          url,
+          tarjeta: tarjetaDeAcceso({ nombre, email, password, url }),
+        })
+      } catch (err) {
+        if (err instanceof Error && err.message === 'EMAIL_REPETIDO') {
+          omitidos.push({ email, motivo: 'Ya tenía una cuenta en el sistema.' })
+        } else {
+          console.error('No se pudo crear un setter del lote.', err)
+          omitidos.push({ email, motivo: 'Falló el alta. Probá de nuevo con este solo.' })
+        }
+      }
+    }
+
+    refrescarPanel()
+    return { ok: true, creados, omitidos }
+  } catch (err) {
+    const r = alFallar(err, 'No se pudo dar de alta al equipo.')
+    return { ok: false, error: r.error ?? 'No se pudo dar de alta al equipo.' }
   }
 }
 

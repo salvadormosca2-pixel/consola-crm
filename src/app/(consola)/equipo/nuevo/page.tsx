@@ -22,6 +22,13 @@ export default async function PaginaNuevoSetter() {
           Al guardar se genera una contraseña temporal y una tarjeta lista para mandarle por
           WhatsApp. La contraseña se ve una sola vez.
         </p>
+        <p className="mt-1 text-[12.5px] leading-relaxed text-texto-2">
+          ¿Entran varios de una?{' '}
+          <Link href="/equipo/nuevo/lote" className="text-acento hover:underline">
+            Pegá la lista de mails
+          </Link>{' '}
+          y salen todas las tarjetas juntas.
+        </p>
       </div>
 
       <Alta cupoPorDefecto={SETTERS_CONFIG_DEFAULT.cupoPorCuentaDefault} />
