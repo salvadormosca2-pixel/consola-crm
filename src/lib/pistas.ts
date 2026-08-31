@@ -82,7 +82,7 @@ export const ZONA_META: Record<Zona, { titulo: string; detalle: string }> = {
   primer_contacto: {
     titulo: 'Primer contacto',
     detalle:
-      'La apertura. No es un seguimiento: son dos pasos fijos y ninguno espera. Lo que conteste acá decide a qué pista va.',
+      'La apertura. No es un seguimiento: son dos pasos fijos, ninguno espera, y lo que conteste acá decide a qué pista va. Están listados para que se vea el recorrido entero — el texto de los dos se escribe en Mensajes, no acá.',
   },
   seguimientos: {
     titulo: 'Seguimientos',

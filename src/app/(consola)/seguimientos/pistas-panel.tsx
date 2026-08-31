@@ -1,6 +1,6 @@
 'use client'
 
-import { AlertTriangle } from 'lucide-react'
+import { AlertTriangle, ArrowUpRight } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import * as React from 'react'
@@ -377,19 +377,27 @@ function Escalon({
           <p className="mt-0.5 text-[12px] leading-relaxed text-texto-2">{paso.angulo}</p>
         </div>
 
-        {/* El texto de la apertura vive en Mensajes: no es un seguimiento y no
-            depende de ningún día. Los de las pistas se abren acá mismo. */}
+        {/*
+          El texto de la apertura vive en Mensajes: no es un seguimiento y no
+          depende de ningún día. Los de las pistas se abren acá mismo.
+
+          El botón lo dice con todas las letras y lleva una flecha. Antes decía
+          "Ver el mensaje", igual que el de los escalones que sí se editan acá,
+          y eso hacía parecer que la entrada y la oferta se cargaban en las dos
+          pantallas — dos lugares para el mismo texto, sin saber cuál manda.
+        */}
         {esApertura ? (
           <Link
             href={`/mensajes?situacion=${paso.paso}`}
             className={cn(
-              'flex h-7.5 shrink-0 items-center rounded-[5px] border px-2.5 text-[12px]',
+              'flex h-7.5 shrink-0 items-center gap-1 rounded-[5px] border px-2.5 text-[12px]',
               escrito
-                ? 'border-borde bg-elevada text-texto-2 hover:text-texto'
+                ? 'border-borde bg-superficie text-texto-2 hover:text-texto'
                 : 'border-rojo/40 bg-rojo-tenue text-rojo',
             )}
           >
-            {escrito ? 'Ver el mensaje' : 'Falta el mensaje'}
+            {escrito ? 'Ver en Mensajes' : 'Escribirlo en Mensajes'}
+            <ArrowUpRight className="h-3.5 w-3.5" aria-hidden />
           </Link>
         ) : (
           <button
