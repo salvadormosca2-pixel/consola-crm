@@ -63,7 +63,9 @@ export function usuarioDelLink(url: string): string | null {
   const m = /^https?:\/\/(?:www\.)?(?:ig\.me\/m\/|instagram\.com\/(?:_u\/)?)([A-Za-z0-9._]+)/i.exec(
     url.trim(),
   )
-  return m ? m[1] : null
+  // `m?.[1]` y no `m[1]`: con `noUncheckedIndexedAccess` el grupo capturado es
+  // `string | undefined`, y devolverlo tal cual no compila.
+  return m?.[1] ?? null
 }
 
 /**

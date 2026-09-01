@@ -28,9 +28,11 @@ import {
  * Eliminar es la tercera, y es la única que borra: existe para el alta
  * equivocada —el mail mal tipeado, el que al final no entró, los que quedaron
  * de más en un alta por lote— y se apaga sola en cuanto la persona trabajó
- * aunque sea un lead. El botón se muestra igual cuando no se puede y contesta
- * por qué: esconderlo —o dejarlo gris y mudo— deja la pregunta "¿por qué no
- * puedo borrarlo?" sin respuesta en ninguna pantalla.
+ * aunque sea un lead. Cuando no se puede, el botón sigue ahí pero apagado de
+ * color y contesta por qué al tocarlo: esconderlo —o deshabilitarlo, que lo
+ * deja gris y mudo porque el `title` no aparece sobre un botón deshabilitado—
+ * deja la pregunta "¿por qué no puedo borrarlo?" sin respuesta en ninguna
+ * pantalla.
  */
 export function Acciones({
   setterId,
@@ -202,10 +204,6 @@ export function Acciones({
           </div>
         ) : (
           <Button
-            // Cuando no se puede borrar, el botón queda igual pero apagado de
-            // color y explica al tocarlo. Deshabilitarlo lo dejaría gris y mudo
-            // —el `title` no aparece sobre un botón deshabilitado—, que es
-            // justo la versión de "no me deja" que no se puede resolver solo.
             variant={sinHistorial ? 'destructiva' : 'fantasma'}
             disabled={pendiente}
             title={
