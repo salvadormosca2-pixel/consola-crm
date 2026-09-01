@@ -188,6 +188,8 @@ export interface SetterDeBaja {
   email: string
   /** Nunca trabajó: se puede borrar del padrón en vez de quedar de baja para siempre. */
   sinHistorial: boolean
+  /** Nunca inició sesión: la contraseña que tiene es la del alta y no la usó. */
+  nuncaEntro: boolean
 }
 
 /**
@@ -202,7 +204,7 @@ export interface SetterDeBaja {
  */
 export async function listarDeBaja(): Promise<SetterDeBaja[]> {
   const filas = await db.execute(sql`
-    select s.id as setter_id, u.name as nombre, u.email,
+    select s.id as setter_id, u.name as nombre, u.email, u.last_login_at as ultimo_ingreso,
            ${HISTORIAL_DEL_SETTER} as historial
       from setters s
       join users u on u.id = s.user_id
@@ -214,12 +216,14 @@ export async function listarDeBaja(): Promise<SetterDeBaja[]> {
     setter_id: string
     nombre: string
     email: string
+    ultimo_ingreso: Date | null
     historial: number
   }>).map((f) => ({
     setterId: f.setter_id,
     nombre: f.nombre,
     email: f.email,
     sinHistorial: f.historial === 0,
+    nuncaEntro: f.ultimo_ingreso === null,
   }))
 }
 

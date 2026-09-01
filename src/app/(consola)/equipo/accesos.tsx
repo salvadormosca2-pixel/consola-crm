@@ -1,6 +1,7 @@
 'use client'
 
-import { ClipboardCopy, KeyRound, TriangleAlert } from 'lucide-react'
+import { ClipboardCopy, KeyRound, TriangleAlert, UserCheck } from 'lucide-react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import * as React from 'react'
 import { toast } from 'sonner'
@@ -9,7 +10,11 @@ import { TarjetaDeAcceso } from '@/components/tarjeta-acceso'
 import { Button } from '@/components/ui/button'
 import { Panel, PanelHeader } from '@/components/ui/panel'
 import { copiarAlPortapapeles } from '@/lib/copiar'
-import { restablecerPassword, type ResultadoRestablecer } from '@/server/actions/equipo'
+import {
+  reactivarConAcceso,
+  restablecerPassword,
+  type ResultadoRestablecer,
+} from '@/server/actions/equipo'
 
 /**
  * Los accesos del equipo, para copiar y mandar.
@@ -27,6 +32,12 @@ import { restablecerPassword, type ResultadoRestablecer } from '@/server/actions
  * respuesta posible, así que el panel se ocupa de que eso no sea una trampa:
  * separa a los que nunca entraron —donde regenerar no le saca nada a nadie— de
  * los que ya están trabajando, que piden confirmación aparte.
+ *
+ * Los dados de baja tienen su propia lista, abajo, y su botón hace las dos
+ * cosas de una: los devuelve al equipo y les genera el acceso. Darle una
+ * contraseña a alguien que está de baja es darle un papel que no abre la
+ * puerta, y tenerlo que reactivar por otra pantalla antes es la clase de paso
+ * que se olvida justo cuando hay dieciséis personas esperando el suyo.
  */
 
 export interface SetterParaAcceso {
@@ -44,9 +55,12 @@ type Tarjeta = Extract<ResultadoRestablecer, { ok: true }>
 
 export function Accesos({
   setters,
+  bajas,
   esAdminMadre,
 }: {
   setters: SetterParaAcceso[]
+  /** Los que están de baja: no pueden entrar hasta que vuelvan al equipo. */
+  bajas: SetterParaAcceso[]
   esAdminMadre: boolean
 }) {
   const router = useRouter()
@@ -54,7 +68,7 @@ export function Accesos({
   const [trabajando, setTrabajando] = React.useState<string | null>(null)
   const [confirmando, setConfirmando] = React.useState<string | null>(null)
 
-  if (setters.length === 0) return null
+  if (setters.length === 0 && bajas.length === 0) return null
 
   if (!esAdminMadre) {
     return (
@@ -68,13 +82,20 @@ export function Accesos({
   }
 
   const pendientes = setters.filter((s) => s.nuncaEntro && !tarjetas[s.setterId])
-  const generadas = setters.map((s) => tarjetas[s.setterId]).filter((t): t is Tarjeta => Boolean(t))
+  const bajasPendientes = bajas.filter((s) => !tarjetas[s.setterId])
+  // Las tarjetas de todos juntas, activos y reactivados: el que las manda por
+  // WhatsApp las manda de una sola vez, no una lista por pantalla.
+  const generadas = [...setters, ...bajas]
+    .map((s) => tarjetas[s.setterId])
+    .filter((t): t is Tarjeta => Boolean(t))
 
-  async function generar(setter: SetterParaAcceso): Promise<void> {
+  async function generar(setter: SetterParaAcceso, reactivando = false): Promise<void> {
     setConfirmando(null)
     setTrabajando(setter.setterId)
     try {
-      const r = await restablecerPassword(setter.setterId)
+      const r = reactivando
+        ? await reactivarConAcceso(setter.setterId)
+        : await restablecerPassword(setter.setterId)
       if (r.ok) {
         setTarjetas((t) => ({ ...t, [setter.setterId]: r }))
         // Que aparezca abajo no alcanza si la lista es larga y el botón que se
@@ -114,6 +135,25 @@ export function Accesos({
     else toast.error(`${fallaron} no se pudieron generar. El resto está abajo.`)
   }
 
+  /** Los de baja que faltan, de una: vuelven al equipo y se llevan su acceso. */
+  async function reactivarTodos(): Promise<void> {
+    setTrabajando('todos')
+    let fallaron = 0
+    try {
+      for (const s of bajasPendientes) {
+        const r = await reactivarConAcceso(s.setterId)
+        if (r.ok) setTarjetas((t) => ({ ...t, [s.setterId]: r }))
+        else fallaron++
+      }
+    } finally {
+      setTrabajando(null)
+      router.refresh()
+    }
+
+    if (fallaron === 0) toast.success('Volvieron al equipo. Copiá los accesos y repartilos.')
+    else toast.error(`${fallaron} no se pudieron reactivar. El resto está abajo.`)
+  }
+
   async function copiarTodas(): Promise<void> {
     const todo = generadas.map((t) => t.tarjeta).join('\n\n———\n\n')
     if (await copiarAlPortapapeles(todo)) toast.success('Copiados. Pegalos y repartilos.')
@@ -122,6 +162,7 @@ export function Accesos({
 
   return (
     <div className="space-y-3">
+      {setters.length > 0 ? (
       <Panel>
         <PanelHeader
           titulo="Accesos"
@@ -223,6 +264,82 @@ export function Accesos({
           base. Por eso el botón arma una contraseña nueva en vez de mostrar la que ya tiene.
         </p>
       </Panel>
+      ) : null}
+
+      {bajas.length > 0 ? (
+        <Panel>
+          <PanelHeader
+            titulo="Dados de baja"
+            descripcion="No pueden entrar. El botón hace las dos cosas de una: los devuelve al equipo y les genera el acceso, porque una contraseña sin la cuenta activa no abre nada."
+            acciones={
+              bajasPendientes.length > 1 ? (
+                <Button
+                  variant="secundaria"
+                  disabled={trabajando !== null}
+                  onClick={() => void reactivarTodos()}
+                >
+                  <UserCheck aria-hidden />
+                  {trabajando === 'todos'
+                    ? 'Reactivando…'
+                    : `Reactivar los ${bajasPendientes.length} y generar acceso`}
+                </Button>
+              ) : null
+            }
+          />
+
+          <ul className="divide-y divide-borde/60">
+            {bajas.map((s) => {
+              const tarjeta = tarjetas[s.setterId]
+
+              return (
+                <li
+                  key={s.setterId}
+                  className="flex flex-wrap items-center justify-between gap-2 px-4 py-2"
+                >
+                  <div className="min-w-0">
+                    {/* La ficha es donde se lo reactiva sin generar acceso, o
+                        se lo borra si el alta estuvo mal. */}
+                    <Link
+                      href={`/equipo/${s.setterId}` as never}
+                      className="text-[13px] text-texto hover:text-acento"
+                    >
+                      {s.nombre}
+                    </Link>
+                    <span className="dato ml-2 text-[11.5px] text-texto-2">{s.email}</span>
+                  </div>
+
+                  {tarjeta ? (
+                    <Button
+                      variant="positiva"
+                      size="sm"
+                      onClick={() => {
+                        void copiarAlPortapapeles(tarjeta.tarjeta).then((ok) => {
+                          if (ok) toast.success(`Acceso de ${s.nombre} copiado`)
+                          else toast.error('No se pudo copiar. Está abajo para copiar a mano.')
+                        })
+                      }}
+                    >
+                      <ClipboardCopy aria-hidden />
+                      Copiar el suyo
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="secundaria"
+                      size="sm"
+                      disabled={trabajando !== null}
+                      title="Vuelve al equipo con su historial intacto y con una contraseña nueva para mandarle."
+                      onClick={() => void generar(s, true)}
+                    >
+                      <UserCheck aria-hidden />
+                      {trabajando === s.setterId ? 'Reactivando…' : 'Reactivar y generar acceso'}
+                    </Button>
+                  )}
+                </li>
+              )
+            })}
+          </ul>
+        </Panel>
+      ) : null}
 
       {generadas.length > 1 ? (
         <Button variant="primaria" size="lg" className="w-full" onClick={() => void copiarTodas()}>

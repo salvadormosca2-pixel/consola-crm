@@ -470,50 +470,101 @@ export type ResultadoRestablecer =
  * Contraseña nueva en un click, con la misma tarjeta para reenviar. Es lo que
  * va a pasar seguido, así que tiene que ser rápido.
  */
+/**
+ * La contraseña nueva, con o sin devolver a la persona a la actividad.
+ *
+ * Es el mismo movimiento en los dos casos —hash nuevo, sesiones viejas
+ * cortadas, tarjeta lista para pegar— así que está escrito una sola vez. La
+ * diferencia es una línea: al que está de baja no alcanza con darle una
+ * contraseña, porque igual no entra. O vuelve al equipo con el acceso, o el
+ * acceso no sirve para nada.
+ */
+async function accesoNuevo(
+  setterId: string,
+  actorUserId: string,
+  reactivar: boolean,
+): Promise<ResultadoRestablecer> {
+  const filas = await db.execute(sql`
+    select u.id, u.name, u.email, u.status from setters s join users u on u.id = s.user_id
+     where s.id = ${setterId}::uuid limit 1
+  `)
+  const u = filas.rows[0] as
+    | { id: string; name: string; email: string; status: string }
+    | undefined
+  if (!u) return { ok: false, error: 'Ese setter ya no existe.' }
+
+  if (!reactivar && u.status === 'baja') {
+    return {
+      ok: false,
+      error: `${u.name} está de baja: con esa contraseña tampoco podría entrar. Reactivalo y generale el acceso de una.`,
+    }
+  }
+
+  const password = generarPasswordTemporal()
+  const passwordHash = await hashear(password)
+  const url = await urlDeLaApp()
+
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`
+      update users
+         set password_hash = ${passwordHash}, must_change_password = true,
+             failed_attempts = 0, locked_until = null,
+             -- Restablecer también cierra las sesiones abiertas: si alguien
+             -- se metió con la contraseña vieja, deja de estar adentro.
+             sessions_valid_from = now()
+             ${reactivar ? sql`, status = 'activo'` : sql``}
+       where id = ${u.id}::uuid
+    `)
+    if (reactivar) {
+      await tx.execute(sql`
+        insert into events (type, actor_user_id, payload_jsonb)
+        values ('setter_reactivado', ${actorUserId}::uuid,
+                ${JSON.stringify({ setterId, conAcceso: true })}::jsonb)
+      `)
+    }
+    await tx.execute(sql`
+      insert into events (type, actor_user_id, payload_jsonb)
+      values ('password_restablecida', ${actorUserId}::uuid,
+              ${JSON.stringify({ setterId })}::jsonb)
+    `)
+  })
+
+  refrescarPanel(setterId)
+  return {
+    ok: true,
+    nombre: u.name,
+    email: u.email,
+    password,
+    url,
+    tarjeta: tarjetaDeAcceso({ nombre: u.name, email: u.email, password, url }),
+  }
+}
+
 export async function restablecerPassword(setterId: string): Promise<ResultadoRestablecer> {
   try {
     const sesion = await exigirAdminMadre()
-
-    const filas = await db.execute(sql`
-      select u.id, u.name, u.email from setters s join users u on u.id = s.user_id
-       where s.id = ${setterId}::uuid limit 1
-    `)
-    const u = filas.rows[0] as { id: string; name: string; email: string } | undefined
-    if (!u) return { ok: false, error: 'Ese setter ya no existe.' }
-
-    const password = generarPasswordTemporal()
-    const passwordHash = await hashear(password)
-    const url = await urlDeLaApp()
-
-    await db.transaction(async (tx) => {
-      await tx.execute(sql`
-        update users
-           set password_hash = ${passwordHash}, must_change_password = true,
-               failed_attempts = 0, locked_until = null,
-               -- Restablecer también cierra las sesiones abiertas: si alguien
-               -- se metió con la contraseña vieja, deja de estar adentro.
-               sessions_valid_from = now()
-         where id = ${u.id}::uuid
-      `)
-      await tx.execute(sql`
-        insert into events (type, actor_user_id, payload_jsonb)
-        values ('password_restablecida', ${sesion.userId}::uuid,
-                ${JSON.stringify({ setterId })}::jsonb)
-      `)
-    })
-
-    refrescarPanel(setterId)
-    return {
-      ok: true,
-      nombre: u.name,
-      email: u.email,
-      password,
-      url,
-      tarjeta: tarjetaDeAcceso({ nombre: u.name, email: u.email, password, url }),
-    }
+    return await accesoNuevo(setterId, sesion.userId, false)
   } catch (err) {
     const r = alFallar(err, 'No se pudo restablecer la contraseña.')
     return { ok: false, error: r.error ?? 'No se pudo restablecer la contraseña.' }
+  }
+}
+
+/**
+ * Devolver al equipo a alguien que está de baja y darle el acceso, de una.
+ *
+ * Son las dos mitades de la misma intención —"quiero que esta persona entre"—
+ * y separadas no funcionan: la contraseña sola no sirve estando de baja, y
+ * reactivar sin acceso deja a alguien habilitado con una contraseña que nadie
+ * sabe cuál es. Conserva todo lo suyo: es su misma cuenta de siempre.
+ */
+export async function reactivarConAcceso(setterId: string): Promise<ResultadoRestablecer> {
+  try {
+    const sesion = await exigirAdminMadre()
+    return await accesoNuevo(setterId, sesion.userId, true)
+  } catch (err) {
+    const r = alFallar(err, 'No se pudo reactivar.')
+    return { ok: false, error: r.error ?? 'No se pudo reactivar.' }
   }
 }
 

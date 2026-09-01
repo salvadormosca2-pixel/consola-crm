@@ -3,7 +3,7 @@ import Link from 'next/link'
 import type { Metadata } from 'next'
 
 import { EmptyState } from '@/components/ui/empty-state'
-import { Chip, Panel, PanelHeader } from '@/components/ui/panel'
+import { Chip, Panel } from '@/components/ui/panel'
 import { USER_STATUS_META } from '@/db/enums'
 import { haceCuanto } from '@/lib/tz'
 import { cn } from '@/lib/utils'
@@ -47,8 +47,9 @@ export default async function PaginaEquipo() {
 
   const atrasados = filas.filter((f) => f.semaforo === 'rojo').length
 
-  // Los accesos son de quien todavía tiene que entrar: al que está de baja no
-  // le sirve una contraseña nueva, no puede entrar igual.
+  // Los accesos son de quien todavía tiene que entrar. Los de baja también
+  // están, en su propia lista: no pueden entrar, así que su botón los reactiva
+  // y les genera el acceso en el mismo movimiento.
   const paraAcceso: SetterParaAcceso[] = filas
     .filter((f) => f.estado !== 'baja')
     .map((f) => ({
@@ -57,6 +58,15 @@ export default async function PaginaEquipo() {
       email: f.email,
       nuncaEntro: f.ultimoIngreso === null,
     }))
+
+  // Los de baja van aparte y con otro botón: primero vuelven al equipo, si no
+  // la contraseña que se les manda no abre nada.
+  const bajasParaAcceso: SetterParaAcceso[] = bajas.map((b) => ({
+    setterId: b.setterId,
+    nombre: b.nombre,
+    email: b.email,
+    nuncaEntro: b.nuncaEntro,
+  }))
 
   return (
     <div className="space-y-4">
@@ -130,35 +140,13 @@ export default async function PaginaEquipo() {
         </Panel>
       )}
 
-      <Accesos setters={paraAcceso} esAdminMadre={sesion.rol === 'admin_madre'} />
+      <Accesos
+        setters={paraAcceso}
+        bajas={bajasParaAcceso}
+        esAdminMadre={sesion.rol === 'admin_madre'}
+      />
 
       {filas.length > 0 ? <Reparto plan={plan} /> : null}
-
-      {bajas.length > 0 ? (
-        <Panel>
-          <PanelHeader
-            titulo="Dados de baja"
-            descripcion="No entran ni reciben leads. Su historial y su comisión siguen contando; se entra a la ficha para reactivarlos o para borrar un alta equivocada."
-          />
-          <div className="divide-y divide-borde/60">
-            {bajas.map((b) => (
-              <Link
-                key={b.setterId}
-                href={`/equipo/${b.setterId}` as never}
-                className="flex flex-wrap items-center gap-x-2 gap-y-0.5 px-3 py-2 hover:bg-elevada/50"
-              >
-                <span className="text-[13px] text-texto">{b.nombre}</span>
-                <span className="text-[11.5px] text-texto-2">{b.email}</span>
-                {b.sinHistorial ? (
-                  <Chip tono="neutral" className="ml-auto">
-                    Nunca trabajó
-                  </Chip>
-                ) : null}
-              </Link>
-            ))}
-          </div>
-        </Panel>
-      ) : null}
 
       <AvisosQueQuiero inicial={avisos} pushDisponible={clavePublica() !== null} />
 
