@@ -30,9 +30,11 @@ describe('capacidad de un setter', () => {
     expect(capacidadDe(setter({ setterId: 'a' })).capacidad).toBe(60)
   })
 
-  it('los seguimientos del día le comen cupo a los leads nuevos', () => {
-    // Salen de la misma cuenta: 60 de cupo menos 20 seguimientos son 40.
-    expect(capacidadDe(setter({ setterId: 'a', seguimientos: 20 })).capacidad).toBe(40)
+  it('los seguimientos del día no le quitan leads nuevos', () => {
+    // El cupo es el presupuesto de abrir chats nuevos, y un seguimiento sale en
+    // uno que ya está abierto. Descontarlos le entregaba menos leads al que
+    // mejor está trabajando a los que ya le contestaron.
+    expect(capacidadDe(setter({ setterId: 'a', seguimientos: 20 })).capacidad).toBe(60)
   })
 
   it('lo que ya tiene sin contactar cuenta contra su tanda', () => {
@@ -151,9 +153,11 @@ describe('plan de reparto', () => {
       ],
       1000,
     )
-    expect(plan.tajadas.map((t) => t.cantidad)).toEqual([60, 30, 40])
-    expect(plan.total).toBe(130)
-    expect(plan.sobran).toBe(870)
+    // Carla recibe lo mismo que Abril: sus 20 seguimientos son trabajo del día,
+    // no cupo gastado.
+    expect(plan.tajadas.map((t) => t.cantidad)).toEqual([60, 30, 60])
+    expect(plan.total).toBe(150)
+    expect(plan.sobran).toBe(850)
     for (const t of plan.tajadas) expect(t.cantidad).toBeLessThanOrEqual(t.capacidad)
   })
 

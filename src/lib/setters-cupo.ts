@@ -98,20 +98,23 @@ export function leerCupo(cuentas: CuentaDeSetter[], activaId: string | null): Es
 /**
  * Cuántos leads tiene sentido entregarle ahora.
  *
- * Nunca más de lo que sus cuentas pueden mandar hoy: entregar leads sin cupo es
+ * Nunca más de lo que sus cuentas pueden abrir hoy: entregar leads sin cupo es
  * entregarle una forma de quemarse la cuenta. Tampoco más que su tanda diaria,
  * ni más de los que ya tiene sin trabajar.
+ *
+ * Los seguimientos ya no se descuentan. El cupo es el presupuesto de **abrir
+ * chats nuevos** y un seguimiento no abre ninguno: restarlos hacía que el que
+ * mejor trabajaba a los que le contestaron recibiera menos leads nuevos,
+ * castigando exactamente lo que hay que premiar.
  */
 export function cuantosEntregar(params: {
   estado: EstadoDeCupo
   tandaDiaria: number
-  /** Leads que ya tiene asignados y sin contactar. */
+  /** Leads que ya tiene asignados y sin contactar. Cada uno se va a llevar una apertura. */
   pendientes: number
-  /** Seguimientos que le tocan hoy: también consumen cupo. */
-  seguimientosPendientes: number
 }): number {
-  const { estado, tandaDiaria, pendientes, seguimientosPendientes } = params
-  const porCupo = estado.restanteTotal - pendientes - seguimientosPendientes
+  const { estado, tandaDiaria, pendientes } = params
+  const porCupo = estado.restanteTotal - pendientes
   const porTanda = tandaDiaria - pendientes
   return Math.max(Math.min(porCupo, porTanda), 0)
 }

@@ -96,7 +96,7 @@ describe('cuantosEntregar', () => {
 
   it('entrega la tanda completa con las cuentas frescas', () => {
     const estado = leerCupo(dosCuentas, null)
-    expect(cuantosEntregar({ estado, tandaDiaria: 60, pendientes: 0, seguimientosPendientes: 0 })).toBe(60)
+    expect(cuantosEntregar({ estado, tandaDiaria: 60, pendientes: 0 })).toBe(60)
   })
 
   it('no entrega nada si las dos cuentas llegaron al límite', () => {
@@ -107,32 +107,31 @@ describe('cuantosEntregar', () => {
       ],
       'b',
     )
-    expect(cuantosEntregar({ estado, tandaDiaria: 60, pendientes: 0, seguimientosPendientes: 0 })).toBe(0)
+    expect(cuantosEntregar({ estado, tandaDiaria: 60, pendientes: 0 })).toBe(0)
   })
 
-  it('descuenta los seguimientos del día: también consumen cupo', () => {
+  it('los seguimientos del día no le quitan leads nuevos', () => {
+    // El cupo es el presupuesto de abrir chats nuevos. Un seguimiento sale en
+    // uno que ya está abierto: descontarlo le entregaba menos leads al que
+    // mejor trabaja a los que ya contestaron.
     const estado = leerCupo([cuenta({ id: 'a' })], null)
-    expect(
-      cuantosEntregar({ estado, tandaDiaria: 60, pendientes: 0, seguimientosPendientes: 12 }),
-    ).toBe(18)
+    expect(cuantosEntregar({ estado, tandaDiaria: 60, pendientes: 0 })).toBe(30)
   })
 
   it('descuenta lo que ya tiene sin trabajar', () => {
     const estado = leerCupo(dosCuentas, null)
     expect(
-      cuantosEntregar({ estado, tandaDiaria: 60, pendientes: 45, seguimientosPendientes: 0 }),
+      cuantosEntregar({ estado, tandaDiaria: 60, pendientes: 45 }),
     ).toBe(15)
   })
 
   it('la tanda diaria puede ser más chica que el cupo', () => {
     const estado = leerCupo(dosCuentas, null)
-    expect(cuantosEntregar({ estado, tandaDiaria: 20, pendientes: 0, seguimientosPendientes: 0 })).toBe(20)
+    expect(cuantosEntregar({ estado, tandaDiaria: 20, pendientes: 0 })).toBe(20)
   })
 
   it('nunca devuelve un número negativo', () => {
     const estado = leerCupo([cuenta({ id: 'a', enviadosHoy: 28 })], 'a')
-    expect(
-      cuantosEntregar({ estado, tandaDiaria: 60, pendientes: 10, seguimientosPendientes: 5 }),
-    ).toBe(0)
+    expect(cuantosEntregar({ estado, tandaDiaria: 60, pendientes: 10 })).toBe(0)
   })
 })

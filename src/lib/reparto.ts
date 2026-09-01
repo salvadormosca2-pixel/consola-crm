@@ -19,7 +19,12 @@ export interface CapacidadDeSetter {
   tandaDiaria: number
   /** Leads que ya tiene asignados y todavía no contactó. */
   pendientes: number
-  /** Segundos mensajes que le tocan hoy. También consumen cupo. */
+  /**
+   * Seguimientos que le tocan hoy.
+   *
+   * Ya no descuentan capacidad —no abren chats, no gastan cupo— pero se leen
+   * igual: son el trabajo real que tiene encima, y el panel los muestra.
+   */
   seguimientos: number
   /**
    * Cuántas cuentas de Instagram prendidas tiene.
@@ -63,9 +68,9 @@ export interface PlanDeReparto {
 /**
  * Cuántos leads más puede recibir un setter hoy.
  *
- * Se descuentan los seguimientos porque salen de la misma cuenta y del mismo
- * cupo: entregarle 30 leads nuevos a alguien que además tiene 20 seguimientos
- * pendientes es pedirle que mande 50 desde un perfil que aguanta 30.
+ * Dos techos, y el más bajo manda: lo que sus cuentas pueden **abrir** hoy, y
+ * su tanda diaria menos lo que ya tiene sin contactar. Los seguimientos no
+ * entran en la cuenta: salen en chats que ya están abiertos.
  */
 export function capacidadDe(s: CapacidadDeSetter): { capacidad: number; motivo: string } {
   if (!s.activo) return { capacidad: 0, motivo: 'Está pausado: no recibe leads nuevos.' }
@@ -100,15 +105,17 @@ export function capacidadDe(s: CapacidadDeSetter): { capacidad: number; motivo: 
     }
   }
 
-  const porCupo = s.cupoRestante - s.seguimientos
+  /*
+   * El cupo es el presupuesto de abrir chats nuevos, y solo eso.
+   *
+   * Antes se le restaban los seguimientos del día porque salían de la misma
+   * cuenta. Pero un seguimiento no abre ningún chat —el hilo ya existe— y desde
+   * que dejó de gastar cupo, restarlo acá le entregaba menos leads nuevos justo
+   * al que mejor está trabajando a los que ya le contestaron.
+   */
+  const porCupo = s.cupoRestante
   if (porCupo <= 0) {
-    return {
-      capacidad: 0,
-      motivo:
-        s.cupoRestante <= 0
-          ? 'Sus cuentas llegaron al límite de hoy.'
-          : `Lo que le queda de cupo se lo llevan sus ${s.seguimientos} seguimientos.`,
-    }
+    return { capacidad: 0, motivo: 'Sus cuentas llegaron al límite de hoy.' }
   }
 
   const porTanda = s.tandaDiaria - s.pendientes

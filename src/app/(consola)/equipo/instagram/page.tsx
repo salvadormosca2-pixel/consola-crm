@@ -30,8 +30,9 @@ export default async function PaginaCuentasDeInstagram() {
         </Link>
         <h1 className="mt-1 text-[20px]">Cuentas de Instagram</h1>
         <p className="mt-0.5 text-[12.5px] leading-relaxed text-texto-2">
-          Con qué cuenta escribe cada uno, y cuántos mensajes por día le entran. No se toca nada
-          más: ni el nombre, ni la tanda, ni el acceso.
+          Con qué cuenta escribe cada uno, y cuántos mensajes por día le entran. Su tanda de leads
+          del día pasa a ser la suma de esos cupos: si le cargás una segunda cuenta, recibe el
+          doble. El nombre y el acceso no se tocan desde acá.
         </p>
       </div>
 

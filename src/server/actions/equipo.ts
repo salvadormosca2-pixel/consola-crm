@@ -720,6 +720,29 @@ export async function guardarInstagram(datos: unknown): Promise<EstadoAccion> {
         }
       }
 
+      /*
+       * La tanda del día sigue al cupo de sus cuentas.
+       *
+       * Es lo que se espera al cargar una segunda cuenta: "ahora puede con 30
+       * más". Pero la tanda es un techo aparte —cuántos leads sin contactar
+       * puede tener encima— y quedaba clavada en el número del alta. El
+       * resultado era que se le sumaba una cuenta, se le repartía, y no le
+       * llegaba ni un lead nuevo: el cupo alcanzaba, la tanda no. Desde el
+       * celular eso se ve como "me dieron los mismos de siempre".
+       *
+       * Se recalcula igual que en el alta: la suma de lo que sus cuentas
+       * prendidas pueden mandar en el día. Si hace falta otro número, se edita
+       * en la ficha, que es la pantalla que dice "editar a esta persona".
+       */
+      await tx.execute(sql`
+        update setters s
+           set tanda_diaria = greatest(1, least(500, coalesce((
+                 select sum(sa.cupo_diario)::int from setter_accounts sa
+                  where sa.setter_id = s.id and sa.activa
+               ), 1)))
+         where s.id = ${setterId}::uuid
+      `)
+
       await tx.execute(sql`
         insert into events (type, actor_user_id, payload_jsonb)
         values ('setter_editado', ${sesion.userId}::uuid,

@@ -106,6 +106,21 @@ export async function asignarLeads(
             where la.contact_id = c.id
               and la.estado not in ('vencido', 'devuelto')
          )
+         /*
+          * Y nunca uno que este setter ya tuvo.
+          *
+          * Un lead vuelve al pozo por muchos caminos —venció, se recuperó
+          * después de dos mensajes sin respuesta, se devolvió a mano— y al
+          * repartir de nuevo le podía tocar a la misma persona. Desde su
+          * celular eso se ve exactamente igual que "no me dieron nada": la
+          * cola se llena con los negocios que ya tenía. Y si alcanzó a
+          * escribirle, sería mandarle la entrada dos veces al mismo local.
+          */
+         and not exists (
+           select 1 from lead_assignments suya
+            where suya.contact_id = c.id
+              and suya.setter_id = ${setterId}::uuid
+         )
        -- Al azar, no por orden de lista: es lo que hace comparables las tasas
        -- de respuesta entre setters.
        order by random()

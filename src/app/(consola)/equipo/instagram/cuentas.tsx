@@ -22,8 +22,13 @@ import type { SetterConCuentas } from '@/server/setters/panel'
  * la mitad y quedan cuatro trabajando de dieciséis.
  *
  * Acá está el equipo entero en una lista, con un solo campo por cuenta. Nada de
- * lo otro se manda al servidor, así que no hay forma de pisar un nombre o una
- * tanda desde esta pantalla sin querer.
+ * lo otro se manda al servidor, así que no hay forma de pisar un nombre desde
+ * esta pantalla sin querer.
+ *
+ * Lo único que se mueve solo es la tanda del día, que pasa a ser la suma de los
+ * cupos de sus cuentas prendidas. Es lo que uno espera al sumar una segunda
+ * cuenta —"ahora puede con 30 más"— y sin eso el cupo alcanzaba pero la tanda
+ * no, así que se sumaba la cuenta y no le llegaba ni un lead nuevo.
  */
 
 interface CuentaEnPantalla {

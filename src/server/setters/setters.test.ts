@@ -244,6 +244,26 @@ describe('el segundo mensaje', () => {
 })
 
 describe('un lead, un solo setter', () => {
+  it('no le vuelve a tocar un lead que ya tuvo', async () => {
+    const setter = await crearSetter(pool, { cupos: [30] })
+    const contacto = await crearLeadScrapeado(pool, 1)
+
+    // Se lo llevó, venció y volvió al pozo: está libre para cualquiera.
+    const vieja = await asignar(pool, contacto, setter.setterId)
+    await pool.query(`update lead_assignments set estado = 'vencido' where id = $1`, [vieja])
+    expect(await contarPozo(db)).toBe(1)
+
+    // A él no se lo devuelven: desde su celular sería la cola llena de los
+    // negocios que ya tenía, y si alcanzó a escribirle, el mismo mensaje dos
+    // veces al mismo local.
+    expect(await asignarLeads(setter.setterId, 10, null, db)).toBe(0)
+
+    // A otro sí: el lead sigue estando disponible.
+    const otro = await crearSetter(pool, { cupos: [30] })
+    expect(await asignarLeads(otro.setterId, 10, null, db)).toBe(1)
+  })
+
+
   it('dos setters pidiendo al mismo tiempo nunca se llevan el mismo negocio', async () => {
     const a = await crearSetter(pool, { cupos: [30] })
     const b = await crearSetter(pool, { cupos: [30] })
@@ -644,14 +664,18 @@ describe('las pistas: por dónde sigue el que no contesta', () => {
     // Seis envíos salieron por esa cuenta…
     expect(await contarCupoDeSetter(pool, cuenta)).toBe(6)
 
-    // …pero de cupo solo gastaron los dos que abren: la entrada y la oferta.
-    // Por eso todavía entra una apertura más de las tres del día.
+    // …pero de cupo gastó uno solo: la entrada. La oferta tampoco cuenta —sale
+    // cuando el lead acaba de contestar, con el chat abierto—, así que de las
+    // tres aperturas del día todavía quedan dos.
     const otro = await asignar(pool, await crearLeadScrapeado(pool, 2), setter.setterId)
     expect((await marcar(otro, setter.setterId, cuenta, 1)).ok).toBe(true)
 
-    // Esa fue la tercera: la siguiente apertura ya rebota.
     const tercero = await asignar(pool, await crearLeadScrapeado(pool, 3), setter.setterId)
-    expect((await marcar(tercero, setter.setterId, cuenta, 1)).ok).toBe(false)
+    expect((await marcar(tercero, setter.setterId, cuenta, 1)).ok).toBe(true)
+
+    // Esa fue la tercera: la cuarta apertura ya rebota.
+    const cuarto = await asignar(pool, await crearLeadScrapeado(pool, 4), setter.setterId)
+    expect((await marcar(cuarto, setter.setterId, cuenta, 1)).ok).toBe(false)
   })
 
   it('el reintento sí gasta cupo, porque el chat nunca se abrió', async () => {
@@ -1088,11 +1112,12 @@ describe('las situaciones que marca el setter', () => {
   })
 
   it('con el cupo agotado el seguimiento sale igual, y la apertura no', async () => {
-    const setter = await crearSetter(pool, { cupos: [2] })
+    // Cupo de una sola apertura: la entrada lo agota. La oferta sale igual,
+    // porque no cuenta contra el cupo de abrir desconocidos.
+    const setter = await crearSetter(pool, { cupos: [1] })
     const cuenta = setter.cuentas[0]!
     const a = await hastaLaOferta(setter.setterId, cuenta)
 
-    // La entrada y la oferta ya gastaron las dos del cupo del día.
     const otro = await asignar(pool, await crearLeadScrapeado(pool, 2), setter.setterId)
     expect((await marcar(otro, setter.setterId, cuenta, 1)).ok).toBe(false)
 

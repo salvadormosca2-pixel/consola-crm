@@ -738,21 +738,16 @@ export async function pedirMasLeads(): Promise<ResultadoTanda> {
     }
 
     const conteos = await db.execute(sql`
-      select
-        count(*) filter (where estado in ('asignado', 'abierto', 'saltado'))::int as pendientes,
-        count(*) filter (where estado = 'contactado'
-                           and segundo_programado_at is not null
-                           and segundo_programado_at <= now())::int as seguimientos
+      select count(*) filter (where estado in ('asignado', 'abierto', 'saltado'))::int as pendientes
         from lead_assignments
        where setter_id = ${sesion.setterId}::uuid
     `)
-    const c = conteos.rows[0] as { pendientes: number; seguimientos: number }
+    const c = conteos.rows[0] as { pendientes: number }
 
     const cantidad = cuantosEntregar({
       estado: cupo,
       tandaDiaria: cupo.tandaDiaria,
       pendientes: c.pendientes,
-      seguimientosPendientes: c.seguimientos,
     })
 
     if (cantidad <= 0) {
