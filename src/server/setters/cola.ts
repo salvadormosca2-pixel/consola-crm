@@ -120,7 +120,6 @@ interface FilaCola {
   niche: string | null
   city: string | null
   bought: string | null
-  variante: number
 }
 
 export async function armarColaDelSetter(setterId: string): Promise<ColaDelSetter> {
@@ -140,10 +139,11 @@ export async function armarColaDelSetter(setterId: string): Promise<ColaDelSette
   const filas = await db.execute(sql`
     select la.id, la.contact_id, la.estado, la.vence_at, la.abierto_at,
            la.proximo_paso, la.proximo_seguimiento_at, la.setter_account_id,
-           c.business_name, c.contact_name, c.ig_username, c.niche, c.city, c.bought,
-           s.variante
+           c.business_name, c.contact_name, c.ig_username, c.niche, c.city, c.bought
       from lead_assignments la
       join contacts c on c.id = la.contact_id
+      -- La ficha del setter entra solo por su cuenta activa: es lo que ordena
+      -- la cola para que no tenga que saltar de una cuenta a otra.
       join setters s on s.id = la.setter_id
      where la.setter_id = ${setterId}::uuid
        and (
@@ -200,7 +200,6 @@ export async function armarColaDelSetter(setterId: string): Promise<ColaDelSette
         bought: f.bought,
         city: f.city,
       },
-      f.variante,
       voz,
       paso,
     )

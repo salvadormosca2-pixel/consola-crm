@@ -15,6 +15,7 @@ import {
 
 import { asignarLeads, barrer, contarPozo, devolverPendientes } from './asignacion'
 import { leerPuertaDeEntrada } from './avisos'
+import { agregarLeadPropio } from './leads'
 import { borrarSetter, vaciarElEquipo } from './borrar'
 import { deshacerEnvio, registrarEnvio } from './envios'
 import { repartirAEsteSetter, repartirAhora, repartoAutomaticoDelDia } from './reparto'
@@ -1352,5 +1353,107 @@ describe('el reparto espera a que estrenen el acceso', () => {
     const n = await repartirAEsteSetter(setter.setterId, null, db)
     expect(n).toBe(5)
     expect(await contarPozo(db)).toBe(5)
+  })
+})
+
+/**
+ * El setter carga a alguien que conoce.
+ *
+ * Es el mejor lead que puede entrar al sistema —hay confianza antes del primer
+ * mensaje— y lo único que no puede pasar es que rompa las dos reglas que
+ * sostienen todo lo demás: un negocio lo trabaja un solo setter, y el mismo
+ * negocio no entra dos veces.
+ */
+describe('leads propios del setter', () => {
+  it('lo agrega a su cola y queda como suyo', async () => {
+    const setter = await crearSetter(pool, { cupos: [30] })
+
+    const r = await agregarLeadPropio(
+      setter.setterId,
+      { instagram: '@PanaderiaDelBarrio', negocio: 'Panadería del Barrio', ciudad: 'Catamarca' },
+      null,
+      db,
+    )
+    expect(r.ok).toBe(true)
+
+    const suyos = await pool.query(
+      `select c.ig_username, c.business_name, c.origen, la.estado
+         from lead_assignments la join contacts c on c.id = la.contact_id
+        where la.setter_id = $1`,
+      [setter.setterId],
+    )
+    expect(suyos.rows).toHaveLength(1)
+    // La arroba y las mayúsculas se normalizan: es la misma cuenta.
+    expect(suyos.rows[0]).toMatchObject({
+      ig_username: 'panaderiadelbarrio',
+      estado: 'asignado',
+      origen: 'scrapeado',
+    })
+  })
+
+  it('no se lo puede robar a otro setter', async () => {
+    const primero = await crearSetter(pool, { cupos: [30] })
+    const segundo = await crearSetter(pool, { cupos: [30] })
+
+    await agregarLeadPropio(primero.setterId, { instagram: 'local.esquina', negocio: 'Local' }, null, db)
+    const r = await agregarLeadPropio(
+      segundo.setterId,
+      { instagram: '@local.esquina', negocio: 'Local de la esquina' },
+      null,
+      db,
+    )
+
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error).toMatch(/trabajando/i)
+
+    const cuantos = await pool.query(`select count(*)::int as n from lead_assignments`)
+    expect(cuantos.rows[0]).toMatchObject({ n: 1 })
+  })
+
+  it('el mismo negocio no entra dos veces ni para el mismo setter', async () => {
+    const setter = await crearSetter(pool, { cupos: [30] })
+    await agregarLeadPropio(setter.setterId, { instagram: 'gym.norte', negocio: 'Gym' }, null, db)
+
+    const r = await agregarLeadPropio(setter.setterId, { instagram: 'gym.norte', negocio: 'Gym' }, null, db)
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error).toMatch(/ya está en tu lista/i)
+
+    const contactos = await pool.query(`select count(*)::int as n from contacts`)
+    expect(contactos.rows[0]).toMatchObject({ n: 1 })
+  })
+
+  it('un lead que ya volvió al pozo se puede agregar', async () => {
+    const setter = await crearSetter(pool, { cupos: [30] })
+    const contactId = await crearLeadScrapeado(pool, 1)
+    await pool.query(`update contacts set ig_username = $1, dedupe_key = $2 where id = $3`, [
+      'kiosco.centro',
+      'ig:kiosco.centro',
+      contactId,
+    ])
+    const vieja = await asignar(pool, contactId, setter.setterId)
+    await pool.query(`update lead_assignments set estado = 'vencido' where id = $1`, [vieja])
+
+    const r = await agregarLeadPropio(
+      setter.setterId,
+      { instagram: 'kiosco.centro', negocio: 'Kiosco del Centro' },
+      null,
+      db,
+    )
+    expect(r.ok).toBe(true)
+
+    // No se duplicó el contacto: es el mismo negocio volviendo.
+    const contactos = await pool.query(`select count(*)::int as n from contacts`)
+    expect(contactos.rows[0]).toMatchObject({ n: 1 })
+  })
+
+  it('rechaza una cuenta de Instagram que no lo parece', async () => {
+    const setter = await crearSetter(pool, { cupos: [30] })
+    const r = await agregarLeadPropio(
+      setter.setterId,
+      { instagram: 'no es una cuenta', negocio: 'Algo' },
+      null,
+      db,
+    )
+    expect(r.ok).toBe(false)
   })
 })

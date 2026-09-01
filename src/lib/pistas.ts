@@ -111,6 +111,16 @@ export interface PasoDePista {
   diasDefault: number
   /** Un texto que sirve tal cual, para no arrancar de una hoja en blanco. */
   ejemplo: string
+  /**
+   * Si este escalón gasta cupo, cuando su pista dice otra cosa.
+   *
+   * Existe por la oferta: vive en la pista de primer contacto, que abre chats,
+   * pero ella no abre ninguno —sale adentro de una conversación que el lead
+   * acaba de contestar—. Sin esta excepción, la oferta quedaba bloqueada por el
+   * límite de aperturas del día: el setter conseguía que le contestaran y no
+   * podía responder.
+   */
+  consumeCupo?: boolean
 }
 
 export interface MetaDePista {
@@ -151,6 +161,8 @@ export const PISTA_META: Record<Pista, MetaDePista> = {
         angulo:
           'Sale en el acto, apenas contesta la entrada: si contestó está mirando el celular ahora. Esperar hasta mañana es perder la conversación que se acaba de ganar. Su respuesta decide a qué pista va.',
         diasDefault: 0,
+        // El chat ya está abierto y contestando: no es una apertura, no gasta.
+        consumeCupo: false,
         ejemplo:
           'Te cuento en dos líneas: hacemos {{oferta}}. Si te sirve te muestro algo parecido a lo tuyo, sin compromiso.',
       },
@@ -372,19 +384,27 @@ export function primerPasoDe(pista: Pista): PasoDePista {
 /**
  * Si el paso gasta cupo diario de la cuenta.
  *
- * Solo la apertura y el reintento. En las dos pistas de seguimiento el chat ya
- * está abierto: el lead contestó o al menos recibió la oferta en una
- * conversación que existe, y un mensaje más ahí no es lo que hace que Instagram
+ * Solo la apertura y el reintento: los dos escalones que le escriben a alguien
+ * que nunca contestó. Todo el resto —la oferta incluida— sale adentro de una
+ * conversación que ya existe, y un mensaje ahí no es lo que hace que Instagram
  * restrinja una cuenta. Lo que la restringe es abrir chats nuevos con
- * desconocidos, y eso es exactamente lo que hacen la entrada y el reintento.
+ * desconocidos.
+ *
+ * La oferta es la excepción que hay que mirar dos veces: pertenece a la pista
+ * de primer contacto, que sí abre chats, pero ella sale cuando el lead acaba de
+ * contestar. Contarla dejaba al setter sin poder responderle a alguien que le
+ * estaba escribiendo, que es lo peor que puede pasar en una conversación.
  *
  * Gastar cupo en los seguimientos hacía que trabajar bien a los leads que ya
  * contestaron compitiera con abrir leads nuevos, que son dos cosas que no
  * tienen por qué disputarse el mismo número.
  */
 export function consumeCupo(paso: Paso): boolean {
-  const pista = pistaDePaso(paso)
-  return pista ? PISTA_META[pista].consumeCupo : false
+  const u = ubicacionDePaso(paso)
+  if (!u) return false
+  // El escalón manda sobre su pista: la oferta vive en la pista que abre chats
+  // y no abre ninguno.
+  return u.paso.consumeCupo ?? PISTA_META[u.pista].consumeCupo
 }
 
 /** Los pasos que descuentan del cupo, para poder filtrarlos en SQL. */

@@ -20,6 +20,7 @@ import { ErrorDePermiso, exigirSesion, exigirSetter } from '@/server/session'
 import { asignarLeads, contarPozo } from '@/server/setters/asignacion'
 import { leerConfigSetters } from '@/server/setters/config'
 import { leerCupoDeSetter } from '@/server/setters/cupo'
+import { agregarLeadPropio } from '@/server/setters/leads'
 import { deshacerEnvio, registrarEnvio } from '@/server/setters/envios'
 import { notificarYAvisar } from '@/server/setters/notificaciones'
 import { linksDeInstagram, mensajeDeAsignacion } from '@/server/setters/plantillas'
@@ -42,6 +43,39 @@ function alFallar(err: unknown, generico: string): EstadoAccion {
 function refrescar(): void {
   revalidatePath('/hoy')
   revalidatePath('/mis-leads')
+}
+
+/* ── Un lead propio ───────────────────────────────────────────────────── */
+
+const miLeadSchema = z.object({
+  instagram: z.string().trim().min(1, 'Poné la cuenta de Instagram.').max(60),
+  negocio: z.string().trim().min(2, 'Poné el nombre del negocio.').max(120),
+  ciudad: z.string().trim().max(80).optional(),
+  nota: z.string().trim().max(300).optional(),
+})
+
+/**
+ * El setter agrega a alguien que conoce.
+ *
+ * Entra a su cola como cualquier otro lead y con el mismo guion. Lo único que
+ * cambia es de dónde salió: no del pozo, sino de él.
+ */
+export async function agregarMiLead(datos: unknown): Promise<EstadoAccion> {
+  try {
+    const sesion = await exigirSetter()
+    const parsed = miLeadSchema.safeParse(datos)
+    if (!parsed.success) {
+      return { ok: false, error: parsed.error.issues[0]?.message ?? 'Revisá los datos.' }
+    }
+
+    const r = await agregarLeadPropio(sesion.setterId, parsed.data, sesion.userId)
+    if (!r.ok) return { ok: false, error: r.error }
+
+    refrescar()
+    return { ok: true, error: null }
+  } catch (err) {
+    return alFallar(err, 'No se pudo agregar el lead.')
+  }
 }
 
 /* ── La cola ──────────────────────────────────────────────────────────── */

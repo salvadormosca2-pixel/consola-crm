@@ -110,8 +110,22 @@ export function Cola({
   const restante = Math.max((cola.cupo.activa?.restante ?? 0) - consumidos, 0)
   const usado = (cola.cupo.activa?.enviadosHoy ?? 0) + consumidos
   const alTope = cola.cupo.activa !== null && restante === 0
-  const debeCambiar = alTope && cola.cupo.siguiente !== null
-  const terminoPorCupo = alTope && cola.cupo.siguiente === null
+
+  /*
+   * El tope frena las aperturas, no la conversación.
+   *
+   * Llegar al límite del día tapaba la cola entera con el cartel de "terminaste
+   * por hoy", y adentro quedaban las ofertas y los seguimientos: mensajes que
+   * salen en chats ya abiertos y no gastan cupo. El setter conseguía que le
+   * contestaran y no podía responder hasta el día siguiente.
+   *
+   * Ahora el cartel aparece recién cuando lo que sigue en la cola es una
+   * apertura. Mientras haya algo que se pueda mandar igual, se trabaja.
+   */
+  const loQueSigueGastaCupo = actual === null || consumeCupo(actual.paso)
+  const frenadoPorCupo = alTope && loQueSigueGastaCupo
+  const debeCambiar = frenadoPorCupo && cola.cupo.siguiente !== null
+  const terminoPorCupo = frenadoPorCupo && cola.cupo.siguiente === null
 
   /* ── Marcas guardadas sin señal ─────────────────────────────────────── */
 

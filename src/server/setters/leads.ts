@@ -2,10 +2,12 @@ import 'server-only'
 
 import { sql } from 'drizzle-orm'
 
-import { db } from '@/db'
+import { db, type Db } from '@/db'
 import type { LeadEstado, LeadInteres, SetterSendTipo } from '@/db/enums'
-import type { PasoDeSeguimiento } from '@/lib/setters-config'
+import { normalizarInstagram } from '@/lib/equipo-lote'
+import { calcularVencimiento, type PasoDeSeguimiento } from '@/lib/setters-config'
 import type { Pestana } from '@/lib/setters-vistas'
+import { leerConfigSetters } from '@/server/setters/config'
 import {
   armarMensaje,
   elegirPlantilla,
@@ -112,11 +114,9 @@ export async function listarMisLeads(
            la.segundo_programado_at, la.respondido_at, la.vence_at,
            la.respondio_a, la.interes, la.proximo_paso, la.proximo_seguimiento_at,
            c.business_name, c.ig_username, c.niche, c.city, c.contact_name, c.bought,
-           s.variante,
            m.scheduled_at as reunion_at
       from lead_assignments la
       join contacts c on c.id = la.contact_id
-      join setters s on s.id = la.setter_id
       left join lateral (
         select mm.scheduled_at, mm.id
           from meetings mm
@@ -202,7 +202,6 @@ export async function listarMisLeads(
       proximo_seguimiento_at: Date | null
       contact_name: string | null
       bought: string | null
-      variante: number
     }>).map((f) => {
       const vence = new Date(f.vence_at)
       const horas = Math.max(Math.floor((vence.getTime() - ahora) / 3_600_000), 0)
@@ -236,7 +235,6 @@ export async function listarMisLeads(
                 bought: f.bought,
                 city: f.city,
               },
-              f.variante,
               voz,
               paso,
             )
@@ -280,4 +278,144 @@ export async function listarMisLeads(
       respondio_oferta: c?.respondio_oferta ?? 0,
     },
   }
+}
+
+/* ── Leads que carga el propio setter ─────────────────────────────────── */
+
+export interface LeadPropio {
+  /** La cuenta de Instagram, con o sin arroba. Es lo único obligatorio además del nombre. */
+  instagram: string
+  negocio: string
+  ciudad?: string | null
+  nota?: string | null
+}
+
+export type ResultadoDeAlta =
+  | { ok: true; assignmentId: string; usuario: string }
+  | { ok: false; error: string }
+
+/**
+ * El setter agrega un lead suyo.
+ *
+ * El pozo son leads scrapeados que no conoce nadie. Pero el setter también
+ * conoce gente —un local del barrio, alguien que le compró a un conocido, el
+ * negocio de un amigo— y esos son los mejores leads que hay: hay confianza
+ * antes del primer mensaje. Hasta ahora no tenía dónde meterlos y terminaban en
+ * una nota del celular, fuera del sistema: sin guion, sin seguimiento y sin
+ * quedar registrados como suyos cuando cierran.
+ *
+ * Entra igual que cualquier otro lead —a su cola, con la entrada como primer
+ * paso y el mismo guion— con una sola diferencia: no sale del pozo, se lo
+ * asigna él. Las dos reglas que no se tocan siguen valiendo: un negocio lo
+ * trabaja un solo setter, y el mismo negocio no entra dos veces.
+ */
+export async function agregarLeadPropio(
+  setterId: string,
+  datos: LeadPropio,
+  actorUserId: string | null,
+  cliente: Db = db,
+): Promise<ResultadoDeAlta> {
+  const usuario = normalizarInstagram(datos.instagram)
+  if (!/^[a-z0-9._]{1,30}$/.test(usuario)) {
+    return { ok: false, error: 'Esa cuenta de Instagram no parece válida. Va sin el arroba.' }
+  }
+
+  const negocio = datos.negocio.trim()
+  if (negocio.length < 2) return { ok: false, error: 'Poné el nombre del negocio.' }
+
+  const cfg = await leerConfigSetters(cliente)
+  const vence = calcularVencimiento(cfg)
+  const dedupeKey = `ig:${usuario}`
+
+  return cliente.transaction(async (tx) => {
+    /*
+     * El contacto puede existir ya: importado en una lista, cargado por otro
+     * setter, o descartado hace meses. Se traba la fila antes de decidir, así
+     * que dos setters agregando el mismo negocio en el mismo segundo no pueden
+     * terminar los dos con él.
+     */
+    const previos = await tx.execute(sql`
+      select id, origen, discarded_at from contacts
+       where dedupe_key = ${dedupeKey} limit 1
+      for update
+    `)
+    const previo = previos.rows[0] as
+      | { id: string; origen: string; discarded_at: Date | null }
+      | undefined
+
+    let contactId: string
+
+    if (previo) {
+      if (previo.origen === 'cliente') {
+        return {
+          ok: false as const,
+          error: 'Ese negocio ya está cargado como cliente en el CRM. Avisale a tu admin.',
+        }
+      }
+
+      const tomados = await tx.execute(sql`
+        select la.setter_id, u.name as nombre
+          from lead_assignments la
+          join setters s on s.id = la.setter_id
+          join users u on u.id = s.user_id
+         where la.contact_id = ${previo.id}::uuid
+           and la.estado not in ('vencido', 'devuelto')
+         limit 1
+      `)
+      const tomado = tomados.rows[0] as { setter_id: string; nombre: string } | undefined
+
+      if (tomado) {
+        return {
+          ok: false as const,
+          error:
+            tomado.setter_id === setterId
+              ? `@${usuario} ya está en tu lista.`
+              : `@${usuario} ya lo está trabajando ${tomado.nombre}.`,
+        }
+      }
+
+      // Estaba libre: vuelve a la cancha con los datos que trae el setter, que
+      // lo conoce mejor que la lista de donde salió.
+      await tx.execute(sql`
+        update contacts
+           set business_name = ${negocio},
+               city = coalesce(nullif(${datos.ciudad ?? ''}, ''), city),
+               notes = coalesce(nullif(${datos.nota ?? ''}, ''), notes),
+               discarded_at = null,
+               stage = case when stage in ('descartado', 'no_interesado') then 'nuevo'::contact_stage
+                            else stage end,
+               updated_at = now()
+         where id = ${previo.id}::uuid
+      `)
+      contactId = previo.id
+    } else {
+      const nuevos = await tx.execute(sql`
+        insert into contacts (business_name, ig_username, has_instagram, origen,
+                              city, notes, dedupe_key)
+        values (${negocio}, ${usuario}, true, 'scrapeado',
+                ${datos.ciudad?.trim() || null}, ${datos.nota?.trim() || null}, ${dedupeKey})
+        returning id
+      `)
+      contactId = (nuevos.rows[0] as { id: string }).id
+    }
+
+    const asignaciones = await tx.execute(sql`
+      insert into lead_assignments (contact_id, setter_id, vence_at)
+      values (${contactId}::uuid, ${setterId}::uuid, ${vence.toISOString()}::timestamptz)
+      on conflict do nothing
+      returning id
+    `)
+    const assignmentId = (asignaciones.rows[0] as { id: string } | undefined)?.id
+    if (!assignmentId) {
+      return { ok: false as const, error: `@${usuario} ya lo está trabajando alguien.` }
+    }
+
+    await tx.execute(sql`
+      insert into events (type, contact_id, actor_user_id, payload_jsonb)
+      values ('lead_agregado', ${contactId}::uuid, ${actorUserId}::uuid,
+              ${JSON.stringify({ setterId, usuario, negocio })}::jsonb)
+    `)
+
+    return { ok: true as const, assignmentId, usuario }
+  })
 }

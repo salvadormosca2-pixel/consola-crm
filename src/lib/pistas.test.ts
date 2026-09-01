@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   consumeCupo,
+  PASOS_QUE_CONSUMEN_CUPO,
   esPaso,
   estaRetirado,
   GRUPOS_DE_MENSAJES,
@@ -144,6 +145,15 @@ describe('el cupo', () => {
     expect(consumeCupo(primerPasoDe('sin_abrir').paso)).toBe(true)
     expect(consumeCupo(primerPasoDe('silencio').paso)).toBe(false)
     expect(consumeCupo(primerPasoDe('tibio').paso)).toBe(false)
+  })
+
+  it('la oferta NO lo gasta, aunque viva en la pista que abre chats', () => {
+    // Sale cuando el lead acaba de contestar la entrada: el chat está abierto y
+    // hay alguien escribiendo del otro lado. Contarla dejaba al setter sin
+    // poder responderle justo cuando más importa — y bloqueada por un límite
+    // que existe para otra cosa.
+    expect(consumeCupo(2)).toBe(false)
+    expect(PASOS_QUE_CONSUMEN_CUPO).not.toContain(2)
   })
 
   it('el reintento se corta en dos intentos', () => {

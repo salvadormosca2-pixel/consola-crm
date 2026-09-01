@@ -4,6 +4,7 @@ import { PESTANAS, type Pestana } from '@/lib/setters-vistas'
 import { requerirSetter } from '@/server/session'
 import { listarMisLeads } from '@/server/setters/leads'
 
+import { Agregar } from './agregar'
 import { Lista } from './lista'
 
 export const metadata: Metadata = { title: 'Mis leads · Setters' }
@@ -25,5 +26,10 @@ export default async function PaginaMisLeads({
 
   const datos = await listarMisLeads(sesion.setterId, pestana, busqueda)
 
-  return <Lista datos={datos} pestana={pestana} busqueda={busqueda} />
+  return (
+    <div className="space-y-3">
+      <Agregar />
+      <Lista datos={datos} pestana={pestana} busqueda={busqueda} />
+    </div>
+  )
 }

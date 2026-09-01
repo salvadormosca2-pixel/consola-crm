@@ -17,20 +17,25 @@ import { leerConfigDeMensajes } from '@/server/setters/mensajes'
  * no inventa ni completa texto. Si falta el de un paso, el lead queda bloqueado
  * con el motivo a la vista y el setter lo saltea.
  *
- * Cada setter manda una variante distinta del mismo mensaje: mil DMs con el
- * texto exacto es lo que dispara las restricciones de Instagram.
+ * **Sale el texto escrito, y solo ese.** Antes cada setter mandaba una variante
+ * distinta del mismo mensaje, elegida por un número que se le asignaba al darlo
+ * de alta. La idea era no repetir mil DMs iguales, pero la pantalla de Mensajes
+ * nunca dejó escribir esas variantes: las que había venían de datos de prueba y
+ * de versiones viejas, y salían sin que nadie las hubiera aprobado. El guion es
+ * lo único que separa un mensaje que funciona de uno que quema la cuenta, y no
+ * puede haber ni un texto saliendo que no esté a la vista en la pantalla donde
+ * se escribe.
  */
 
 export interface PlantillaDeSetter {
   id: string
-  /** Cuerpo base y variantes, ya resueltas en una lista. */
-  textos: string[]
+  /** El texto escrito para ese paso y ese rubro. */
+  texto: string
 }
 
 interface FilaPlantilla {
   id: string
   body: string
-  variants: unknown
   sequence_step: number | null
   niche: string | null
 }
@@ -47,7 +52,7 @@ export type PlantillasPorRubro = Map<number, Map<string | null, PlantillaDeSette
 
 export async function leerPlantillasDeSetter(): Promise<PlantillasPorRubro> {
   const filas = await db.execute(sql`
-    select id, body, variants, sequence_step, niche
+    select id, body, sequence_step, niche
       from templates
      where active
        and (channel = 'instagram' or channel = 'ambos')
@@ -65,10 +70,7 @@ export async function leerPlantillasDeSetter(): Promise<PlantillasPorRubro> {
     // Si hay dos del mismo rubro, gana la editada más recientemente.
     if (delPaso.has(clave)) continue
 
-    const variantes = Array.isArray(f.variants)
-      ? f.variants.filter((v): v is string => typeof v === 'string' && v.trim().length > 0)
-      : []
-    delPaso.set(clave, { id: f.id, textos: [f.body, ...variantes] })
+    delPaso.set(clave, { id: f.id, texto: f.body })
   }
 
   return salida
@@ -110,7 +112,6 @@ export type MensajeArmado =
 export function armarMensaje(
   plantilla: PlantillaDeSetter | null,
   contacto: ContactoParaMensaje,
-  varianteDelSetter: number,
   voz: { miNombre?: string | null; oferta?: string | null },
   paso: PasoDeSeguimiento,
 ): MensajeArmado {
@@ -128,14 +129,12 @@ export function armarMensaje(
     }
   }
 
-  const indice = ((varianteDelSetter % plantilla.textos.length) + plantilla.textos.length) %
-    plantilla.textos.length
-  const cuerpo = plantilla.textos[indice]!
-
-  const r = renderTemplate(cuerpo, datosDeContacto(contacto, voz))
+  const r = renderTemplate(plantilla.texto, datosDeContacto(contacto, voz))
   if (!r.ok) return { ok: false, motivo: r.motivo }
 
-  return { ok: true, texto: r.texto, templateId: plantilla.id, variante: indice }
+  // `variante` queda en 0 y se guarda igual en `messages`: es la columna que ya
+  // existía y sirve para leer el historial viejo, donde sí hubo variantes.
+  return { ok: true, texto: r.texto, templateId: plantilla.id, variante: 0 }
 }
 
 /** El nombre y la oferta que van en {{mi_nombre}} y {{oferta}}. */
@@ -172,11 +171,9 @@ export async function mensajeDeAsignacion(
 ): Promise<MensajeDeAsignacion> {
   const filas = await db.execute(sql`
     select la.contact_id, la.estado, la.proximo_paso, la.proximo_seguimiento_at,
-           c.business_name, c.contact_name, c.niche, c.bought, c.city,
-           s.variante
+           c.business_name, c.contact_name, c.niche, c.bought, c.city
       from lead_assignments la
       join contacts c on c.id = la.contact_id
-      join setters s on s.id = la.setter_id
      where la.id = ${assignmentId}::uuid and la.setter_id = ${setterId}::uuid
      limit 1
   `)
@@ -192,7 +189,6 @@ export async function mensajeDeAsignacion(
         niche: string | null
         bought: string | null
         city: string | null
-        variante: number
       }
     | undefined
 
@@ -217,7 +213,6 @@ export async function mensajeDeAsignacion(
       bought: f.bought,
       city: f.city,
     },
-    f.variante,
     voz,
     paso,
   )

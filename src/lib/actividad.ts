@@ -53,6 +53,7 @@ export const EVENTO_META: Record<string, MetaDeEvento> = {
   lead_vencido: { label: 'Venció y volvió al pozo', grupo: 'leads', tono: 'negativo' },
   lead_devuelto: { label: 'Volvió al pozo', grupo: 'leads', tono: 'negativo' },
   lead_reasignado: { label: 'Reasignado', grupo: 'leads', tono: 'activo' },
+  lead_agregado: { label: 'Lead cargado por el setter', grupo: 'leads', tono: 'positivo' },
   lead_tomado_por_admin: { label: 'Lo tomó el admin', grupo: 'leads', tono: 'activo' },
   lead_cuenta_inexistente: { label: 'Cuenta inexistente', grupo: 'leads', tono: 'negativo' },
 
