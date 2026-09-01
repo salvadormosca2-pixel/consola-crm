@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { cuantosEntregar, leerCupo, type CuentaDeSetter } from './setters-cupo'
+import { cuantosEntregar, frenoDelEnvio, leerCupo, type CuentaDeSetter } from './setters-cupo'
 
 function cuenta(over: Partial<CuentaDeSetter> & { id: string }): CuentaDeSetter {
   return {
@@ -133,5 +133,71 @@ describe('cuantosEntregar', () => {
   it('nunca devuelve un número negativo', () => {
     const estado = leerCupo([cuenta({ id: 'a', enviadosHoy: 28 })], 'a')
     expect(cuantosEntregar({ estado, tandaDiaria: 60, pendientes: 10 })).toBe(0)
+  })
+})
+
+/**
+ * Qué frena el cupo y qué no.
+ *
+ * Es el bug que se vio en la calle: la app dejaba abrir Instagram, el setter
+ * mandaba la oferta, y al tocar "Enviado" saltaba "llegaste al límite". El
+ * mensaje ya estaba mandado y el lead quedaba sin registrar, sin clasificar y
+ * sin próximo paso.
+ */
+describe('frenoDelEnvio', () => {
+  it('la oferta sale aunque la cuenta esté al tope', () => {
+    expect(
+      frenoDelEnvio({
+        gastaCupo: false,
+        restanteDeLaCuenta: 0,
+        esDelHilo: true,
+        bloqueadoPorCambio: true,
+      }),
+    ).toEqual({ frena: false })
+  })
+
+  it('un seguimiento en un hilo abierto tampoco se frena', () => {
+    expect(
+      frenoDelEnvio({
+        gastaCupo: false,
+        restanteDeLaCuenta: 0,
+        esDelHilo: true,
+        bloqueadoPorCambio: false,
+      }).frena,
+    ).toBe(false)
+  })
+
+  it('una apertura con la cuenta activa al tope manda a cambiar de cuenta', () => {
+    expect(
+      frenoDelEnvio({
+        gastaCupo: true,
+        restanteDeLaCuenta: 0,
+        esDelHilo: false,
+        bloqueadoPorCambio: true,
+      }),
+    ).toEqual({ frena: true, motivo: 'cambiar_de_cuenta' })
+  })
+
+  it('un reintento sobre un hilo cuya cuenta llegó al tope espera a mañana', () => {
+    // Cambiar de cuenta no ayuda: la conversación vive en esa.
+    expect(
+      frenoDelEnvio({
+        gastaCupo: true,
+        restanteDeLaCuenta: 0,
+        esDelHilo: true,
+        bloqueadoPorCambio: false,
+      }),
+    ).toEqual({ frena: true, motivo: 'cuenta_al_tope' })
+  })
+
+  it('una apertura con cupo libre sale', () => {
+    expect(
+      frenoDelEnvio({
+        gastaCupo: true,
+        restanteDeLaCuenta: 5,
+        esDelHilo: false,
+        bloqueadoPorCambio: false,
+      }).frena,
+    ).toBe(false)
   })
 })

@@ -7,7 +7,8 @@ import { z } from 'zod'
 import { db } from '@/db'
 
 import type { EstadoAccion } from '@/lib/form-state'
-import { cuantosEntregar } from '@/lib/setters-cupo'
+import { consumeCupo } from '@/lib/pistas'
+import { cuantosEntregar, frenoDelEnvio } from '@/lib/setters-cupo'
 import {
   mensajeDeReunion,
   ofertaTrasLaRespuesta,
@@ -163,32 +164,42 @@ export async function marcarEnviado(assignmentId: string): Promise<ResultadoMarc
     }
 
     /*
-     * El cupo se mira sobre **esa** cuenta. Si es la del hilo y llegó a su
-     * tope, el seguimiento espera a mañana: cambiar de cuenta no ayuda, porque
-     * la conversación no se mudó.
+     * Qué mensaje le toca. Va **antes** que el cupo y ese orden es el arreglo:
+     * hasta saber qué escalón es, no se puede saber si el límite lo alcanza.
+     *
+     * Antes el cupo se miraba primero y frenaba todo por igual. En la práctica
+     * eso era: el setter abría Instagram, mandaba la oferta a alguien que le
+     * acababa de contestar, tocaba "Enviado" y le saltaba "llegaste al límite".
+     * El mensaje ya estaba mandado y el sistema no lo registraba, así que el
+     * lead se quedaba sin clasificar y sin próximo paso.
      */
-    if (cuenta.restante <= 0) {
-      return {
-        ok: false,
-        error: cuentaDelLead
-          ? `@${cuenta.igUsername} llegó a su límite de hoy y este lead vive en esa conversación. Sigue mañana.`
-          : `Llegaste al límite de hoy con @${cuenta.igUsername}. Cambiá de cuenta para seguir.`,
-        requiereCambioDeCuenta: !cuentaDelLead,
-      }
-    }
-
-    // El bloqueo por cambio solo aplica a los leads nuevos: son los únicos que
-    // dependen de cuál cuenta esté activa.
-    if (!cuentaDelLead && cupo.bloqueadoPorCambio) {
-      return {
-        ok: false,
-        error: `Llegaste al límite de hoy con @${cupo.activa?.igUsername}. Cambiá de cuenta para seguir.`,
-        requiereCambioDeCuenta: true,
-      }
-    }
-
     const mensaje = await mensajeDeAsignacion(assignmentId, sesion.setterId)
     if (!mensaje.ok) return { ok: false, error: mensaje.motivo }
+
+    /*
+     * El cupo frena las aperturas y nada más.
+     *
+     * La oferta y los seguimientos salen en un chat que ya existe: no son lo
+     * que hace que Instagram restrinja una cuenta, y frenarlos deja una
+     * conversación empezada sin respuesta, que es el peor lugar donde parar.
+     */
+    const freno = frenoDelEnvio({
+      gastaCupo: consumeCupo(mensaje.paso),
+      restanteDeLaCuenta: cuenta.restante,
+      esDelHilo: Boolean(cuentaDelLead),
+      bloqueadoPorCambio: cupo.bloqueadoPorCambio,
+    })
+
+    if (freno.frena) {
+      return {
+        ok: false,
+        error:
+          freno.motivo === 'cuenta_al_tope'
+            ? `@${cuenta.igUsername} llegó a su límite de hoy y este lead vive en esa conversación. Sigue mañana.`
+            : `Llegaste al límite de hoy con @${cuenta.igUsername}. Cambiá de cuenta para seguir.`,
+        requiereCambioDeCuenta: freno.motivo === 'cambiar_de_cuenta',
+      }
+    }
 
     const r = await registrarEnvio({
       assignmentId,

@@ -119,6 +119,45 @@ export function cuantosEntregar(params: {
   return Math.max(Math.min(porCupo, porTanda), 0)
 }
 
+export type FrenoDeEnvio =
+  | { frena: false }
+  | { frena: true; motivo: 'cuenta_al_tope' | 'cambiar_de_cuenta' }
+
+/**
+ * Si el cupo frena este envío. **La regla vive acá y en ningún otro lado.**
+ *
+ * Estaba escrita en tres lugares —la cola del celular, la acción del botón y el
+ * registro del envío— y las tres divergieron. El resultado fue el peor de los
+ * posibles: la pantalla dejaba abrir Instagram y mandar la oferta, y recién al
+ * tocar "Enviado" saltaba "llegaste al límite". El mensaje ya estaba mandado y
+ * el sistema no lo registraba, así que el lead se quedaba sin clasificar, sin
+ * próximo paso y sin aparecer en ningún número.
+ *
+ * La regla, entera, en una línea: **el cupo frena las aperturas y nada más.**
+ * La oferta y los seguimientos salen en un chat que ya existe; frenarlos deja
+ * una conversación empezada sin respuesta, que es el peor lugar donde parar.
+ */
+export function frenoDelEnvio(params: {
+  /** Si el escalón abre un chat nuevo: solo esos gastan cupo. */
+  gastaCupo: boolean
+  /** Lo que le queda hoy a la cuenta por la que sale este mensaje. */
+  restanteDeLaCuenta: number
+  /** El lead ya tiene hilo en esa cuenta: cambiar de cuenta no ayuda. */
+  esDelHilo: boolean
+  /** La cuenta activa está al tope y hay otra libre esperando. */
+  bloqueadoPorCambio: boolean
+}): FrenoDeEnvio {
+  if (!params.gastaCupo) return { frena: false }
+  if (params.restanteDeLaCuenta <= 0) {
+    return { frena: true, motivo: params.esDelHilo ? 'cuenta_al_tope' : 'cambiar_de_cuenta' }
+  }
+  // Solo los leads sin hilo dependen de cuál cuenta esté activa.
+  if (!params.esDelHilo && params.bloqueadoPorCambio) {
+    return { frena: true, motivo: 'cambiar_de_cuenta' }
+  }
+  return { frena: false }
+}
+
 /** Texto del cartel de cambio de cuenta. El motivo va escrito, no implícito. */
 export function motivoDelCambio(estado: EstadoDeCupo): string {
   const cupo = estado.activa?.cupoDiario ?? 30
