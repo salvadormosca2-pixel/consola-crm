@@ -25,6 +25,7 @@ import { agregarLeadPropio } from '@/server/setters/leads'
 import { deshacerEnvio, registrarEnvio } from '@/server/setters/envios'
 import { notificarYAvisar } from '@/server/setters/notificaciones'
 import { linksDeInstagram, mensajeDeAsignacion } from '@/server/setters/plantillas'
+import { reponerTrasSaltear } from '@/server/setters/reparto'
 
 /**
  * Todo lo que puede hacer un setter.
@@ -235,22 +236,46 @@ export async function marcarEnviado(assignmentId: string): Promise<ResultadoMarc
   }
 }
 
-/** Lo deja para el final de la cola de hoy. Mañana vuelve como cualquier otro. */
-export async function saltearLead(assignmentId: string): Promise<EstadoAccion> {
+export interface ResultadoSalteo extends EstadoAccion {
+  /** Cuántos leads del pozo entraron en su lugar. */
+  repuestos?: number
+}
+
+/**
+ * Lo deja para el final de la cola de hoy. Mañana vuelve como cualquier otro.
+ *
+ * Y en su lugar entra otro del pozo, si le queda cupo. Sin eso, saltear cuatro
+ * leads era terminar el día con cuatro huecos y cupo sin usar: el que salteaba
+ * los que no podía hacer trabajaba menos que el que los dejaba pasar de largo.
+ */
+export async function saltearLead(assignmentId: string): Promise<ResultadoSalteo> {
   try {
     const sesion = await exigirSetter()
-    await db.execute(sql`
+    const filas = await db.execute(sql`
       update lead_assignments
          set estado = 'saltado', pospuesto_at = now()
        where id = ${assignmentId}::uuid and setter_id = ${sesion.setterId}::uuid
          and estado in ('asignado', 'abierto', 'saltado')
+      returning id
     `)
+    if (filas.rows.length === 0) return { ok: false, error: 'Ese lead ya no está en tu cola.' }
+
     await db.execute(sql`
       insert into events (type, actor_user_id, payload_jsonb)
       values ('lead_salteado', ${sesion.userId}::uuid, ${JSON.stringify({ assignmentId })}::jsonb)
     `)
+
+    // Nunca puede voltear el salteo: si el pozo está vacío o no le queda cupo,
+    // simplemente no entra ninguno.
+    let repuestos = 0
+    try {
+      repuestos = await reponerTrasSaltear(sesion.setterId, sesion.userId)
+    } catch (err) {
+      console.error('No se pudo reponer la cola después de saltear.', err)
+    }
+
     refrescar()
-    return { ok: true, error: null }
+    return { ok: true, error: null, repuestos }
   } catch (err) {
     return alFallar(err, 'No se pudo saltear.')
   }

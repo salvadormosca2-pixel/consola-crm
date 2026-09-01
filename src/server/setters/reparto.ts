@@ -252,6 +252,42 @@ export async function repartirAEsteSetter(
   })
 }
 
+/**
+ * Repone la cola cuando el setter saltea un lead.
+ *
+ * Saltear es "este ahora no": el lead se va al final de la cola de hoy y vuelve
+ * mañana. Pero mientras tanto sigue ocupando lugar, y el setter se quedaba con
+ * la cola trabada — abría la app, salteaba los cuatro que no podía hacer, y le
+ * quedaban cuatro huecos que nadie llenaba hasta el día siguiente. Con cupo
+ * libre sin usar, que es lo caro.
+ *
+ * La regla: **la cola tiene que tener tanto trabajo como cupo le quede hoy**,
+ * sin contar los salteados. Cada salteo repone uno del pozo hasta llegar a ese
+ * número, y ni uno más: entregarle leads por encima de lo que puede mandar hoy
+ * es sacarlos del pozo para congelarlos 48 horas.
+ */
+export async function reponerTrasSaltear(
+  setterId: string,
+  actorUserId: string | null,
+  cliente: Db = db,
+): Promise<number> {
+  return cliente.transaction(async (tx) => {
+    const capacidades = await leerCapacidades(tx)
+    const suyo = capacidades.find((c) => c.setterId === setterId)
+    if (!suyo || !suyo.activo || !suyo.entro || suyo.cuentas === 0) return 0
+
+    const filas = await tx.execute(sql`
+      select count(*)::int as n from lead_assignments
+       where setter_id = ${setterId}::uuid and estado in ('asignado', 'abierto')
+    `)
+    const trabajables = (filas.rows[0] as { n: number }).n
+
+    if (trabajables >= suyo.cupoRestante) return 0
+
+    return asignarLeads(setterId, 1, actorUserId, tx)
+  })
+}
+
 /* ── El reparto de la mañana, sin depender de un reloj externo ─────────── */
 
 /**

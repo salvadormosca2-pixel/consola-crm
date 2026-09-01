@@ -225,10 +225,19 @@ export function Cola({
       avanzar(item.assignmentId)
       iniciar(async () => {
         const r = await saltearLead(item.assignmentId)
-        if (!r.ok) toast.error(r.error ?? 'No se pudo saltear.')
+        if (!r.ok) {
+          toast.error(r.error ?? 'No se pudo saltear.')
+          return
+        }
+        // Entró otro en su lugar: la cola de abajo cambió y conviene decirlo,
+        // porque el que saltea espera quedarse con uno menos.
+        if (r.repuestos && r.repuestos > 0) {
+          toast.success('Salteado. Te entró otro del pozo.')
+          router.refresh()
+        }
       })
     },
-    [avanzar],
+    [avanzar, router],
   )
 
   const noExiste = React.useCallback(

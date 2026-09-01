@@ -18,7 +18,12 @@ import { leerPuertaDeEntrada } from './avisos'
 import { agregarLeadPropio } from './leads'
 import { borrarSetter, vaciarElEquipo } from './borrar'
 import { deshacerEnvio, registrarEnvio } from './envios'
-import { repartirAEsteSetter, repartirAhora, repartoAutomaticoDelDia } from './reparto'
+import {
+  repartirAEsteSetter,
+  repartirAhora,
+  repartoAutomaticoDelDia,
+  reponerTrasSaltear,
+} from './reparto'
 
 /**
  * Las reglas que no se negocian, probadas contra Postgres de verdad.
@@ -1480,5 +1485,62 @@ describe('leads propios del setter', () => {
       db,
     )
     expect(r.ok).toBe(false)
+  })
+})
+
+/**
+ * Saltear no puede dejar la cola con un hueco.
+ *
+ * El que saltea los cuatro que no puede hacer terminaba el día con cuatro
+ * lugares vacíos y cupo sin usar: trabajaba menos que el que los dejaba pasar
+ * de largo. Ahora entra otro del pozo en su lugar, pero nunca por encima de lo
+ * que sus cuentas pueden mandar hoy.
+ */
+describe('saltear repone la cola', () => {
+  it('entra otro del pozo en lugar del salteado', async () => {
+    const setter = await crearSetter(pool, { cupos: [30] })
+    const salteado = await asignar(pool, await crearLeadScrapeado(pool, 1), setter.setterId)
+    await asignar(pool, await crearLeadScrapeado(pool, 2), setter.setterId)
+    for (let i = 3; i < 8; i++) await crearLeadScrapeado(pool, i)
+
+    await pool.query(
+      `update lead_assignments set estado = 'saltado', pospuesto_at = now() where id = $1`,
+      [salteado],
+    )
+
+    expect(await reponerTrasSaltear(setter.setterId, null, db)).toBe(1)
+
+    // El salteado sigue siendo suyo: vuelve al final de la cola, no al pozo.
+    const suyos = await pool.query(
+      `select count(*)::int as n from lead_assignments where setter_id = $1`,
+      [setter.setterId],
+    )
+    expect(suyos.rows[0]).toMatchObject({ n: 3 })
+  })
+
+  it('no repone por encima de lo que puede mandar hoy', async () => {
+    const setter = await crearSetter(pool, { cupos: [2] })
+    const salteado = await asignar(pool, await crearLeadScrapeado(pool, 1), setter.setterId)
+    await asignar(pool, await crearLeadScrapeado(pool, 2), setter.setterId)
+    await asignar(pool, await crearLeadScrapeado(pool, 3), setter.setterId)
+    for (let i = 4; i < 8; i++) await crearLeadScrapeado(pool, i)
+
+    await pool.query(
+      `update lead_assignments set estado = 'saltado', pospuesto_at = now() where id = $1`,
+      [salteado],
+    )
+
+    // Le quedan dos para trabajar y su cuenta aguanta dos: no entra ninguno.
+    expect(await reponerTrasSaltear(setter.setterId, null, db)).toBe(0)
+  })
+
+  it('con el pozo vacío no pasa nada', async () => {
+    const setter = await crearSetter(pool, { cupos: [30] })
+    const salteado = await asignar(pool, await crearLeadScrapeado(pool, 1), setter.setterId)
+    await pool.query(
+      `update lead_assignments set estado = 'saltado', pospuesto_at = now() where id = $1`,
+      [salteado],
+    )
+    expect(await reponerTrasSaltear(setter.setterId, null, db)).toBe(0)
   })
 })
