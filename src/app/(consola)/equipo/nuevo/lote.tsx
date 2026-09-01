@@ -321,7 +321,11 @@ function Resultado({
       ) : null}
 
       {creados.map((c) => (
-        <TarjetaDeAcceso key={c.setterId} {...c} titulo={c.nombre} />
+        <TarjetaDeAcceso
+          key={c.setterId}
+          {...c}
+          titulo={c.reactivado ? `${c.nombre} · volvió al equipo` : c.nombre}
+        />
       ))}
 
       <div className="flex gap-2">

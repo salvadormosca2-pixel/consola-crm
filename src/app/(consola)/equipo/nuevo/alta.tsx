@@ -55,7 +55,17 @@ export function Alta({ cupoPorDefecto }: { cupoPorDefecto: number }) {
   if (tarjeta) {
     return (
       <div className="space-y-3">
-        <TarjetaDeAcceso {...tarjeta} />
+        <TarjetaDeAcceso
+          {...tarjeta}
+          titulo={tarjeta.reactivado ? 'Cuenta reactivada' : undefined}
+        />
+        {tarjeta.reactivado ? (
+          <p className="text-[12.5px] leading-relaxed text-texto-2">
+            Ese email ya era de una cuenta que estaba dada de baja, así que en vez de crear una
+            nueva se le devolvió la suya: vuelve con su historial, sus cuentas de Instagram y su
+            comisión, y con esta contraseña nueva.
+          </p>
+        ) : null}
         <div className="flex gap-2">
           <Button asChild variant="secundaria" size="lg" className="flex-1">
             <Link href={`/equipo/${tarjeta.setterId}` as never}>Ver su ficha</Link>

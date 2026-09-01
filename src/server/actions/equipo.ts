@@ -103,6 +103,12 @@ export interface TarjetaDeAlta {
   url: string
   /** El texto completo, listo para copiar y pegar por WhatsApp. */
   tarjeta: string
+  /**
+   * El mail ya estaba en el sistema, de alguien que había sido dado de baja, y
+   * en vez de rebotar el alta se le devolvió la cuenta. Lo dice la pantalla:
+   * volvió con su historial, no es una cuenta nueva en blanco.
+   */
+  reactivado: boolean
 }
 
 export type ResultadoAlta = TarjetaDeAlta | { ok: false; error: string }
@@ -123,12 +129,37 @@ interface DatosDeAlta {
  * distinta pantalla adelante. Duplicarla es la forma de que dentro de un mes
  * una cree la fila de `setters` y la otra no, y que el que entró por la
  * pantalla equivocada no tenga cola ni cupo y nadie sepa por qué.
+ *
+ * **Si el mail es de alguien que está de baja, el alta lo devuelve al equipo en
+ * vez de rebotar.** Un mail es una persona: dar de baja a alguien y volver a
+ * darlo de alta dos meses después es la misma persona volviendo, y el sistema
+ * decía "ya hay una cuenta con ese email" sin decir de quién ni cómo seguir.
+ * Quedaba un callejón sin salida: el mail estaba ocupado por una fila que no se
+ * veía en ninguna pantalla. Vuelve con su historial y su comisión intactos y
+ * con contraseña nueva, que es exactamente lo que se quería.
  */
-async function altaDeSetter(tx: Ejecutor, datos: DatosDeAlta): Promise<string> {
-  const yaEsta = await tx.execute(sql`
-    select 1 from users where lower(email) = ${datos.email} limit 1
+async function altaDeSetter(
+  tx: Ejecutor,
+  datos: DatosDeAlta,
+): Promise<{ id: string; reactivado: boolean }> {
+  const previas = await tx.execute(sql`
+    select u.id, u.role, u.status, s.id as setter_id
+      from users u
+      left join setters s on s.user_id = u.id
+     where lower(u.email) = ${datos.email}
+     limit 1
   `)
-  if (yaEsta.rows.length > 0) throw new Error('EMAIL_REPETIDO')
+  const previo = previas.rows[0] as
+    | { id: string; role: string; status: string; setter_id: string | null }
+    | undefined
+
+  if (previo) {
+    // Activo o pausado sigue siendo un choque de verdad: esa persona trabaja
+    // acá. Y una cuenta de admin no se convierte en setter por dar un alta —
+    // eso sería cambiarle el rol a quien reparte los leads sin decirlo.
+    if (previo.status !== 'baja' || previo.role !== 'setter') throw new Error('EMAIL_REPETIDO')
+    return { id: await reactivarEnElAlta(tx, datos, previo), reactivado: true }
+  }
 
   const usuarios = await tx.execute(sql`
     insert into users (email, name, password_hash, role, status,
@@ -172,7 +203,84 @@ async function altaDeSetter(tx: Ejecutor, datos: DatosDeAlta): Promise<string> {
             })}::jsonb)
   `)
 
-  return id
+  return { id, reactivado: false }
+}
+
+/**
+ * Devolverle la cuenta a alguien que estaba de baja.
+ *
+ * No se borra ni se rehace nada: es la misma fila de siempre, así que sus
+ * mensajes, sus reuniones y su comisión quedan donde estaban. Lo que cambia es
+ * lo que hace falta para que pueda volver a entrar —contraseña nueva, que la
+ * tiene que cambiar al primer ingreso, y las sesiones viejas invalidadas— más
+ * el nombre y la tanda de este alta, por si se corrigió algo.
+ */
+async function reactivarEnElAlta(
+  tx: Ejecutor,
+  datos: DatosDeAlta,
+  previo: { id: string; setter_id: string | null },
+): Promise<string> {
+  await tx.execute(sql`
+    update users
+       set name = ${datos.nombre},
+           password_hash = ${datos.passwordHash},
+           status = 'activo',
+           must_change_password = true,
+           failed_attempts = 0,
+           locked_until = null,
+           sessions_valid_from = now()
+     where id = ${previo.id}::uuid
+  `)
+
+  let setterId = previo.setter_id
+  if (setterId) {
+    await tx.execute(sql`
+      update setters set tanda_diaria = ${datos.tanda} where id = ${setterId}::uuid
+    `)
+  } else {
+    const cuantos = await tx.execute(sql`select count(*)::int as n from setters`)
+    const filas = await tx.execute(sql`
+      insert into setters (user_id, tanda_diaria, variante, hora_recordatorio)
+      values (${previo.id}::uuid, ${datos.tanda}, ${(cuantos.rows[0] as { n: number }).n},
+              ${SETTERS_CONFIG_DEFAULT.horaRecordatorioDefault}::time)
+      returning id
+    `)
+    setterId = (filas.rows[0] as { id: string }).id
+  }
+
+  // Las cuentas de Instagram que ya tenía siguen siendo suyas: se agregan solo
+  // las que falten. Sin el `where not exists`, volver a cargar la misma cuenta
+  // de siempre choca contra el índice único y tira abajo el alta entera.
+  const maximo = await tx.execute(sql`
+    select coalesce(max(orden), 0)::int as n from setter_accounts
+     where setter_id = ${setterId}::uuid
+  `)
+  let orden = (maximo.rows[0] as { n: number }).n
+
+  for (const cuenta of datos.cuentas) {
+    orden++
+    await tx.execute(sql`
+      insert into setter_accounts (setter_id, ig_username, cupo_diario, orden)
+      select ${setterId}::uuid, ${cuenta.usuario}, ${cuenta.cupo}, ${orden}
+       where not exists (
+         select 1 from setter_accounts
+          where setter_id = ${setterId}::uuid and lower(ig_username) = lower(${cuenta.usuario})
+       )
+    `)
+  }
+
+  await tx.execute(sql`
+    insert into events (type, actor_user_id, payload_jsonb)
+    values ('setter_reactivado', ${datos.creadoPor}::uuid,
+            ${JSON.stringify({
+              setterId,
+              nombre: datos.nombre,
+              email: datos.email,
+              desdeElAlta: true,
+            })}::jsonb)
+  `)
+
+  return setterId
 }
 
 /**
@@ -200,23 +308,27 @@ export async function crearSetter(datos: unknown): Promise<ResultadoAlta> {
     const passwordHash = await hashear(password)
     const url = await urlDeLaApp()
 
-    const setterId = await db.transaction((tx) =>
+    const alta = await db.transaction((tx) =>
       altaDeSetter(tx, { nombre, email, tanda, cuentas, passwordHash, creadoPor: sesion.userId }),
     )
 
     refrescarPanel()
     return {
       ok: true,
-      setterId,
+      setterId: alta.id,
       nombre,
       email,
       password,
       url,
       tarjeta: tarjetaDeAcceso({ nombre, email, password, url }),
+      reactivado: alta.reactivado,
     }
   } catch (err) {
     if (err instanceof Error && err.message === 'EMAIL_REPETIDO') {
-      return { ok: false, error: 'Ya hay una cuenta con ese email.' }
+      return {
+        ok: false,
+        error: 'Ese email ya lo usa alguien del equipo. Si es la misma persona, entrá a su ficha.',
+      }
     }
     if (
       err instanceof Error &&
@@ -308,7 +420,7 @@ export async function crearSettersEnLote(
       const passwordHash = await hashear(password)
 
       try {
-        const setterId = await db.transaction((tx) =>
+        const alta = await db.transaction((tx) =>
           altaDeSetter(tx, {
             nombre,
             email,
@@ -320,16 +432,17 @@ export async function crearSettersEnLote(
         )
         creados.push({
           ok: true,
-          setterId,
+          setterId: alta.id,
           nombre,
           email,
           password,
           url,
           tarjeta: tarjetaDeAcceso({ nombre, email, password, url }),
+          reactivado: alta.reactivado,
         })
       } catch (err) {
         if (err instanceof Error && err.message === 'EMAIL_REPETIDO') {
-          omitidos.push({ email, motivo: 'Ya tenía una cuenta en el sistema.' })
+          omitidos.push({ email, motivo: 'Ya tiene una cuenta activa en el sistema.' })
         } else if (/setter_accounts_ig_uq/.test((err as { message?: string }).message ?? '')) {
           // El alta entera se deshizo con la transacción: no quedó a medias.
           omitidos.push({ email, motivo: `La cuenta @${instagram} ya está cargada en otro setter.` })
