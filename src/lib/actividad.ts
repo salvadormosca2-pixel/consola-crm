@@ -62,6 +62,7 @@ export const EVENTO_META: Record<string, MetaDeEvento> = {
   setter_pausado: { label: 'Setter pausado', grupo: 'equipo', tono: 'activo' },
   setter_reactivado: { label: 'Setter reactivado', grupo: 'equipo', tono: 'positivo' },
   setter_baja: { label: 'Setter dado de baja', grupo: 'equipo', tono: 'negativo' },
+  setter_eliminado: { label: 'Setter eliminado', grupo: 'equipo', tono: 'negativo' },
   password_restablecida: { label: 'Contraseña restablecida', grupo: 'equipo', tono: 'activo' },
   password_cambiada: { label: 'Cambió su contraseña', grupo: 'equipo', tono: 'neutral' },
   sesiones_cerradas: { label: 'Sesiones cerradas', grupo: 'equipo', tono: 'activo' },

@@ -3,14 +3,14 @@ import Link from 'next/link'
 import type { Metadata } from 'next'
 
 import { EmptyState } from '@/components/ui/empty-state'
-import { Chip, Panel } from '@/components/ui/panel'
+import { Chip, Panel, PanelHeader } from '@/components/ui/panel'
 import { USER_STATUS_META } from '@/db/enums'
 import { haceCuanto } from '@/lib/tz'
 import { cn } from '@/lib/utils'
 import { clavePublica } from '@/server/push'
 import { requerirAdmin } from '@/server/session'
 import { leerConfigNotificaciones } from '@/server/setters/notificaciones'
-import { armarTablero, type FilaTablero } from '@/server/setters/panel'
+import { armarTablero, listarDeBaja, type FilaTablero } from '@/server/setters/panel'
 import { proponerReparto, repartoAutomaticoDelDia } from '@/server/setters/reparto'
 
 import { Accesos, type SetterParaAcceso } from './accesos'
@@ -35,10 +35,11 @@ export default async function PaginaEquipo() {
   // vez por día. Va antes del tablero para que lo que se ve ya la incluya.
   await repartoAutomaticoDelDia()
 
-  const [filas, plan, avisos] = await Promise.all([
+  const [filas, plan, avisos, bajas] = await Promise.all([
     armarTablero(),
     proponerReparto(),
     leerConfigNotificaciones(),
+    listarDeBaja(),
   ])
 
   const atrasados = filas.filter((f) => f.semaforo === 'rojo').length
@@ -129,6 +130,32 @@ export default async function PaginaEquipo() {
       <Accesos setters={paraAcceso} esAdminMadre={sesion.rol === 'admin_madre'} />
 
       {filas.length > 0 ? <Reparto plan={plan} /> : null}
+
+      {bajas.length > 0 ? (
+        <Panel>
+          <PanelHeader
+            titulo="Dados de baja"
+            descripcion="No entran ni reciben leads. Su historial y su comisión siguen contando; se entra a la ficha para reactivarlos o para borrar un alta equivocada."
+          />
+          <div className="divide-y divide-borde/60">
+            {bajas.map((b) => (
+              <Link
+                key={b.setterId}
+                href={`/equipo/${b.setterId}` as never}
+                className="flex flex-wrap items-center gap-x-2 gap-y-0.5 px-3 py-2 hover:bg-elevada/50"
+              >
+                <span className="text-[13px] text-texto">{b.nombre}</span>
+                <span className="text-[11.5px] text-texto-2">{b.email}</span>
+                {b.sinHistorial ? (
+                  <Chip tono="neutral" className="ml-auto">
+                    Nunca trabajó
+                  </Chip>
+                ) : null}
+              </Link>
+            ))}
+          </div>
+        </Panel>
+      ) : null}
 
       <AvisosQueQuiero inicial={avisos} pushDisponible={clavePublica() !== null} />
     </div>

@@ -8,6 +8,7 @@ import { SETTERS_CONFIG_DEFAULT } from '@/lib/setters-config'
 import type { Vista } from '@/lib/setters-vistas'
 import { opsDate, OPS_TZ } from '@/lib/tz'
 import { barrer } from '@/server/setters/asignacion'
+import { HISTORIAL_DEL_SETTER } from '@/server/setters/borrar'
 import { leerCuposDelEquipo, type CupoDeSetter } from '@/server/setters/cupo'
 
 /**
@@ -179,6 +180,47 @@ export async function armarTablero(): Promise<FilaTablero[]> {
       motivo,
     }
   })
+}
+
+export interface SetterDeBaja {
+  setterId: string
+  nombre: string
+  email: string
+  /** Nunca trabajó: se puede borrar del padrón en vez de quedar de baja para siempre. */
+  sinHistorial: boolean
+}
+
+/**
+ * Los que ya no trabajan más.
+ *
+ * El tablero los saca a propósito —son ruido en la pantalla del día— pero
+ * sacarlos de ahí los dejaba sin ninguna puerta: su ficha seguía existiendo y
+ * no se llegaba a ella desde ningún lado, así que no había forma de
+ * reactivarlos ni de borrar un alta equivocada a la que ya se le había dado de
+ * baja. Esta lista es esa puerta, aparte y abajo de todo, que es donde va lo
+ * que no se mira todos los días.
+ */
+export async function listarDeBaja(): Promise<SetterDeBaja[]> {
+  const filas = await db.execute(sql`
+    select s.id as setter_id, u.name as nombre, u.email,
+           ${HISTORIAL_DEL_SETTER} as historial
+      from setters s
+      join users u on u.id = s.user_id
+     where u.status = 'baja'
+     order by u.name asc
+  `)
+
+  return (filas.rows as Array<{
+    setter_id: string
+    nombre: string
+    email: string
+    historial: number
+  }>).map((f) => ({
+    setterId: f.setter_id,
+    nombre: f.nombre,
+    email: f.email,
+    sinHistorial: f.historial === 0,
+  }))
 }
 
 /* ── Vistas de leads ──────────────────────────────────────────────────────
@@ -374,6 +416,11 @@ export interface FichaDeSetter {
   seguimientosPendientes: number
   diasAtraso: number
   sinContactar: number
+  /**
+   * Nunca mandó un mensaje, nunca consiguió una reunión, nadie le contestó. Es
+   * lo único que habilita a borrarlo: sin historial no hay comisión que perder.
+   */
+  sinHistorial: boolean
 }
 
 const NUMEROS = (desde: string) => sql`
@@ -414,7 +461,8 @@ export async function leerFicha(setterId: string): Promise<FichaDeSetter | null>
                       where la.setter_id = s.id and ${SEGUIMIENTO_PENDIENTE}), 0) as dias_atraso,
            (select count(*)::int from lead_assignments la
              where la.setter_id = s.id
-               and la.estado in ('asignado', 'abierto', 'saltado')) as sin_contactar
+               and la.estado in ('asignado', 'abierto', 'saltado')) as sin_contactar,
+           ${HISTORIAL_DEL_SETTER} as historial
       from setters s
       join users u on u.id = s.user_id
      where s.id = ${setterId}::uuid
@@ -440,6 +488,7 @@ export async function leerFicha(setterId: string): Promise<FichaDeSetter | null>
         seguimientos_pendientes: number
         dias_atraso: number
         sin_contactar: number
+        historial: number
       }
     | undefined
 
@@ -557,6 +606,7 @@ export async function leerFicha(setterId: string): Promise<FichaDeSetter | null>
     seguimientosPendientes: b.seguimientos_pendientes,
     diasAtraso: b.dias_atraso,
     sinContactar: b.sin_contactar,
+    sinHistorial: b.historial === 0,
   }
 }
 

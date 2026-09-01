@@ -17,6 +17,7 @@ import { generarPasswordTemporal, tarjetaDeAcceso } from '@/lib/password'
 import { SETTERS_CONFIG_DEFAULT } from '@/lib/setters-config'
 import { ErrorDePermiso, exigirAdmin, exigirAdminMadre } from '@/server/session'
 import { devolverLead, devolverPendientes, reasignarLead } from '@/server/setters/asignacion'
+import { borrarSetter } from '@/server/setters/borrar'
 import { proponerReparto, repartirAhora } from '@/server/setters/reparto'
 
 /**
@@ -674,6 +675,29 @@ export async function cerrarSesiones(setterId: string): Promise<EstadoAccion> {
     return { ok: true, error: null }
   } catch (err) {
     return alFallar(err, 'No se pudieron cerrar las sesiones.')
+  }
+}
+
+/**
+ * Borrar un alta equivocada.
+ *
+ * Es la contracara de la baja, no un atajo para lo mismo: acá la fila
+ * desaparece. Por eso solo sale con el que nunca trabajó —la regla la aplica
+ * `borrarSetter`, que se niega en cuanto hay un mensaje, una reunión o una
+ * respuesta— y por eso el que ya trabajó recibe un error que dice qué hacer en
+ * vez de un "no se pudo".
+ */
+export async function eliminarSetter(setterId: string): Promise<EstadoAccion> {
+  try {
+    const sesion = await exigirAdminMadre()
+    const r = await borrarSetter(setterId, sesion.userId)
+    if (!r.ok) return { ok: false, error: r.error }
+
+    refrescarPanel(setterId)
+    revalidatePath('/equipo/instagram')
+    return { ok: true, error: null }
+  } catch (err) {
+    return alFallar(err, 'No se pudo eliminar.')
   }
 }
 

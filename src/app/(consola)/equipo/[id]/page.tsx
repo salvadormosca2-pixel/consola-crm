@@ -100,6 +100,7 @@ export default async function PaginaSetter({
           nombre={ficha.nombre}
           estado={ficha.estado}
           esAdminMadre={sesion.rol === 'admin_madre'}
+          sinHistorial={ficha.sinHistorial}
         />
       </div>
 

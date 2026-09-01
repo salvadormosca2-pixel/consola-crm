@@ -15,6 +15,7 @@ import {
 
 import { asignarLeads, barrer, contarPozo, devolverPendientes } from './asignacion'
 import { leerPuertaDeEntrada } from './avisos'
+import { borrarSetter } from './borrar'
 import { deshacerEnvio, registrarEnvio } from './envios'
 import { repartirAhora, repartoAutomaticoDelDia } from './reparto'
 
@@ -1146,5 +1147,65 @@ describe('el candado de "primero abrí el chat"', () => {
     await abrir(a)
     await marcar(a, setter.setterId, cuenta, 2)
     expect(await leerAbierto(a)).toBeNull()
+  })
+})
+
+/**
+ * Borrar y dar de baja no son lo mismo, y la diferencia la decide la base de
+ * datos, no el botón: en cuanto hay un mensaje mandado, borrar deja de estar
+ * disponible. Es lo único que separa "me equivoqué al dar de alta" de "perdí la
+ * comisión de un mes".
+ */
+describe('borrar un alta equivocada', () => {
+  it('borra al que nunca trabajó y le devuelve los leads al pozo', async () => {
+    const setter = await crearSetter(pool, { cupos: [30] })
+    await asignar(pool, await crearLeadScrapeado(pool, 1), setter.setterId)
+    expect(await contarPozo(db)).toBe(0)
+
+    const r = await borrarSetter(setter.setterId, null, db)
+    expect(r.ok).toBe(true)
+
+    const usuario = await pool.query('select 1 from users where id = $1', [setter.userId])
+    expect(usuario.rows).toHaveLength(0)
+
+    // La ficha y las cuentas de Instagram se van con él, y el lead que tenía
+    // tomado y no tocó vuelve a estar disponible para el próximo reparto.
+    const ficha = await pool.query('select 1 from setters where id = $1', [setter.setterId])
+    expect(ficha.rows).toHaveLength(0)
+    const cuentas = await pool.query('select 1 from setter_accounts where setter_id = $1', [
+      setter.setterId,
+    ])
+    expect(cuentas.rows).toHaveLength(0)
+    expect(await contarPozo(db)).toBe(1)
+
+    // Queda escrito quién lo borró: una cuenta no puede desaparecer sin rastro.
+    const evento = await pool.query(
+      `select payload_jsonb from events where type = 'setter_eliminado'`,
+    )
+    expect(evento.rows).toHaveLength(1)
+  })
+
+  it('no borra al que ya mandó un mensaje: ahí la respuesta es dar de baja', async () => {
+    const setter = await crearSetter(pool, { cupos: [30] })
+    const asignacion = await asignar(pool, await crearLeadScrapeado(pool, 1), setter.setterId)
+    await marcar(asignacion, setter.setterId, setter.cuentas[0]!)
+
+    const r = await borrarSetter(setter.setterId, null, db)
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error).toMatch(/baja/i)
+
+    const usuario = await pool.query('select 1 from users where id = $1', [setter.userId])
+    expect(usuario.rows).toHaveLength(1)
+  })
+
+  it('tampoco borra a un admin, aunque se pida por su ficha', async () => {
+    const setter = await crearSetter(pool, { cupos: [30] })
+    await pool.query(`update users set role = 'admin' where id = $1`, [setter.userId])
+
+    const r = await borrarSetter(setter.setterId, null, db)
+    expect(r.ok).toBe(false)
+
+    const usuario = await pool.query('select 1 from users where id = $1', [setter.userId])
+    expect(usuario.rows).toHaveLength(1)
   })
 })
