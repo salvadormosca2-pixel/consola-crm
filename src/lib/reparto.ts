@@ -32,6 +32,12 @@ export interface CapacidadDeSetter {
   cuentas: number
   /** Pausado o de baja: no recibe nada. */
   activo: boolean
+  /**
+   * Ya estrenó su acceso: entró al menos una vez y cambió la contraseña del
+   * alta. Hasta entonces no puede abrir la cola, así que un lead en sus manos
+   * es un lead congelado.
+   */
+  entro: boolean
 }
 
 export interface Tajada {
@@ -72,6 +78,26 @@ export function capacidadDe(s: CapacidadDeSetter): { capacidad: number; motivo: 
    */
   if (s.cuentas === 0) {
     return { capacidad: 0, motivo: 'Todavía no tiene ninguna cuenta de Instagram cargada.' }
+  }
+
+  /*
+   * El que todavía no estrenó su acceso no recibe nada.
+   *
+   * No puede abrir la app —la contraseña que tiene es la temporal del alta y la
+   * pantalla no lo deja pasar sin cambiarla—, así que cada lead que se le
+   * entrega sale del pozo, queda tomado en una cola que nadie puede abrir y
+   * vuelve solo recién a las 48 horas. Con un equipo recién dado de alta eso es
+   * el pozo entero fuera de circulación por dos días.
+   *
+   * Recibe su primera tanda en el momento en que cambia la contraseña, no al
+   * día siguiente: esperar al reparto de mañana sería dejarlo sentado el
+   * primer día, que es justo cuando hay que aprovechar las ganas.
+   */
+  if (!s.entro) {
+    return {
+      capacidad: 0,
+      motivo: 'Todavía no estrenó su acceso: recibe su primera tanda cuando entre y cambie la contraseña.',
+    }
   }
 
   const porCupo = s.cupoRestante - s.seguimientos

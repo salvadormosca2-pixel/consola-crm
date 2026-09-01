@@ -70,6 +70,15 @@ export interface SetterDeTest {
   tanda?: number
   /** Una entrada por cuenta de Instagram: su cupo diario. */
   cupos?: number[]
+  /**
+   * Recién dado de alta: nunca entró y todavía tiene la contraseña temporal.
+   *
+   * Por defecto el setter de test ya estrenó su acceso, porque es lo que es un
+   * setter en casi todos los tests: alguien que trabaja. El reparto saltea a
+   * los que no entraron, así que sin esto la mitad de los tests probaría el
+   * caso equivocado sin decirlo.
+   */
+  nuncaEntro?: boolean
 }
 
 export interface SetterCreado {
@@ -83,9 +92,15 @@ export async function crearSetter(pool: Pool, opts: SetterDeTest = {}): Promise<
   const nombre = opts.nombre ?? `Setter ${contador}`
 
   const u = await pool.query<{ id: string }>(
-    `insert into users (email, name, password_hash, role, status)
-     values ($1, $2, 'x', 'setter', 'activo') returning id`,
-    [`setter${contador}@test.local`, nombre],
+    `insert into users (email, name, password_hash, role, status,
+                        must_change_password, last_login_at)
+     values ($1, $2, 'x', 'setter', 'activo', $3, $4) returning id`,
+    [
+      `setter${contador}@test.local`,
+      nombre,
+      opts.nuncaEntro ?? false,
+      opts.nuncaEntro ? null : new Date(),
+    ],
   )
   const userId = u.rows[0]!.id
 

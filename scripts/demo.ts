@@ -748,8 +748,12 @@ async function cargarSetters(): Promise<void> {
 
   for (const [i, s] of SETTERS_DEMO.entries()) {
     const u = await pool.query<{ id: string }>(
-      `insert into users (email, name, password_hash, role, status, must_change_password)
-       values ($1, $2, $3, 'setter', 'activo', false)
+      // `last_login_at` puesto: son setters que ya trabajan, y el reparto
+      // saltea al que todavía no estrenó su acceso. Sin esto la demo arranca
+      // con el pozo lleno y todas las colas vacías.
+      `insert into users (email, name, password_hash, role, status,
+                          must_change_password, last_login_at)
+       values ($1, $2, $3, 'setter', 'activo', false, now())
        returning id`,
       [s.email, s.nombre, passwordHash],
     )

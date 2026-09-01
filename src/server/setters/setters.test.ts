@@ -17,7 +17,7 @@ import { asignarLeads, barrer, contarPozo, devolverPendientes } from './asignaci
 import { leerPuertaDeEntrada } from './avisos'
 import { borrarSetter, vaciarElEquipo } from './borrar'
 import { deshacerEnvio, registrarEnvio } from './envios'
-import { repartirAhora, repartoAutomaticoDelDia } from './reparto'
+import { repartirAEsteSetter, repartirAhora, repartoAutomaticoDelDia } from './reparto'
 
 /**
  * Las reglas que no se negocian, probadas contra Postgres de verdad.
@@ -1282,5 +1282,75 @@ describe('vaciar el equipo', () => {
 
     const admins = await pool.query(`select 1 from users where role = 'admin'`)
     expect(admins.rows).toHaveLength(1)
+  })
+})
+
+/**
+ * El que todavía no estrenó su acceso no recibe leads, y los que ya tenía
+ * vuelven al pozo.
+ *
+ * Es la diferencia entre repartir y desperdiciar: un lead en la cola de alguien
+ * que no puede abrir la app está fuera de circulación 48 horas sin que nadie lo
+ * toque, y con un equipo recién dado de alta eso es el pozo entero.
+ */
+describe('el reparto espera a que estrenen el acceso', () => {
+  it('no le entrega leads al que nunca entró', async () => {
+    await crearSetter(pool, { cupos: [30], nuncaEntro: true })
+    for (let i = 0; i < 10; i++) await crearLeadScrapeado(pool, i)
+
+    const r = await repartirAhora(null, db)
+    expect(r.entregados).toBe(0)
+    expect(await contarPozo(db)).toBe(10)
+  })
+
+  it('tampoco al que entró pero sigue con la contraseña del alta', async () => {
+    const setter = await crearSetter(pool, { cupos: [30] })
+    await pool.query(
+      `update users set must_change_password = true where id = $1`,
+      [setter.userId],
+    )
+    for (let i = 0; i < 10; i++) await crearLeadScrapeado(pool, i)
+
+    expect((await repartirAhora(null, db)).entregados).toBe(0)
+  })
+
+  it('los que ya tenía tomados vuelven al pozo al repartir', async () => {
+    const dormido = await crearSetter(pool, { cupos: [30], nuncaEntro: true })
+    const activo = await crearSetter(pool, { cupos: [30] })
+
+    // Se los habían entregado antes de esta regla: están congelados.
+    await asignar(pool, await crearLeadScrapeado(pool, 1), dormido.setterId)
+    await asignar(pool, await crearLeadScrapeado(pool, 2), dormido.setterId)
+    expect(await contarPozo(db)).toBe(0)
+
+    const r = await repartirAhora(null, db)
+    expect(r.recuperados).toBe(2)
+
+    // Y en la misma pasada se los lleva el que sí puede trabajarlos.
+    expect(r.entregados).toBe(2)
+    const suyos = await pool.query(
+      `select count(*)::int as n from lead_assignments
+        where setter_id = $1 and estado = 'asignado'`,
+      [activo.setterId],
+    )
+    expect(suyos.rows[0]).toMatchObject({ n: 2 })
+  })
+
+  it('al estrenar el acceso recibe su tanda en el acto, sin esperar a mañana', async () => {
+    const setter = await crearSetter(pool, { tanda: 5, cupos: [30], nuncaEntro: true })
+    for (let i = 0; i < 10; i++) await crearLeadScrapeado(pool, i)
+
+    // El reparto del día ya salió y a él no le tocó nada.
+    expect((await repartirAhora(null, db)).entregados).toBe(0)
+
+    // Entra y cambia la contraseña: es lo que hace la pantalla de cambio.
+    await pool.query(
+      `update users set must_change_password = false, last_login_at = now() where id = $1`,
+      [setter.userId],
+    )
+
+    const n = await repartirAEsteSetter(setter.setterId, null, db)
+    expect(n).toBe(5)
+    expect(await contarPozo(db)).toBe(5)
   })
 })

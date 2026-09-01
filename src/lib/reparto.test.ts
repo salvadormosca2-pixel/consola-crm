@@ -11,11 +11,21 @@ function setter(over: Partial<CapacidadDeSetter> & { setterId: string }): Capaci
     seguimientos: 0,
     cuentas: 1,
     activo: true,
+    entro: true,
     ...over,
   }
 }
 
 describe('capacidad de un setter', () => {
+  it('el que todavía no estrenó su acceso no recibe nada, y el motivo lo dice', () => {
+    // Es el caso del equipo recién dado de alta: existen, tienen cuenta
+    // cargada, y no pueden abrir la app hasta cambiar la contraseña temporal.
+    // Entregarles leads es sacarlos del pozo para congelarlos 48 horas.
+    const r = capacidadDe(setter({ setterId: 'a', entro: false }))
+    expect(r.capacidad).toBe(0)
+    expect(r.motivo).toContain('acceso')
+  })
+
   it('con las cuentas frescas puede con su tanda entera', () => {
     expect(capacidadDe(setter({ setterId: 'a' })).capacidad).toBe(60)
   })

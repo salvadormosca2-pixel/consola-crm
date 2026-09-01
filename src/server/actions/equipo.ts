@@ -1012,6 +1012,8 @@ export async function cambiarRol(userId: string, rol: string): Promise<EstadoAcc
 export interface ResultadoDeReparto extends EstadoAccion {
   entregados?: number
   porSetter?: Array<{ nombre: string; cantidad: number }>
+  /** Los que estaban tomados por alguien que todavía no estrenó su acceso. */
+  recuperados?: number
   pozoRestante?: number
 }
 
@@ -1034,6 +1036,20 @@ export async function repartirLeads(): Promise<ResultadoDeReparto> {
     if (r.entregados === 0) {
       const plan = await proponerReparto()
       const sinCuentas = plan.tajadas.filter((t) => t.motivo.includes('cuenta de Instagram')).length
+      const sinEstrenar = plan.tajadas.filter((t) => t.motivo.includes('estrenó su acceso')).length
+
+      // El que no entró todavía es el motivo más frecuente el primer día del
+      // equipo, y el único que no se arregla desde la consola: hay que
+      // mandarles el acceso y esperar que lo usen.
+      if (sinEstrenar > 0 && sinEstrenar === plan.tajadas.length) {
+        return {
+          ok: false,
+          error:
+            plan.pozo === 0
+              ? 'No quedan leads en el pozo, y además nadie estrenó su acceso todavía.'
+              : `Los ${sinEstrenar} del equipo todavía no estrenaron su acceso: cada uno recibe su tanda apenas entre y cambie la contraseña. Mandales el acceso desde Equipo → Accesos.`,
+        }
+      }
 
       return {
         ok: false,

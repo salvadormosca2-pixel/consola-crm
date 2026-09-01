@@ -14,6 +14,7 @@ import { events, users } from '@/db/schema'
 import { DOMINIO_DE_PRUEBA, esCuentaDePrueba, modoPrueba } from '@/lib/modo-prueba'
 import { SETTERS_CONFIG_DEFAULT } from '@/lib/setters-config'
 import { exigirSesion } from '@/server/session'
+import { repartirAEsteSetter } from '@/server/setters/reparto'
 
 const schema = z.object({
   email: z.string().min(1, 'Escribí tu email.').email('Ese email no tiene formato válido.'),
@@ -220,6 +221,27 @@ export async function cambiarPassword(
       .where(eq(users.id, sesion.userId))
     await tx.insert(events).values({ type: 'password_cambiada', actorUserId: sesion.userId })
   })
+
+  /*
+   * Recién ahora puede trabajar, así que recién ahora recibe leads.
+   *
+   * El reparto saltea a propósito al que todavía no estrenó su acceso: un lead
+   * en la cola de alguien que no puede abrir la app está fuera de circulación
+   * 48 horas sin que nadie lo toque. La contracara de esa regla es esta línea —
+   * si no, el que entra a las nueve, con el reparto del día ya salido, abriría
+   * la app con la cola vacía y tendría que esperar a mañana para empezar.
+   *
+   * Va después de la transacción y no adentro: el cambio de contraseña no puede
+   * fallar porque el pozo esté vacío. Si el reparto se cae, entra igual y la
+   * tanda le llega con el reparto de mañana.
+   */
+  if (sesion.rol === 'setter' && sesion.setterId) {
+    try {
+      await repartirAEsteSetter(sesion.setterId, sesion.userId)
+    } catch (err) {
+      console.error('No se pudo repartirle la primera tanda al setter.', err)
+    }
+  }
 
   redirect(rutaInicial(sesion.rol))
 }

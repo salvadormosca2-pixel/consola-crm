@@ -3,7 +3,12 @@ import 'server-only'
 import { sql } from 'drizzle-orm'
 
 import { db, type Db, type Ejecutor } from '@/db'
-import { planificarReparto, type CapacidadDeSetter, type PlanDeReparto } from '@/lib/reparto'
+import {
+  capacidadDe,
+  planificarReparto,
+  type CapacidadDeSetter,
+  type PlanDeReparto,
+} from '@/lib/reparto'
 import { opsDate, opsTime } from '@/lib/tz'
 import { asignarLeads, barrer, contarPozo } from '@/server/setters/asignacion'
 import { leerConfigSetters } from '@/server/setters/config'
@@ -38,6 +43,12 @@ async function leerCapacidades(cliente: Ejecutor = db): Promise<CapacidadDeSette
   const filas = await cliente.execute(sql`
     select s.id as setter_id, u.name as nombre, s.tanda_diaria,
            u.status = 'activo' as activo,
+
+           -- Estrenó su acceso: entró alguna vez y ya cambió la contraseña del
+           -- alta. Las dos condiciones, no una: con la temporal la pantalla no
+           -- lo deja pasar de la de cambio, así que "entró" a secas no alcanza
+           -- para decir que puede trabajar.
+           (u.last_login_at is not null and not u.must_change_password) as entro,
 
            -- Cupo que le queda hoy sumando sus cuentas activas. La autoridad es
            -- el recuento de envíos, no el contador guardado en la cuenta.
@@ -84,6 +95,7 @@ async function leerCapacidades(cliente: Ejecutor = db): Promise<CapacidadDeSette
     nombre: string
     tanda_diaria: number
     activo: boolean
+    entro: boolean
     cupo_restante: number
     cuentas: number
     pendientes: number
@@ -93,6 +105,7 @@ async function leerCapacidades(cliente: Ejecutor = db): Promise<CapacidadDeSette
     nombre: f.nombre,
     tandaDiaria: f.tanda_diaria,
     activo: f.activo,
+    entro: f.entro,
     cupoRestante: f.cupo_restante,
     cuentas: f.cuentas,
     pendientes: f.pendientes,
@@ -117,7 +130,45 @@ export async function proponerReparto(cliente: Db = db): Promise<RepartoPropuest
 export interface ResultadoReparto {
   entregados: number
   porSetter: Array<{ nombre: string; cantidad: number }>
+  /** Leads que volvieron al pozo por estar en manos de alguien que no entró. */
+  recuperados: number
   pozoRestante: number
+}
+
+/**
+ * Devuelve al pozo los leads de quien todavía no estrenó su acceso.
+ *
+ * Es la contracara de no repartirle: los que ya se le habían entregado antes de
+ * esta regla —o los de alguien a quien se le restableció la contraseña y todavía
+ * no volvió a entrar— están tomados en una cola que nadie puede abrir. Ahí no se
+ * trabajan y encima no los ve nadie más: vuelven al pozo, y cuando la persona
+ * estrene su acceso los recibe de nuevo en el acto.
+ */
+async function devolverLoDeLosQueNoEntraron(
+  cliente: Ejecutor,
+  actorUserId: string | null,
+): Promise<number> {
+  const filas = await cliente.execute(sql`
+    update lead_assignments la
+       set estado = 'devuelto', devuelto_at = now(),
+           devuelto_motivo = 'Todavía no estrenó su acceso.'
+      from setters s
+      join users u on u.id = s.user_id
+     where la.setter_id = s.id
+       and la.estado in ('asignado', 'abierto', 'saltado')
+       and (u.last_login_at is null or u.must_change_password)
+    returning la.id
+  `)
+
+  const recuperados = filas.rows.length
+  if (recuperados > 0) {
+    await cliente.execute(sql`
+      insert into events (type, actor_user_id, payload_jsonb)
+      values ('lead_devuelto', ${actorUserId}::uuid,
+              ${JSON.stringify({ cantidad: recuperados, motivo: 'Todavía no estrenó su acceso.' })}::jsonb)
+    `)
+  }
+  return recuperados
 }
 
 /**
@@ -141,6 +192,11 @@ export async function repartirAhora(
      * dos consultas lanzadas a la vez sobre la misma conexión se pisan los
      * resultados. Acá eso significaba repartir números inventados.
      */
+    // Antes de repartir, se recupera lo que está tomado por quien no puede
+    // trabajarlo. Van juntas a propósito: si no, el pozo se mide sin esos leads
+    // y el reparto entrega de menos.
+    const recuperados = await devolverLoDeLosQueNoEntraron(tx, actorUserId)
+
     const capacidades = await leerCapacidades(tx)
     const pozo = await contarPozo(tx)
     const plan = planificarReparto(capacidades, pozo)
@@ -157,7 +213,42 @@ export async function repartirAhora(
       }
     }
 
-    return { entregados, porSetter, pozoRestante: Math.max(pozo - entregados, 0) }
+    return { entregados, porSetter, recuperados, pozoRestante: Math.max(pozo - entregados, 0) }
+  })
+}
+
+/**
+ * La primera tanda del que acaba de estrenar su acceso.
+ *
+ * Se llama en el momento en que cambia la contraseña del alta, que es cuando
+ * pasa a poder trabajar. Sin esto, el que entra a las nueve de la mañana con el
+ * reparto del día ya salido abre la app y encuentra la cola vacía: tendría que
+ * esperar hasta mañana para empezar, o depender de que un admin apriete
+ * "Repartir ahora". Con esto, entra y su cola está puesta.
+ *
+ * No es un reparto aparte ni saltea ningún límite: le entrega lo que su propia
+ * capacidad del día permite —su tanda menos lo que ya tenga, y nunca más que el
+ * cupo de sus cuentas—, exactamente lo mismo que le habría tocado.
+ */
+export async function repartirAEsteSetter(
+  setterId: string,
+  actorUserId: string | null,
+  cliente: Db = db,
+): Promise<number> {
+  await barrer(cliente)
+
+  return cliente.transaction(async (tx) => {
+    const capacidades = await leerCapacidades(tx)
+    const suyo = capacidades.find((c) => c.setterId === setterId)
+    if (!suyo) return 0
+
+    const { capacidad } = capacidadDe(suyo)
+    if (capacidad <= 0) return 0
+
+    const pozo = await contarPozo(tx)
+    if (pozo <= 0) return 0
+
+    return asignarLeads(setterId, Math.min(capacidad, pozo), actorUserId, tx)
   })
 }
 
