@@ -2,7 +2,7 @@ import 'server-only'
 
 import { sql } from 'drizzle-orm'
 
-import { db, type Db } from '@/db'
+import { db, type Db, type Ejecutor } from '@/db'
 
 /**
  * Borrar a un setter, de verdad.
@@ -111,4 +111,111 @@ export async function borrarSetter(
   })
 
   return { ok: true, nombre: f.name }
+}
+
+/* ── Vaciar el equipo entero ──────────────────────────────────────────── */
+
+export interface ResumenDelVaciado {
+  /** Cuentas de setter que se borran. Los admins no se tocan nunca. */
+  setters: number
+  /** Leads que vuelven al pozo como si nadie los hubiera tocado. */
+  alPozo: number
+  /**
+   * Leads que contestaron o que tienen una reunión. No vuelven al pozo —no son
+   * leads fríos— pero pierden la asignación, que se va con el setter. Su ficha,
+   * sus mensajes y sus reuniones quedan.
+   */
+  conRespuesta: number
+  /** Envíos registrados que se borran con ellos. */
+  envios: number
+}
+
+const CONTACTO_QUE_VUELVE = sql`
+  c.origen = 'scrapeado'
+  and c.discarded_at is null
+  and exists (select 1 from lead_assignments la where la.contact_id = c.id)
+  and not exists (
+    select 1 from lead_assignments la
+     where la.contact_id = c.id and la.respondido_at is not null
+  )
+  and not exists (select 1 from meetings m where m.contact_id = c.id)
+`
+
+/** Lo que va a pasar, antes de que pase. Es lo que se muestra en pantalla. */
+export async function contarParaVaciar(cliente: Ejecutor = db): Promise<ResumenDelVaciado> {
+  const filas = await cliente.execute(sql`
+    select
+      (select count(*)::int from users where role = 'setter') as setters,
+      (select count(*)::int from contacts c where ${CONTACTO_QUE_VUELVE}) as al_pozo,
+      (select count(*)::int from contacts c
+        where exists (select 1 from lead_assignments la where la.contact_id = c.id)
+          and not (${CONTACTO_QUE_VUELVE})) as con_respuesta,
+      (select count(*)::int from setter_sends where undone_at is null) as envios
+  `)
+  const f = filas.rows[0] as
+    | { setters: number; al_pozo: number; con_respuesta: number; envios: number }
+    | undefined
+
+  return {
+    setters: f?.setters ?? 0,
+    alPozo: f?.al_pozo ?? 0,
+    conRespuesta: f?.con_respuesta ?? 0,
+    envios: f?.envios ?? 0,
+  }
+}
+
+/**
+ * Borrar el equipo entero y devolver los leads al pozo.
+ *
+ * Es para arrancar de cero: se probó con un equipo de prueba, o se subió mal la
+ * lista, y lo que viene ahora es gente nueva. Borra **todas** las cuentas de
+ * setter —los admins no, nunca— con sus fichas, sus cuentas de Instagram, sus
+ * asignaciones y sus envíos.
+ *
+ * Los leads no se borran: se limpian. El que nadie contestó y no tiene reunión
+ * vuelve a estar como recién importado —sin dueño, sin contador de envíos, en
+ * estado nuevo— y por lo tanto vuelve al pozo para el próximo reparto. El que
+ * contestó o consiguió una reunión NO vuelve: no es un lead frío, y ponerlo de
+ * nuevo en la ruleta sería mandarle un primer mensaje a alguien con quien ya
+ * hay una conversación abierta. Ese conserva su ficha, sus mensajes y sus
+ * reuniones; lo único que pierde es la asignación, que se va con el setter.
+ */
+export async function vaciarElEquipo(
+  actorUserId: string | null,
+  cliente: Db = db,
+): Promise<ResumenDelVaciado> {
+  const resumen = await contarParaVaciar(cliente)
+
+  await cliente.transaction(async (tx) => {
+    // Primero los contactos: se eligen por sus asignaciones, y en dos líneas
+    // más las asignaciones no van a existir.
+    await tx.execute(sql`
+      update contacts c
+         set stage = 'nuevo'::contact_stage,
+             setter_id = null,
+             sent_count = 0,
+             sequence_step = 0,
+             last_outbound_at = null,
+             next_followup_at = null,
+             updated_at = now()
+       where ${CONTACTO_QUE_VUELVE}
+    `)
+
+    // `setter_sends` referencia a `setter_accounts` con `on delete restrict`, a
+    // propósito: sin esto, borrar una cuenta de Instagram se llevaría puesto el
+    // recuento del cupo. Acá se va todo junto, así que se borra a mano y en
+    // orden en vez de esperar una cascada que la base va a frenar.
+    await tx.execute(sql`delete from setter_sends`)
+
+    // El resto —fichas, cuentas de Instagram, asignaciones, recordatorios,
+    // avisos recibidos, suscripciones push— cuelga del usuario y cae solo.
+    await tx.execute(sql`delete from users where role = 'setter'`)
+
+    await tx.execute(sql`
+      insert into events (type, actor_user_id, payload_jsonb)
+      values ('equipo_vaciado', ${actorUserId}::uuid, ${JSON.stringify(resumen)}::jsonb)
+    `)
+  })
+
+  return resumen
 }

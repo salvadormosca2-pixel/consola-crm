@@ -7,6 +7,7 @@ import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 
 import { db, type Ejecutor } from '@/db'
+import { PALABRA_PARA_VACIAR } from '@/lib/equipo'
 import { MAXIMO_POR_LOTE, normalizarInstagram } from '@/lib/equipo-lote'
 import type { EstadoAccion } from '@/lib/form-state'
 import {
@@ -17,7 +18,7 @@ import { generarPasswordTemporal, tarjetaDeAcceso } from '@/lib/password'
 import { SETTERS_CONFIG_DEFAULT } from '@/lib/setters-config'
 import { ErrorDePermiso, exigirAdmin, exigirAdminMadre } from '@/server/session'
 import { devolverLead, devolverPendientes, reasignarLead } from '@/server/setters/asignacion'
-import { borrarSetter } from '@/server/setters/borrar'
+import { borrarSetter, vaciarElEquipo, type ResumenDelVaciado } from '@/server/setters/borrar'
 import { proponerReparto, repartirAhora } from '@/server/setters/reparto'
 
 /**
@@ -811,6 +812,36 @@ export async function eliminarSetter(setterId: string): Promise<EstadoAccion> {
     return { ok: true, error: null }
   } catch (err) {
     return alFallar(err, 'No se pudo eliminar.')
+  }
+}
+
+export type ResultadoVaciado =
+  | ({ ok: true } & ResumenDelVaciado)
+  | { ok: false; error: string }
+
+/**
+ * Borrar el equipo entero para arrancar de cero.
+ *
+ * Pide escribir la palabra, y la vuelve a exigir acá adentro: una acción que
+ * borra a todo el equipo no puede depender de que el botón de la pantalla esté
+ * bien puesto. Los leads que nadie contestó vuelven al pozo; el detalle de qué
+ * se lleva y qué no está en `vaciarElEquipo`.
+ */
+export async function vaciarEquipo(confirmacion: string): Promise<ResultadoVaciado> {
+  try {
+    const sesion = await exigirAdminMadre()
+    if (confirmacion.trim().toUpperCase() !== PALABRA_PARA_VACIAR) {
+      return { ok: false, error: `Escribí ${PALABRA_PARA_VACIAR} para confirmar.` }
+    }
+
+    const resumen = await vaciarElEquipo(sesion.userId)
+    refrescarPanel()
+    revalidatePath('/equipo/instagram')
+    revalidatePath('/respondieron')
+    return { ok: true, ...resumen }
+  } catch (err) {
+    const r = alFallar(err, 'No se pudo vaciar el equipo.')
+    return { ok: false, error: r.error ?? 'No se pudo vaciar el equipo.' }
   }
 }
 

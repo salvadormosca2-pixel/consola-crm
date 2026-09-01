@@ -10,12 +10,14 @@ import { cn } from '@/lib/utils'
 import { clavePublica } from '@/server/push'
 import { requerirAdmin } from '@/server/session'
 import { leerConfigNotificaciones } from '@/server/setters/notificaciones'
+import { contarParaVaciar } from '@/server/setters/borrar'
 import { armarTablero, listarDeBaja, type FilaTablero } from '@/server/setters/panel'
 import { proponerReparto, repartoAutomaticoDelDia } from '@/server/setters/reparto'
 
 import { Accesos, type SetterParaAcceso } from './accesos'
 import { AvisosQueQuiero } from './avisos-que-quiero'
 import { Reparto } from './reparto'
+import { Vaciar } from './vaciar'
 
 export const metadata: Metadata = { title: 'Equipo · 101leads' }
 export const dynamic = 'force-dynamic'
@@ -35,11 +37,12 @@ export default async function PaginaEquipo() {
   // vez por día. Va antes del tablero para que lo que se ve ya la incluya.
   await repartoAutomaticoDelDia()
 
-  const [filas, plan, avisos, bajas] = await Promise.all([
+  const [filas, plan, avisos, bajas, paraVaciar] = await Promise.all([
     armarTablero(),
     proponerReparto(),
     leerConfigNotificaciones(),
     listarDeBaja(),
+    contarParaVaciar(),
   ])
 
   const atrasados = filas.filter((f) => f.semaforo === 'rojo').length
@@ -158,6 +161,8 @@ export default async function PaginaEquipo() {
       ) : null}
 
       <AvisosQueQuiero inicial={avisos} pushDisponible={clavePublica() !== null} />
+
+      {sesion.rol === 'admin_madre' ? <Vaciar resumen={paraVaciar} /> : null}
     </div>
   )
 }

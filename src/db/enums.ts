@@ -492,6 +492,7 @@ export const EVENT_TYPES_SETTERS = [
   'setter_reactivado',
   'setter_baja',
   'setter_eliminado',
+  'equipo_vaciado',
   'password_restablecida',
   'password_cambiada',
   'sesiones_cerradas',

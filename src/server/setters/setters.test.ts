@@ -15,7 +15,7 @@ import {
 
 import { asignarLeads, barrer, contarPozo, devolverPendientes } from './asignacion'
 import { leerPuertaDeEntrada } from './avisos'
-import { borrarSetter } from './borrar'
+import { borrarSetter, vaciarElEquipo } from './borrar'
 import { deshacerEnvio, registrarEnvio } from './envios'
 import { repartirAhora, repartoAutomaticoDelDia } from './reparto'
 
@@ -1207,5 +1207,80 @@ describe('borrar un alta equivocada', () => {
 
     const usuario = await pool.query('select 1 from users where id = $1', [setter.userId])
     expect(usuario.rows).toHaveLength(1)
+  })
+})
+
+/**
+ * Vaciar el equipo es la operación más destructiva que tiene la consola, y lo
+ * que hay que probar no es que borre —eso es fácil— sino los dos límites: que
+ * no se lleve puestas las cuentas de admin, y que el lead que ya contestó no
+ * vuelva a la ruleta como si fuera frío.
+ */
+describe('vaciar el equipo', () => {
+  it('borra todas las cuentas de setter y devuelve los leads al pozo', async () => {
+    const a = await crearSetter(pool, { cupos: [30] })
+    const b = await crearSetter(pool, { cupos: [30] })
+
+    const contactado = await asignar(pool, await crearLeadScrapeado(pool, 1), a.setterId)
+    await marcar(contactado, a.setterId, a.cuentas[0]!)
+    await asignar(pool, await crearLeadScrapeado(pool, 2), b.setterId)
+    expect(await contarPozo(db)).toBe(0)
+
+    const r = await vaciarElEquipo(null, db)
+    expect(r.setters).toBe(2)
+    expect(r.alPozo).toBe(2)
+
+    for (const tabla of ['setters', 'setter_accounts', 'setter_sends', 'lead_assignments']) {
+      const filas = await pool.query(`select 1 from ${tabla}`)
+      expect(filas.rows, tabla).toHaveLength(0)
+    }
+    const cuentas = await pool.query(`select 1 from users where role = 'setter'`)
+    expect(cuentas.rows).toHaveLength(0)
+
+    // Los dos vuelven, incluido el que ya tenía un mensaje mandado: nadie
+    // contestó, así que siguen siendo leads fríos sin dueño.
+    expect(await contarPozo(db)).toBe(2)
+    const limpio = await pool.query(
+      `select stage, setter_id, sent_count, sequence_step from contacts`,
+    )
+    for (const fila of limpio.rows) {
+      expect(fila).toMatchObject({ stage: 'nuevo', setter_id: null, sent_count: 0 })
+    }
+  })
+
+  it('el que ya contestó no vuelve al pozo ni pierde su ficha', async () => {
+    const setter = await crearSetter(pool, { cupos: [30] })
+    const contactId = await crearLeadScrapeado(pool, 1)
+    const asignacion = await asignar(pool, contactId, setter.setterId)
+    await marcar(asignacion, setter.setterId, setter.cuentas[0]!)
+
+    // Lo mismo que hace la app cuando el lead contesta.
+    await pool.query(
+      `update lead_assignments set estado = 'respondido', respondido_at = now() where id = $1`,
+      [asignacion],
+    )
+    await pool.query(`update contacts set stage = 'respondido' where id = $1`, [contactId])
+
+    const r = await vaciarElEquipo(null, db)
+    expect(r.conRespuesta).toBe(1)
+    expect(r.alPozo).toBe(0)
+
+    // Sigue existiendo y sigue fuera del pozo: ya hay una conversación abierta.
+    expect(await contarPozo(db)).toBe(0)
+    const quedo = await pool.query('select stage from contacts where id = $1', [contactId])
+    expect(quedo.rows[0]).toMatchObject({ stage: 'respondido' })
+  })
+
+  it('no toca las cuentas de admin', async () => {
+    await pool.query(
+      `insert into users (email, name, password_hash, role)
+       values ('jefe@test.local', 'Jefe', 'x', 'admin')`,
+    )
+    await crearSetter(pool, { cupos: [30] })
+
+    await vaciarElEquipo(null, db)
+
+    const admins = await pool.query(`select 1 from users where role = 'admin'`)
+    expect(admins.rows).toHaveLength(1)
   })
 })
