@@ -507,6 +507,7 @@ export const EVENT_TYPES_SETTERS = [
   'lead_salteado',
   'lead_cuenta_inexistente',
   'lead_descartado',
+  'lead_reprogramado',
   'lead_vencido',
   'lead_devuelto',
   'lead_reasignado',

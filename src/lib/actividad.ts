@@ -57,6 +57,7 @@ export const EVENTO_META: Record<string, MetaDeEvento> = {
   lead_tomado_por_admin: { label: 'Lo tomó el admin', grupo: 'leads', tono: 'activo' },
   lead_cuenta_inexistente: { label: 'Cuenta inexistente', grupo: 'leads', tono: 'negativo' },
   lead_descartado: { label: 'Descartado por el setter', grupo: 'leads', tono: 'negativo' },
+  lead_reprogramado: { label: 'Leads reprogramados', grupo: 'leads', tono: 'activo' },
 
   /* Equipo */
   setter_creado: { label: 'Setter dado de alta', grupo: 'equipo', tono: 'positivo' },

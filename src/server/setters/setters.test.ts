@@ -17,6 +17,7 @@ import { asignarLeads, barrer, contarPozo, devolverPendientes } from './asignaci
 import { leerPuertaDeEntrada } from './avisos'
 import { agregarLeadPropio } from './leads'
 import { conteosDeRespuestas } from './respuestas'
+import { repararLeadsParados, revisarLeads } from './revision'
 import { borrarSetter, vaciarElEquipo } from './borrar'
 import { deshacerEnvio, registrarEnvio } from './envios'
 import {
@@ -1615,5 +1616,89 @@ describe('la bandeja de respuestas dice dónde está cada uno', () => {
 
     await pool.query(`update lead_assignments set clasificado_at = now() where id = $1`, [a])
     expect((await conteosDeRespuestas(undefined, db)).sin_clasificar).toBe(0)
+  })
+})
+
+/**
+ * El lead que no espera nada no aparece en ninguna pantalla.
+ *
+ * Ni en la cola del setter, ni en el pozo, ni en la de clasificación: está y no
+ * existe. Es el peor estado posible porque no se nota — justamente porque
+ * desaparece— y por eso hay una revisión que los busca.
+ */
+describe('leads parados', () => {
+  it('encuentra al que recibió la oferta y quedó sin próximo paso', async () => {
+    const setter = await crearSetter(pool, { cupos: [30] })
+    const a = await asignar(pool, await crearLeadScrapeado(pool, 1), setter.setterId)
+    await marcar(a, setter.setterId, setter.cuentas[0]!, 1)
+
+    // Se cortó la cadena: mandó la oferta y no quedó programado nada.
+    await pool.query(
+      `update lead_assignments
+          set estado = 'segundo_enviado', segundo_mensaje_at = now() - interval '20 days',
+              proximo_paso = null, proximo_seguimiento_at = null, segundo_programado_at = null
+        where id = $1`,
+      [a],
+    )
+
+    expect((await revisarLeads(db)).parados).toBe(1)
+
+    expect(await repararLeadsParados(null, db)).toBe(1)
+    expect((await revisarLeads(db)).parados).toBe(0)
+
+    // Volvió al primer escalón de silencio, y contado desde su último mensaje:
+    // uno de hace veinte días tiene que salir ahora, no dentro de dos.
+    const fila = await pool.query<{ proximo_paso: number; vencido: boolean }>(
+      `select proximo_paso, proximo_seguimiento_at <= now() as vencido
+         from lead_assignments where id = $1`,
+      [a],
+    )
+    expect(fila.rows[0]?.proximo_paso).toBe(PISTA_META.silencio.pasos[0]!.paso)
+    expect(fila.rows[0]?.vencido).toBe(true)
+  })
+
+  it('no toca al que terminó su escalera: ese está bien donde está', async () => {
+    const setter = await crearSetter(pool, { cupos: [30] })
+    const a = await asignar(pool, await crearLeadScrapeado(pool, 1), setter.setterId)
+    await marcar(a, setter.setterId, setter.cuentas[0]!, 1)
+
+    // Recorrió la pista entera: el último escalón no encadena nada más.
+    const ultimo = PISTA_META.silencio.pasos[PISTA_META.silencio.pasos.length - 1]!.paso
+    await pool.query(
+      `update lead_assignments
+          set estado = 'segundo_enviado', segundo_mensaje_at = now(),
+              proximo_paso = null, proximo_seguimiento_at = null
+        where id = $1`,
+      [a],
+    )
+    await pool.query(`update lead_assignments set proximo_seguimiento_at = now() where id = $1`, [a])
+    await pool.query(
+      `update lead_assignments set proximo_paso = $2 where id = $1`,
+      [a, ultimo],
+    )
+    await marcar(a, setter.setterId, setter.cuentas[0]!, ultimo)
+    await pool.query(
+      `update lead_assignments set proximo_paso = null, proximo_seguimiento_at = null where id = $1`,
+      [a],
+    )
+
+    expect((await revisarLeads(db)).parados).toBe(0)
+  })
+
+  it('no toca al que está esperando que lo clasifiquen', async () => {
+    const setter = await crearSetter(pool, { cupos: [30] })
+    const a = await asignar(pool, await crearLeadScrapeado(pool, 1), setter.setterId)
+    await marcar(a, setter.setterId, setter.cuentas[0]!, 1)
+    await pool.query(
+      `update lead_assignments
+          set estado = 'segundo_enviado', respondio_a = 'segundo', respondido_at = now(),
+              proximo_paso = null, proximo_seguimiento_at = null
+        where id = $1`,
+      [a],
+    )
+
+    const r = await revisarLeads(db)
+    expect(r.parados).toBe(0)
+    expect(r.sinClasificar).toBe(1)
   })
 })

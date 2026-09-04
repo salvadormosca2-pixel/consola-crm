@@ -20,6 +20,7 @@ import { ErrorDePermiso, exigirAdmin, exigirAdminMadre } from '@/server/session'
 import { devolverLead, devolverPendientes, reasignarLead } from '@/server/setters/asignacion'
 import { borrarSetter, vaciarElEquipo, type ResumenDelVaciado } from '@/server/setters/borrar'
 import { proponerReparto, repartirAhora } from '@/server/setters/reparto'
+import { repararLeadsParados } from '@/server/setters/revision'
 
 /**
  * Alta, baja y mantenimiento del equipo.
@@ -1091,6 +1092,29 @@ export async function repartirLeads(): Promise<ResultadoDeReparto> {
     return { ok: true, error: null, ...r }
   } catch (err) {
     return alFallar(err, 'No se pudieron repartir los leads.')
+  }
+}
+
+export interface ResultadoDeReparacion extends EstadoAccion {
+  reparados?: number
+}
+
+/**
+ * Devuelve a la escalera los leads que quedaron sin próximo paso.
+ *
+ * Un lead que no espera nada no aparece en ninguna pantalla: ni en la cola del
+ * setter, ni en el pozo, ni en la de clasificación. Está y no existe. Esto los
+ * busca y los pone donde les corresponde, contando desde su último mensaje.
+ */
+export async function repararLeads(): Promise<ResultadoDeReparacion> {
+  try {
+    const sesion = await exigirAdmin()
+    const reparados = await repararLeadsParados(sesion.userId)
+    refrescarPanel()
+    revalidatePath('/clasificar')
+    return { ok: true, error: null, reparados }
+  } catch (err) {
+    return alFallar(err, 'No se pudieron reparar los leads.')
   }
 }
 
