@@ -1662,25 +1662,20 @@ describe('leads parados', () => {
     const a = await asignar(pool, await crearLeadScrapeado(pool, 1), setter.setterId)
     await marcar(a, setter.setterId, setter.cuentas[0]!, 1)
 
-    // Recorrió la pista entera: el último escalón no encadena nada más.
+    // Recorrió la pista entera: el último escalón no encadena nada más, así que
+    // al mandarlo queda sin próximo paso **por haber terminado**.
+    //
+    // Los dos campos se escriben juntos siempre: la base exige que estén los
+    // dos o ninguno, para que no exista un paso sin fecha ni una fecha sin paso.
     const ultimo = PISTA_META.silencio.pasos[PISTA_META.silencio.pasos.length - 1]!.paso
     await pool.query(
       `update lead_assignments
           set estado = 'segundo_enviado', segundo_mensaje_at = now(),
-              proximo_paso = null, proximo_seguimiento_at = null
+              proximo_paso = $2, proximo_seguimiento_at = now()
         where id = $1`,
-      [a],
-    )
-    await pool.query(`update lead_assignments set proximo_seguimiento_at = now() where id = $1`, [a])
-    await pool.query(
-      `update lead_assignments set proximo_paso = $2 where id = $1`,
       [a, ultimo],
     )
     await marcar(a, setter.setterId, setter.cuentas[0]!, ultimo)
-    await pool.query(
-      `update lead_assignments set proximo_paso = null, proximo_seguimiento_at = null where id = $1`,
-      [a],
-    )
 
     expect((await revisarLeads(db)).parados).toBe(0)
   })
