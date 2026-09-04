@@ -47,7 +47,10 @@ export default async function PaginaRespuestasDelSetter({
     abierta ? respuestasDetalladas(abierta, id) : Promise.resolve([]),
   ])
 
-  const respuestas = suyo.conteos.sin_oferta + suyo.conteos.oferta
+  // Todos los que contestaron algo: esperando la oferta, con la oferta ya
+  // mandada, o habiéndola contestado.
+  const respuestas =
+    suyo.conteos.sin_oferta + suyo.conteos.oferta_enviada + suyo.conteos.oferta
   const tasa = suyo.contactados > 0 ? Math.round((respuestas / suyo.contactados) * 100) : 0
 
   return (

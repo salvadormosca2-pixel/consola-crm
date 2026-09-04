@@ -45,7 +45,7 @@ export function Clasificaciones({
         enSetter={enSetter}
       />
       <Grupo
-        titulo="Respondieron la oferta"
+        titulo="La oferta"
         vistas={RESPUESTAS.filter((v) => RESPUESTA_VISTA_META[v].grupo === 'oferta')}
         conteos={conteos}
         abierta={abierta}

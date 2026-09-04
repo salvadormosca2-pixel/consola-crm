@@ -16,6 +16,7 @@ import {
 import { asignarLeads, barrer, contarPozo, devolverPendientes } from './asignacion'
 import { leerPuertaDeEntrada } from './avisos'
 import { agregarLeadPropio } from './leads'
+import { conteosDeRespuestas } from './respuestas'
 import { borrarSetter, vaciarElEquipo } from './borrar'
 import { deshacerEnvio, registrarEnvio } from './envios'
 import {
@@ -1542,5 +1543,77 @@ describe('saltear repone la cola', () => {
       [salteado],
     )
     expect(await reponerTrasSaltear(setter.setterId, null, db)).toBe(0)
+  })
+})
+
+/**
+ * Los números de la bandeja de respuestas tienen que decir dónde está cada
+ * conversación de verdad.
+ *
+ * Los tres primeros contadores se pisaban entre sí: "les falta la oferta" no
+ * miraba si la oferta ya había salido, así que el lead se quedaba ahí para
+ * siempre; y "sin clasificar" miraba el estado del contacto, que es verdad
+ * desde que el lead abre la boca y sigue siéndolo después de clasificarlo. El
+ * admin veía trabajo pendiente que ya estaba hecho.
+ */
+describe('la bandeja de respuestas dice dónde está cada uno', () => {
+  async function contestoLaEntrada(setterId: string, cuenta: string): Promise<string> {
+    const a = await asignar(pool, await crearLeadScrapeado(pool, 1), setterId)
+    await marcar(a, setterId, cuenta, 1)
+
+    // Lo que hace la app cuando el setter marca "respondió".
+    await pool.query(
+      `update lead_assignments
+          set estado = 'respondido', respondido_at = now(), respondio_a = 'primero',
+              proximo_paso = 2, proximo_seguimiento_at = now()
+        where id = $1`,
+      [a],
+    )
+    await pool.query(
+      `update contacts set stage = 'respondido', received_count = 1
+        where id = (select contact_id from lead_assignments where id = $1)`,
+      [a],
+    )
+    return a
+  }
+
+  it('antes de la oferta está en "les falta la oferta" y en ninguna otra', async () => {
+    const setter = await crearSetter(pool, { cupos: [30] })
+    await contestoLaEntrada(setter.setterId, setter.cuentas[0]!)
+
+    const c = await conteosDeRespuestas(undefined, db)
+    expect(c.sin_oferta).toBe(1)
+    expect(c.oferta_enviada).toBe(0)
+    // Todavía no hay nada que clasificar: eso pasa cuando contesta la oferta.
+    expect(c.sin_clasificar).toBe(0)
+  })
+
+  it('mandada la oferta sale de "les falta" y entra en "oferta enviada"', async () => {
+    const setter = await crearSetter(pool, { cupos: [30] })
+    const a = await contestoLaEntrada(setter.setterId, setter.cuentas[0]!)
+
+    await marcar(a, setter.setterId, setter.cuentas[0]!, 2)
+
+    const c = await conteosDeRespuestas(undefined, db)
+    expect(c.sin_oferta).toBe(0)
+    expect(c.oferta_enviada).toBe(1)
+    expect(c.sin_clasificar).toBe(0)
+  })
+
+  it('contestada la oferta queda sin clasificar, y clasificarlo lo saca', async () => {
+    const setter = await crearSetter(pool, { cupos: [30] })
+    const a = await contestoLaEntrada(setter.setterId, setter.cuentas[0]!)
+    await marcar(a, setter.setterId, setter.cuentas[0]!, 2)
+
+    await pool.query(
+      `update lead_assignments
+          set respondio_a = 'segundo', respondido_at = now(), interes = 'interesa'
+        where id = $1`,
+      [a],
+    )
+    expect((await conteosDeRespuestas(undefined, db)).sin_clasificar).toBe(1)
+
+    await pool.query(`update lead_assignments set clasificado_at = now() where id = $1`, [a])
+    expect((await conteosDeRespuestas(undefined, db)).sin_clasificar).toBe(0)
   })
 })

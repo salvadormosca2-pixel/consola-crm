@@ -29,8 +29,11 @@ export function ListaDeSetters({
 
       <div className="divide-y divide-borde">
         {setters.map((s) => {
+          // Todos los que abrieron la boca alguna vez: los que esperan la
+          // oferta, los que ya la recibieron y los que la contestaron. Es el
+          // numerador de la tasa, así que tiene que estar entero.
           const respuestas =
-            s.conteos.sin_oferta + s.conteos.oferta
+            s.conteos.sin_oferta + s.conteos.oferta_enviada + s.conteos.oferta
           const tasa = s.contactados > 0 ? Math.round((respuestas / s.contactados) * 100) : 0
           return (
             <Link

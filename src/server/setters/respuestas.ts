@@ -2,7 +2,7 @@ import 'server-only'
 
 import { sql } from 'drizzle-orm'
 
-import { db } from '@/db'
+import { db, type Ejecutor } from '@/db'
 import type { ContactStage, LeadInteres, SetterSendTipo } from '@/db/enums'
 import { RESPUESTAS, type Respuesta } from '@/lib/respuestas-vistas'
 
@@ -32,16 +32,35 @@ const CONTESTO = sql`c.discarded_at is null
  */
 const LATERAL_RESPUESTA = sql`
   left join lateral (
-    select la.respondio_a, la.interes, la.nota, la.setter_id, la.respondido_at
+    select la.respondio_a, la.interes, la.nota, la.setter_id, la.respondido_at,
+           la.segundo_mensaje_at, la.clasificado_at
       from lead_assignments la
      where la.contact_id = c.id and la.respondido_at is not null
      order by la.respondido_at desc
      limit 1
   ) r on true`
 
+/*
+ * Qué significa cada pestaña. Los tres primeros son estados de una misma
+ * conversación y antes se pisaban entre sí:
+ *
+ *   · **Sin clasificar** decía `stage = 'respondido'`, que es verdad desde que
+ *     el lead abre la boca y sigue siendo verdad después de clasificarlo —
+ *     clasificar no toca el `stage`—. Así que ahí caía el que contestó la
+ *     entrada y todavía no puede clasificarse, y no salía nunca el que ya se
+ *     clasificó: el número no bajaba con el trabajo hecho. Ahora dice lo mismo
+ *     que la cola de clasificación: contestó la **oferta** y nadie decidió
+ *     todavía.
+ *   · **Les falta la oferta** no miraba si la oferta ya había salido. El setter
+ *     la mandaba y el lead se quedaba ahí igual, así que la pantalla pedía para
+ *     siempre algo que ya estaba hecho.
+ *   · **Oferta enviada** no existía, y es justo el estado donde vive la mitad
+ *     de la operación: ya la recibió y todavía no contestó.
+ */
 const FILTROS: Record<Respuesta, ReturnType<typeof sql>> = {
-  sin_clasificar: sql`c.stage = 'respondido'`,
-  sin_oferta: sql`r.respondio_a = 'primero'`,
+  sin_clasificar: sql`r.respondio_a = 'segundo' and r.clasificado_at is null`,
+  sin_oferta: sql`r.respondio_a = 'primero' and r.segundo_mensaje_at is null`,
+  oferta_enviada: sql`r.respondio_a = 'primero' and r.segundo_mensaje_at is not null`,
   oferta: sql`r.respondio_a = 'segundo'`,
   interesados: sql`r.interes = 'interesa'`,
   no_interesa: sql`r.interes = 'no_interesa'`,
@@ -53,11 +72,16 @@ function vacios(): ConteosDeRespuestas {
   return Object.fromEntries(RESPUESTAS.map((v) => [v, 0])) as ConteosDeRespuestas
 }
 
-export async function conteosDeRespuestas(setterId?: string): Promise<ConteosDeRespuestas> {
-  const filas = await db.execute(sql`
+export async function conteosDeRespuestas(
+  setterId?: string,
+  /** Se inyecta en los tests, que corren contra otra base. */
+  cliente: Ejecutor = db,
+): Promise<ConteosDeRespuestas> {
+  const filas = await cliente.execute(sql`
     select
       count(*) filter (where ${FILTROS.sin_clasificar})::int as sin_clasificar,
       count(*) filter (where ${FILTROS.sin_oferta})::int as sin_oferta,
+      count(*) filter (where ${FILTROS.oferta_enviada})::int as oferta_enviada,
       count(*) filter (where ${FILTROS.oferta})::int as oferta,
       count(*) filter (where ${FILTROS.interesados})::int as interesados,
       count(*) filter (where ${FILTROS.no_interesa})::int as no_interesa
@@ -99,6 +123,7 @@ export async function generalDeRespuestas(): Promise<GeneralDeRespuestas> {
     select s.id as setter_id, u.name as nombre,
            count(*) filter (where ${FILTROS.sin_clasificar})::int as sin_clasificar,
            count(*) filter (where ${FILTROS.sin_oferta})::int as sin_oferta,
+           count(*) filter (where ${FILTROS.oferta_enviada})::int as oferta_enviada,
            count(*) filter (where ${FILTROS.oferta})::int as oferta,
            count(*) filter (where ${FILTROS.interesados})::int as interesados,
            count(*) filter (where ${FILTROS.no_interesa})::int as no_interesa,
@@ -137,6 +162,7 @@ export async function generalDeRespuestas(): Promise<GeneralDeRespuestas> {
       conteos: {
         sin_clasificar: f.sin_clasificar,
         sin_oferta: f.sin_oferta,
+        oferta_enviada: f.oferta_enviada,
         oferta: f.oferta,
         interesados: f.interesados,
         no_interesa: f.no_interesa,

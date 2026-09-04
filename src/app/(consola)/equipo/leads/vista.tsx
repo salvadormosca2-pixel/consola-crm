@@ -332,7 +332,7 @@ export function VistaDeLeads({
                     Nota: <span className="text-texto">{f.nota}</span>
                   </span>
                 ) : null}
-                {vista === 'vencidos' && f.devueltoMotivo ? (
+                {(vista === 'vencidos' || vista === 'inexistentes') && f.devueltoMotivo ? (
                   <span className="w-full text-[11.5px] text-texto-2">{f.devueltoMotivo}</span>
                 ) : null}
               </div>

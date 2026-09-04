@@ -94,8 +94,37 @@ export async function asignarLeads(
   const vence = calcularVencimiento(cfg)
 
   const filas = await cliente.execute(sql`
-    with elegidos as (
-      select c.id
+    with
+    /*
+     * Los negocios que este setter ya tuvo alguna vez, **por cuenta de
+     * Instagram y no por fila**.
+     *
+     * Mirar el id del contacto no alcanzaba: el mismo negocio puede estar dos
+     * veces en la base con filas distintas —la clave de deduplicación es el
+     * teléfono cuando la lista lo trae, así que dos importaciones del mismo
+     * local entran como dos contactos con el mismo @usuario—. Al repartir de
+     * nuevo le caía "otra vez el mismo", y si alcanzó a escribirle, era el
+     * mismo mensaje al mismo local por segunda vez.
+     */
+    suyos as (
+      select distinct lower(cs.ig_username) as usuario
+        from lead_assignments la
+        join contacts cs on cs.id = la.contact_id
+       where la.setter_id = ${setterId}::uuid
+         and cs.ig_username is not null
+    ),
+    elegidos as (
+      select c.id,
+             /*
+              * Ya pasó por las manos de alguien: venció, lo devolvieron o lo
+              * recuperaron. Van al final del sorteo. No son basura —muchos
+              * vuelven por vencimiento y nunca recibieron un mensaje— pero
+              * entre uno fresco y uno que ya circuló, el fresco primero: el
+              * reciclado es justo el que ya alguien miró y dejó pasar.
+              */
+             exists (
+               select 1 from lead_assignments previa where previa.contact_id = c.id
+             ) as reciclado
         from contacts c
        where c.origen = 'scrapeado'
          and c.discarded_at is null
@@ -106,24 +135,10 @@ export async function asignarLeads(
             where la.contact_id = c.id
               and la.estado not in ('vencido', 'devuelto')
          )
-         /*
-          * Y nunca uno que este setter ya tuvo.
-          *
-          * Un lead vuelve al pozo por muchos caminos —venció, se recuperó
-          * después de dos mensajes sin respuesta, se devolvió a mano— y al
-          * repartir de nuevo le podía tocar a la misma persona. Desde su
-          * celular eso se ve exactamente igual que "no me dieron nada": la
-          * cola se llena con los negocios que ya tenía. Y si alcanzó a
-          * escribirle, sería mandarle la entrada dos veces al mismo local.
-          */
-         and not exists (
-           select 1 from lead_assignments suya
-            where suya.contact_id = c.id
-              and suya.setter_id = ${setterId}::uuid
-         )
-       -- Al azar, no por orden de lista: es lo que hace comparables las tasas
-       -- de respuesta entre setters.
-       order by random()
+         and lower(c.ig_username) not in (select usuario from suyos)
+       -- Los frescos primero y, dentro de cada grupo, al azar: el sorteo es lo
+       -- que hace comparables las tasas de respuesta entre setters.
+       order by reciclado asc, random()
        limit ${cantidad}
        for update of c skip locked
     )

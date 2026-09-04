@@ -15,6 +15,7 @@
 export const RESPUESTAS = [
   'sin_clasificar',
   'sin_oferta',
+  'oferta_enviada',
   'oferta',
   'interesados',
   'no_interesa',
@@ -37,7 +38,8 @@ export const RESPUESTA_VISTA_META: Record<Respuesta, MetaDeRespuesta> = {
   sin_clasificar: {
     label: 'Sin clasificar',
     enSetter: 'sin clasificar',
-    detalle: 'Contestaron y todavía no los clasificaste. Es lo que hay que sacar hoy.',
+    detalle:
+      'Contestaron la oferta y todavía no decidiste por dónde siguen. Es lo mismo que espera en la cola de clasificación, y es lo que hay que sacar hoy.',
     grupo: 'atender',
     tono: 'malo',
     vacio: 'No queda nada sin clasificar.',
@@ -50,6 +52,15 @@ export const RESPUESTA_VISTA_META: Record<Respuesta, MetaDeRespuesta> = {
     grupo: 'atender',
     tono: 'malo',
     vacio: 'Nadie está esperando la oferta.',
+  },
+  oferta_enviada: {
+    label: 'Oferta enviada',
+    enSetter: 'está esperando respuesta de',
+    detalle:
+      'Ya recibieron la oferta y todavía no contestaron. Si pasan los días, el seguimiento lo maneja la pista de silencio: acá no hay nada que hacer más que esperar.',
+    grupo: 'oferta',
+    tono: 'neutro',
+    vacio: 'Nadie está esperando respuesta a la oferta.',
   },
   oferta: {
     label: 'Respondieron la oferta',

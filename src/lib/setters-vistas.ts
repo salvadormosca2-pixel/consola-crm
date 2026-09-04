@@ -118,7 +118,8 @@ export const VISTA_META: Record<Vista, { label: string; explicacion: string }> =
     explicacion: 'Leads que volvieron al pozo y por qué setter pasaron.',
   },
   inexistentes: {
-    label: 'Cuentas inexistentes',
-    explicacion: 'Perfiles que no existen. Sirve para limpiar la lista scrapeada.',
+    label: 'Sacados de circulación',
+    explicacion:
+      'Los que el setter sacó de la lista: el perfil no existe, o existe y no sirve como lead. El motivo va escrito en cada uno, y es lo que dice qué tan buena vino la lista scrapeada.',
   },
 }

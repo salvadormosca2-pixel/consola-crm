@@ -1,6 +1,7 @@
 'use client'
 
 import {
+  Ban,
   Check,
   CloudOff,
   ExternalLink,
@@ -27,6 +28,7 @@ import { cn } from '@/lib/utils'
 import {
   abrirChat,
   confirmarCambioDeCuenta,
+  descartarLead,
   deshacerMarca,
   marcarCuentaInexistente,
   marcarEnviado,
@@ -240,6 +242,17 @@ export function Cola({
     [avanzar, router],
   )
 
+  const descartar = React.useCallback(
+    (item: ItemDeCola) => {
+      avanzar(item.assignmentId)
+      iniciar(async () => {
+        const r = await descartarLead(item.assignmentId)
+        if (!r.ok) toast.error(r.error ?? 'No se pudo descartar.')
+      })
+    },
+    [avanzar],
+  )
+
   const noExiste = React.useCallback(
     (item: ItemDeCola) => {
       avanzar(item.assignmentId)
@@ -396,6 +409,7 @@ export function Cola({
           onEnviado={() => marcar(actual)}
           onSaltear={() => saltear(actual)}
           onNoExiste={() => noExiste(actual)}
+          onDescartar={() => descartar(actual)}
           cuentaActiva={cola.cupo.activa?.igUsername ?? null}
         />
       ) : (
@@ -517,6 +531,7 @@ function TarjetaDeLead({
   onEnviado,
   onSaltear,
   onNoExiste,
+  onDescartar,
   cuentaActiva,
 }: {
   item: ItemDeCola
@@ -527,6 +542,7 @@ function TarjetaDeLead({
   onEnviado: () => void
   onSaltear: () => void
   onNoExiste: () => void
+  onDescartar: () => void
   /** Con cuál está trabajando: sirve para avisar solo cuando el lead pide otra. */
   cuentaActiva: string | null
 }) {
@@ -687,15 +703,34 @@ function TarjetaDeLead({
           </p>
         ) : null}
 
-        <Button
-          variant="destructiva"
-          className="h-11 w-full"
-          onClick={onNoExiste}
-          disabled={pendiente}
-        >
-          <UserX aria-hidden />
-          No existe la cuenta
-        </Button>
+        {/*
+          Las dos formas de sacarlo de la lista, y son distintas: "no existe" es
+          un hecho sobre el perfil, "no sirve" es un juicio sobre el negocio.
+          Sin la segunda, el lead malo no se va nunca: se saltea, vuelve mañana,
+          vence, y de ahí se lo lleva otro que lo saltea igual.
+        */}
+        <div className="flex gap-2">
+          <Button
+            variant="destructiva"
+            className="h-11 flex-1 text-[12.5px]"
+            onClick={onNoExiste}
+            disabled={pendiente}
+            title="El perfil de Instagram no existe o está caído."
+          >
+            <UserX aria-hidden />
+            No existe
+          </Button>
+          <Button
+            variant="destructiva"
+            className="h-11 flex-1 text-[12.5px]"
+            onClick={onDescartar}
+            disabled={pendiente}
+            title="Existe, pero no es alguien a quien tenga sentido escribirle."
+          >
+            <Ban aria-hidden />
+            No sirve
+          </Button>
+        </div>
       </div>
     </Panel>
   )

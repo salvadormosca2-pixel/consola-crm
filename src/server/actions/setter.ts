@@ -323,6 +323,59 @@ export async function marcarCuentaInexistente(assignmentId: string): Promise<Est
   }
 }
 
+/**
+ * "Este no sirve": lo saca de circulación.
+ *
+ * Es distinto de saltear y de "no existe la cuenta". Saltear es "ahora no" —el
+ * lead vuelve al final de la cola y sigue vivo—; "no existe" es un hecho sobre
+ * el perfil. Esto es un juicio sobre el negocio: existe, pero no es alguien a
+ * quien tenga sentido escribirle. Un local de otro rubro, una cuenta personal,
+ * un competidor, algo de otro país.
+ *
+ * Hacía falta porque sin esto el lead malo **no se va nunca**: el setter lo
+ * saltea, vuelve mañana, lo saltea otra vez, a las 48 horas vence y vuelve al
+ * pozo, y de ahí se lo lleva otro que también lo saltea. El equipo entero
+ * gasta tiempo en el mismo negocio que ya se descartó tres veces, y el sistema
+ * no aprende nada.
+ *
+ * Queda en la vista de descartados del admin, con el motivo escrito: es
+ * información sobre la lista scrapeada, no un descarte silencioso.
+ */
+export async function descartarLead(assignmentId: string): Promise<EstadoAccion> {
+  try {
+    const sesion = await exigirSetter()
+
+    const filas = await db.execute(sql`
+      update lead_assignments
+         set estado = 'cuenta_inexistente', devuelto_at = now(),
+             devuelto_motivo = 'El setter lo descartó: no sirve como lead.'
+       where id = ${assignmentId}::uuid and setter_id = ${sesion.setterId}::uuid
+         and estado in ('asignado', 'abierto', 'saltado')
+      returning contact_id
+    `)
+
+    const contactId = (filas.rows[0] as { contact_id: string } | undefined)?.contact_id
+    if (!contactId) return { ok: false, error: 'Ese lead ya no está en tu cola.' }
+
+    // Fuera del pozo: si volviera, se lo llevaría otro y lo descartaría igual.
+    await db.execute(sql`
+      update contacts
+         set stage = 'descartado', discarded_at = now(), updated_at = now()
+       where id = ${contactId}::uuid
+    `)
+
+    await db.execute(sql`
+      insert into events (type, contact_id, actor_user_id, payload_jsonb)
+      values ('lead_descartado', ${contactId}::uuid, ${sesion.userId}::uuid, '{}'::jsonb)
+    `)
+
+    refrescar()
+    return { ok: true, error: null }
+  } catch (err) {
+    return alFallar(err, 'No se pudo descartar el lead.')
+  }
+}
+
 /** Deshace la última marca. El cupo se libera solo. */
 export async function deshacerMarca(sendId: string): Promise<EstadoAccion> {
   try {
