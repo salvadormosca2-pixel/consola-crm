@@ -16,6 +16,38 @@ function setter(over: Partial<CapacidadDeSetter> & { setterId: string }): Capaci
   }
 }
 
+describe('el motivo que ve el setter en su celular', () => {
+  /*
+   * Cada rama de capacidad cero tiene que decirle **a él** qué pasa. Un setter
+   * abriendo la app con la cola vacía no puede distinguir "el pozo está vacío"
+   * de "te apagaron la cuenta" de "ya llegaste a tu tanda": son tres problemas
+   * que resuelven tres personas distintas, y sin texto los tres son un cero.
+   */
+  const causas: ReadonlyArray<[string, Partial<CapacidadDeSetter>]> = [
+    ['pausado', { activo: false }],
+    ['sin cuenta', { cuentas: 0, cupoRestante: 0 }],
+    ['sin estrenar', { entro: false }],
+    ['al tope', { cupoRestante: 0 }],
+    ['tanda llena', { pendientes: 60 }],
+  ]
+
+  for (const [caso, over] of causas) {
+    it(`${caso}: capacidad cero y un motivo escrito para él`, () => {
+      const r = capacidadDe(setter({ ...over, setterId: 'a' }))
+      expect(r.capacidad).toBe(0)
+      expect(r.paraElSetter.length).toBeGreaterThan(0)
+      // En segunda persona: es lo que lo distingue del motivo del panel.
+      expect(r.paraElSetter).not.toBe(r.motivo)
+    })
+  }
+
+  it('con capacidad de sobra también dice cuánto puede, por si hace falta', () => {
+    const r = capacidadDe(setter({ setterId: 'a' }))
+    expect(r.capacidad).toBe(60)
+    expect(r.paraElSetter).toContain('60')
+  })
+})
+
 describe('capacidad de un setter', () => {
   it('el que todavía no estrenó su acceso no recibe nada, y el motivo lo dice', () => {
     // Es el caso del equipo recién dado de alta: existen, tienen cuenta

@@ -72,8 +72,28 @@ export interface PlanDeReparto {
  * su tanda diaria menos lo que ya tiene sin contactar. Los seguimientos no
  * entran en la cuenta: salen en chats que ya están abiertos.
  */
-export function capacidadDe(s: CapacidadDeSetter): { capacidad: number; motivo: string } {
-  if (!s.activo) return { capacidad: 0, motivo: 'Está pausado: no recibe leads nuevos.' }
+/**
+ * Cuántos leads puede recibir, y por qué ese número.
+ *
+ * Devuelve el motivo **dos veces escrito**: `motivo` es el del panel, en
+ * tercera persona, y `paraElSetter` el que se le muestra a él en el celular.
+ * No es adorno: cuando su cola aparece vacía, "0 leads asignados" a secas no le
+ * dice si tiene que esperar, avisarle a alguien, o si es su propio límite. La
+ * regla vive en un solo lugar —acá— y las dos redacciones salen de la misma
+ * rama, así no pueden contradecirse.
+ */
+export function capacidadDe(s: CapacidadDeSetter): {
+  capacidad: number
+  motivo: string
+  paraElSetter: string
+} {
+  if (!s.activo) {
+    return {
+      capacidad: 0,
+      motivo: 'Está pausado: no recibe leads nuevos.',
+      paraElSetter: 'Tu usuario está pausado. Avisale al administrador para que te reactive.',
+    }
+  }
 
   /*
    * Sin cuenta de Instagram no se le entrega nada, y no es un tecnicismo:
@@ -82,7 +102,12 @@ export function capacidadDe(s: CapacidadDeSetter): { capacidad: number; motivo: 
    * después de dar de alta al equipo, así que el motivo dice qué hacer.
    */
   if (s.cuentas === 0) {
-    return { capacidad: 0, motivo: 'Todavía no tiene ninguna cuenta de Instagram cargada.' }
+    return {
+      capacidad: 0,
+      motivo: 'Todavía no tiene ninguna cuenta de Instagram cargada.',
+      paraElSetter:
+        'No tenés ninguna cuenta de Instagram prendida. Avisale al administrador: sin cuenta no se te puede entregar nada.',
+    }
   }
 
   /*
@@ -102,6 +127,8 @@ export function capacidadDe(s: CapacidadDeSetter): { capacidad: number; motivo: 
     return {
       capacidad: 0,
       motivo: 'Todavía no estrenó su acceso: recibe su primera tanda cuando entre y cambie la contraseña.',
+      paraElSetter:
+        'Te falta cambiar la contraseña del alta. Apenas la cambies te entra tu primera tanda.',
     }
   }
 
@@ -115,7 +142,14 @@ export function capacidadDe(s: CapacidadDeSetter): { capacidad: number; motivo: 
    */
   const porCupo = s.cupoRestante
   if (porCupo <= 0) {
-    return { capacidad: 0, motivo: 'Sus cuentas llegaron al límite de hoy.' }
+    return {
+      capacidad: 0,
+      motivo: 'Sus cuentas llegaron al límite de hoy.',
+      paraElSetter:
+        s.cuentas > 1
+          ? 'Tus cuentas llegaron al límite de hoy. Seguí mañana.'
+          : 'Tu cuenta llegó al límite de hoy. Seguí mañana.',
+    }
   }
 
   const porTanda = s.tandaDiaria - s.pendientes
@@ -123,12 +157,17 @@ export function capacidadDe(s: CapacidadDeSetter): { capacidad: number; motivo: 
     return {
       capacidad: 0,
       motivo: `Ya tiene ${s.pendientes} leads sin contactar: llegó a su tanda del día.`,
+      paraElSetter: `Ya tenés ${s.pendientes} leads sin contactar: es tu tanda del día entera.`,
     }
   }
 
   const capacidad = Math.min(porCupo, porTanda)
   const limita = porCupo < porTanda ? 'el cupo de sus cuentas' : 'su tanda diaria'
-  return { capacidad, motivo: `Puede con ${capacidad} más; lo limita ${limita}.` }
+  return {
+    capacidad,
+    motivo: `Puede con ${capacidad} más; lo limita ${limita}.`,
+    paraElSetter: `Podés con ${capacidad} leads más hoy.`,
+  }
 }
 
 /**

@@ -8,7 +8,7 @@ import type { PasoDeSeguimiento } from '@/lib/setters-config'
 import { opsDate, OPS_TZ } from '@/lib/tz'
 import { seccionDePaso, type Seccion } from '@/lib/pistas'
 import { barrer } from '@/server/setters/asignacion'
-import { repartoAutomaticoDelDia } from '@/server/setters/reparto'
+import { motivoSinLeads, repartoAutomaticoDelDia } from '@/server/setters/reparto'
 import { leerCupoDeSetter, PASOS_CON_CUPO, type CupoDeSetter } from '@/server/setters/cupo'
 import {
   armarMensaje,
@@ -136,6 +136,14 @@ export interface ColaDelSetter {
   diasDeAtraso: number
   /** Lo que ya hizo hoy, para la pantalla de día completado. */
   hoy: ResumenDelDia
+  /**
+   * Por qué no tiene nada para contactar, escrito para él.
+   *
+   * Solo se calcula —y solo se muestra— cuando la lista de aperturas está
+   * vacía. `null` significa "puede pedir más y hay de dónde": ahí el botón
+   * alcanza y una explicación sobraría.
+   */
+  motivoSinLeads: string | null
 }
 
 interface FilaCola {
@@ -304,6 +312,9 @@ export async function armarColaDelSetter(setterId: string): Promise<ColaDelSette
     seguimientosAtrasados: seguimientos.filter((i) => i.diasAtraso > 0).length,
     diasDeAtraso: seguimientos.reduce((a, i) => Math.max(a, i.diasAtraso), 0),
     hoy: await resumenDelDia(setterId),
+    // Se consulta solo con la lista vacía: es una recorrida por todo el equipo
+    // y con leads adelante no hay nada que explicar.
+    motivoSinLeads: aperturas.length === 0 ? await motivoSinLeads(setterId) : null,
   }
 }
 

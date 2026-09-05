@@ -253,6 +253,38 @@ export async function repartirAEsteSetter(
 }
 
 /**
+ * Por qué este setter no tiene nada para contactar.
+ *
+ * Nace de un caso concreto: un setter abrió la app, vio "0 leads asignados" y
+ * no había forma de saber si el pozo estaba vacío, si su cuenta estaba apagada
+ * o si ya había llegado a su tanda. La respuesta existía —la calcula
+ * `capacidadDe` para el panel del admin— pero no llegaba al celular de la
+ * persona que tenía el problema adelante.
+ *
+ * Devuelve `null` cuando **sí puede recibir y hay pozo**: ahí no hay nada que
+ * explicar, el botón de pedir leads alcanza.
+ */
+export async function motivoSinLeads(
+  setterId: string,
+  cliente: Ejecutor = db,
+): Promise<string | null> {
+  const capacidades = await leerCapacidades(cliente)
+  const suyo = capacidades.find((c) => c.setterId === setterId)
+  if (!suyo) return null
+
+  const { capacidad, paraElSetter } = capacidadDe(suyo)
+  if (capacidad <= 0) return paraElSetter
+
+  // Puede recibir, así que lo que falta está del otro lado.
+  const pozo = await contarPozo(cliente)
+  if (pozo <= 0) {
+    return 'No quedan leads sin asignar en el sistema. Avisale al administrador que cargue más.'
+  }
+
+  return null
+}
+
+/**
  * Repone la cola cuando el setter saltea un lead.
  *
  * Saltear es "este ahora no": el lead se va al final de la cola de hoy y vuelve

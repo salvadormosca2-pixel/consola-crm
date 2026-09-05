@@ -480,6 +480,7 @@ export function Cola({
         <ListaTerminada
           seccion={seccion}
           hoy={cola.hoy}
+          motivoSinLeads={cola.motivoSinLeads}
           aperturasAhora={consumidos}
           terminoPorCupo={terminoPorCupo}
           cuentas={cola.cupo.cuentas.filter((c) => c.activa).length}
@@ -930,6 +931,7 @@ function TarjetaDeLead({
 function ListaTerminada({
   seccion,
   hoy,
+  motivoSinLeads,
   aperturasAhora,
   terminoPorCupo,
   cuentas,
@@ -940,6 +942,8 @@ function ListaTerminada({
 }: {
   seccion: Seccion
   hoy: ResumenDelDia
+  /** Por qué no hay nada para contactar. Null cuando pedir más alcanza. */
+  motivoSinLeads: string | null
   /** Aperturas marcadas en esta sesión, por si el servidor todavía no las tiene. */
   aperturasAhora: number
   terminoPorCupo: boolean
@@ -969,6 +973,20 @@ function ListaTerminada({
 
   const verde = esSeguimiento || (!arrancando && !terminoPorCupo)
 
+  /*
+   * Pedir más leads tiene sentido cuando no queda nada **para contactar**. En
+   * la lista de aperturas eso ya es cierto —está vacía, por eso se ve este
+   * cartel—; en la de seguimiento, solo si la otra también quedó en cero.
+   */
+  const puedePedirMas = !terminoPorCupo && (!esSeguimiento || quedanEnLaOtra === 0)
+
+  /*
+   * El motivo explica la lista de contactar vacía. No va en la de seguimiento
+   * —que no queden seguimientos no es problema de nadie— ni cuando ya se llegó
+   * al tope, porque ahí abajo se dice lo mismo con otras palabras.
+   */
+  const mostrarMotivo = !esSeguimiento && !terminoPorCupo && motivoSinLeads !== null
+
   return (
     <Panel className="px-4 py-6 text-center">
       <div
@@ -993,7 +1011,7 @@ function ListaTerminada({
         </p>
       ) : arrancando ? (
         <p className="mt-1.5 text-[13.5px] leading-relaxed text-texto-2">
-          Todavía no tenés leads asignados. Pedí los de hoy y empezá.
+          Todavía no tenés leads asignados.
         </p>
       ) : (
         <dl className="mx-auto mt-4 max-w-[240px] space-y-1.5">
@@ -1005,34 +1023,60 @@ function ListaTerminada({
       )}
 
       {/*
-        Lo primero que hay que ofrecer es la otra lista: es trabajo que está
-        esperando ahora. Pedir más leads recién tiene sentido cuando no queda
-        nada de nada.
+        Por qué la lista está vacía, escrito.
+        =====================================
+        Sin esto la pantalla decía "0 leads asignados" y ahí se terminaba: el
+        setter no podía saber si el pozo estaba vacío, si le habían apagado la
+        cuenta o si ya había llegado a su tanda del día. Tres problemas
+        distintos, tres personas distintas que lo resuelven, y el mismo cero
+        para los tres.
       */}
-      {quedanEnLaOtra > 0 ? (
-        <Button variant="primaria" className="mt-4 h-14 w-full text-[15px]" onClick={onIrALaOtra}>
-          <Repeat aria-hidden />
-          {esSeguimiento
-            ? `Contactar los ${quedanEnLaOtra} de hoy`
-            : `Te faltan ${quedanEnLaOtra} ${quedanEnLaOtra === 1 ? 'seguimiento' : 'seguimientos'}`}
-        </Button>
-      ) : terminoPorCupo ? (
-        <p className="mt-4 text-[13px] leading-relaxed text-texto-2">
-          {cuentas > 1
-            ? 'Tus cuentas llegaron al límite de hoy. Seguí mañana.'
-            : 'Tu cuenta llegó al límite de hoy. Seguí mañana.'}
+      {mostrarMotivo ? (
+        <p className="mx-auto mt-3 max-w-[300px] rounded-[5px] border border-ambar/35 bg-ambar-tenue px-2.5 py-2 text-[12.5px] leading-relaxed text-ambar">
+          {motivoSinLeads}
         </p>
-      ) : (
-        <Button
-          variant="primaria"
-          className="mt-4 h-14 w-full text-[15px]"
-          onClick={onPedirMas}
-          disabled={pendiente}
-        >
-          <Send aria-hidden />
-          {pendiente ? 'Pidiendo…' : arrancando ? 'Quiero mis leads de hoy' : 'Pedir más leads'}
-        </Button>
-      )}
+      ) : null}
+
+      <div className="mt-4 space-y-2">
+        {/*
+          El botón de pedir leads no se va porque haya trabajo en la otra lista.
+          Se iba, y era lo peor posible: la pantalla decía "pedí los de hoy" y
+          abajo no había con qué pedirlos. Cuando las dos cosas aplican, van las
+          dos.
+        */}
+        {puedePedirMas ? (
+          <Button
+            variant="primaria"
+            className="h-14 w-full text-[15px]"
+            onClick={onPedirMas}
+            disabled={pendiente}
+          >
+            <Send aria-hidden />
+            {pendiente ? 'Pidiendo…' : arrancando ? 'Quiero mis leads de hoy' : 'Pedir más leads'}
+          </Button>
+        ) : null}
+
+        {quedanEnLaOtra > 0 ? (
+          <Button
+            variant={puedePedirMas ? 'secundaria' : 'primaria'}
+            className="h-14 w-full text-[15px]"
+            onClick={onIrALaOtra}
+          >
+            <Repeat aria-hidden />
+            {esSeguimiento
+              ? `Contactar los ${quedanEnLaOtra} de hoy`
+              : `Te faltan ${quedanEnLaOtra} ${quedanEnLaOtra === 1 ? 'seguimiento' : 'seguimientos'}`}
+          </Button>
+        ) : null}
+
+        {terminoPorCupo ? (
+          <p className="text-[13px] leading-relaxed text-texto-2">
+            {cuentas > 1
+              ? 'Tus cuentas llegaron al límite de hoy. Seguí mañana.'
+              : 'Tu cuenta llegó al límite de hoy. Seguí mañana.'}
+          </p>
+        ) : null}
+      </div>
     </Panel>
   )
 }
