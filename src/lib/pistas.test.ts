@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   consumeCupo,
   PASOS_QUE_CONSUMEN_CUPO,
+  esApertura,
   esPaso,
   estaRetirado,
   GRUPOS_DE_MENSAJES,
@@ -18,6 +19,9 @@ import {
   pistaDePaso,
   primerPasoDe,
   seEscribeEnMensajes,
+  seccionDePaso,
+  SECCIONES,
+  SECCION_META,
   siguienteDeLaPista,
   ubicacionDePaso,
   ZONAS,
@@ -158,6 +162,50 @@ describe('el cupo', () => {
 
   it('el reintento se corta en dos intentos', () => {
     expect(PISTA_META.sin_abrir.pasos.length).toBe(2)
+  })
+})
+
+describe('las dos secciones del setter', () => {
+  /*
+   * Lo que separa las dos listas de la app del celular. Se rompe en silencio:
+   * si un paso cae en la lista equivocada nadie ve un error, el setter ve un
+   * desconocido adentro de "Seguimiento" y le escribe como si ya hubieran
+   * hablado. Es exactamente lo que pasaba cuando la pantalla lo decidía con un
+   * `paso > 1`.
+   */
+
+  it('abrir el chat y gastar cupo son el mismo hecho', () => {
+    // Si estos dos se separaran, el cupo diría una cosa y la pantalla otra.
+    for (const p of PASOS) expect(esApertura(p)).toBe(consumeCupo(p))
+  })
+
+  it('las aperturas son la entrada y los dos reintentos, y nada más', () => {
+    const aperturas = PASOS.filter(esApertura).sort((a, b) => a - b)
+    expect(aperturas).toEqual([1, ...PISTA_META.sin_abrir.pasos.map((x) => x.paso)])
+  })
+
+  it('la oferta y las marcas son seguimiento: el chat ya está abierto', () => {
+    // Los cuatro que estaban del lado equivocado. La oferta sale cuando el lead
+    // acaba de contestar, y las tres marcas cuando el setter registra qué dijo.
+    for (const p of [2, ...PASOS_DE_MARCA]) expect(seccionDePaso(p)).toBe('seguimiento')
+  })
+
+  it('las dos pistas de seguimiento caen enteras en seguimiento', () => {
+    for (const pista of ['silencio', 'tibio'] as const) {
+      for (const p of PISTA_META[pista].pasos) expect(seccionDePaso(p.paso)).toBe('seguimiento')
+    }
+  })
+
+  it('todo paso cae en una sección y en una sola', () => {
+    for (const p of PASOS) expect(SECCIONES).toContain(seccionDePaso(p))
+  })
+
+  it('cada sección tiene nombre escrito: es lo que lee el setter', () => {
+    for (const s of SECCIONES) {
+      expect(SECCION_META[s].titulo.length).toBeGreaterThan(0)
+      expect(SECCION_META[s].corto.length).toBeGreaterThan(0)
+      expect(SECCION_META[s].detalle.length).toBeGreaterThan(0)
+    }
   })
 })
 

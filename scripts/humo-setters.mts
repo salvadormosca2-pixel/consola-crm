@@ -33,9 +33,11 @@ async function main(): Promise<void> {
   console.log(`Asignados ahora: ${asignados}`)
 
   const cola = await armarColaDelSetter(setter.id)
-  console.log(`Cola: ${cola.items.length} items · ${cola.nuevos} nuevos · ${cola.seguimientos} seguimientos`)
+  console.log(
+    `Cola: ${cola.aperturas.length} para contactar · ${cola.seguimientos.length} seguimientos`,
+  )
 
-  const primero = cola.items[0]
+  const primero = cola.aperturas[0] ?? cola.seguimientos[0]
   if (!primero) throw new Error('La cola quedó vacía: revisá el pozo y las plantillas.')
 
   console.log(`\nPrimero: ${primero.businessName} (@${primero.igUsername})`)
@@ -51,7 +53,7 @@ async function main(): Promise<void> {
     assignmentId: primero.assignmentId,
     setterId: setter.id,
     cuentaId: cupoAntes.activa!.id,
-    tipo: primero.tipo,
+    paso: primero.paso,
     body: primero.mensaje,
     templateId: primero.templateId,
     templateVariant: primero.templateVariant,
@@ -64,7 +66,7 @@ async function main(): Promise<void> {
     assignmentId: primero.assignmentId,
     setterId: setter.id,
     cuentaId: cupoAntes.activa!.id,
-    tipo: primero.tipo,
+    paso: primero.paso,
     body: primero.mensaje,
     templateId: primero.templateId,
     templateVariant: primero.templateVariant,

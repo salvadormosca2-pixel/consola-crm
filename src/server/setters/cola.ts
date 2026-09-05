@@ -6,9 +6,10 @@ import { db } from '@/db'
 import type { LeadEstado } from '@/db/enums'
 import type { PasoDeSeguimiento } from '@/lib/setters-config'
 import { opsDate, OPS_TZ } from '@/lib/tz'
+import { seccionDePaso, type Seccion } from '@/lib/pistas'
 import { barrer } from '@/server/setters/asignacion'
 import { repartoAutomaticoDelDia } from '@/server/setters/reparto'
-import { leerCupoDeSetter, type CupoDeSetter } from '@/server/setters/cupo'
+import { leerCupoDeSetter, PASOS_CON_CUPO, type CupoDeSetter } from '@/server/setters/cupo'
 import {
   armarMensaje,
   leerPlantillasDeSetter,
@@ -18,15 +19,21 @@ import {
 } from '@/server/setters/plantillas'
 
 /**
- * La cola del día del setter.
+ * El trabajo del día del setter, **en dos listas separadas**.
  *
- * El orden no es negociable: **primero los seguimientos, después los contactos
- * nuevos**. Un lead que ya recibió el primer mensaje y espera el segundo vale
- * más que uno sin tocar, y si los nuevos se comen el cupo los seguimientos se
- * atrasan, que es donde se pierden las respuestas.
+ * Son dos oficios distintos y venían en una sola cola: abrirle el chat a un
+ * desconocido y seguir una conversación que ya existe. Mezclados, el setter no
+ * sabía cuál de los dos estaba haciendo —la pantalla llamaba "seguimiento" a
+ * todo lo que no fuera la entrada, oferta y reintentos de apertura incluidos— y
+ * eso importa: uno gasta cupo y puede costar la cuenta, el otro no gasta nada.
  *
- * Dentro de los seguimientos manda el atraso; dentro de los nuevos, el que está
- * más cerca de vencer.
+ * La línea la pone `esApertura`, que es la misma que decide el cupo. Acá no se
+ * decide nada nuevo: se parte la cola por donde el modelo ya estaba partido.
+ *
+ * Dentro de cada lista el orden sí es negociable con el celular: primero todo
+ * lo de la cuenta activa, porque cambiar de cuenta en Instagram es lento. Entre
+ * seguimientos manda el atraso; entre aperturas, el que está más cerca de
+ * vencer.
  */
 
 export interface ItemDeCola {
@@ -39,6 +46,12 @@ export interface ItemDeCola {
   city: string | null
   /** En cuál de las situaciones está este lead ahora. */
   paso: PasoDeSeguimiento
+  /**
+   * En cuál de las dos listas va. Se deduce del paso y viaja con el item para
+   * que la pantalla no vuelva a decidirlo por su cuenta: es exactamente lo que
+   * antes se calculaba mal con un `paso > 1`.
+   */
+  seccion: Seccion
   estado: LeadEstado
   /**
    * Ya tocó "Abrir Instagram" **desde el último envío**: el botón de marcar
@@ -88,21 +101,41 @@ export interface PendienteDeCuenta {
   restante: number
   /** Seguimientos que le tocan hoy y que **solo** se pueden mandar desde acá. */
   seguimientos: number
+  /** Aperturas que salen de esta cuenta y le descuentan del cupo. */
+  aperturas: number
+}
+
+/** Lo que ya hizo hoy, partido igual que la pantalla. */
+export interface ResumenDelDia {
+  /** Chats que abrió hoy. Es lo único que le descontó del cupo. */
+  aperturas: number
+  /** Mensajes que mandó sobre conversaciones ya abiertas. */
+  seguimientos: number
+  respondieron: number
+  reuniones: number
 }
 
 export interface ColaDelSetter {
-  items: ItemDeCola[]
+  /**
+   * Los leads a los que hay que **abrirles el chat**: la entrada, y los dos
+   * reintentos del que nunca contestó. Gastan cupo.
+   */
+  aperturas: ItemDeCola[]
+  /**
+   * Las conversaciones **ya abiertas** que esperan el mensaje que sigue: la
+   * oferta, los dos que salen apenas el setter marca qué contestó, y los
+   * escalones de silencio y tibio. No gastan cupo.
+   */
+  seguimientos: ItemDeCola[]
   cupo: CupoDeSetter
   /** Qué falta en cada cuenta. Ordenado igual que las cuentas del setter. */
   porCuenta: PendienteDeCuenta[]
-  /** Seguimientos que le tocan hoy, contando los atrasados. */
-  seguimientos: number
+  /** De los seguimientos, cuántos vienen de días anteriores. */
   seguimientosAtrasados: number
   /** Días del seguimiento más atrasado. Es el número que dispara la alerta. */
   diasDeAtraso: number
-  nuevos: number
   /** Lo que ya hizo hoy, para la pantalla de día completado. */
-  hoy: { contactados: number; respondieron: number; reuniones: number }
+  hoy: ResumenDelDia
 }
 
 interface FilaCola {
@@ -160,8 +193,10 @@ export async function armarColaDelSetter(setterId: string): Promise<ColaDelSette
        -- Los que no tienen cuenta todavía (sin contactar) salen de la activa.
        case when la.setter_account_id is null
               or la.setter_account_id = s.cuenta_activa_id then 0 else 1 end,
-       -- Dentro de una cuenta, los seguimientos van antes que los nuevos: un
-       -- lead que ya recibió algo vale más que uno sin tocar.
+       -- Dentro de una cuenta, lo programado antes que lo que nunca se tocó.
+       -- Las dos listas se separan después, en JS, y cada una hereda este
+       -- orden: entre seguimientos deja arriba al más atrasado, y entre
+       -- aperturas al reintento, que tiene fecha, antes que la entrada.
        case when la.proximo_seguimiento_at is not null
              and la.proximo_seguimiento_at <= now() then 0 else 1 end,
        -- Entre seguimientos, el más atrasado arriba.
@@ -215,6 +250,7 @@ export async function armarColaDelSetter(setterId: string): Promise<ColaDelSette
       niche: f.niche,
       city: f.city,
       paso,
+      seccion: seccionDePaso(paso),
       estado: f.estado,
       abierto: f.abierto_at !== null,
       cuentaId: f.setter_account_id,
@@ -233,12 +269,21 @@ export async function armarColaDelSetter(setterId: string): Promise<ColaDelSette
     })
   }
 
-  const seguimientos = items.filter((i) => i.paso > 1)
+  /*
+   * El corte. Un mensaje va a una lista o a la otra según abra el chat o no, y
+   * eso no depende de en qué número de paso esté: la oferta es el paso 2 y no
+   * abre nada, el reintento es el 17 y abre. Contarlo por `paso > 1` era lo que
+   * ponía aperturas adentro de la lista de seguimientos.
+   */
+  const aperturas = items.filter((i) => i.seccion === 'apertura')
+  const seguimientos = items.filter((i) => i.seccion === 'seguimiento')
 
   /*
    * Cuánto le falta en cada cuenta. Los seguimientos se cuentan sobre la cuenta
    * que abrió esa conversación, no sobre la activa: es la única desde la que se
-   * pueden mandar.
+   * pueden mandar. Las aperturas de leads sin tocar todavía no tienen cuenta
+   * —salen de la activa—, así que solo se cuentan acá los reintentos, que sí la
+   * tienen y sí le descuentan del cupo.
    */
   const porCuenta: PendienteDeCuenta[] = cupo.cuentas.map((c) => ({
     cuentaId: c.id,
@@ -247,32 +292,42 @@ export async function armarColaDelSetter(setterId: string): Promise<ColaDelSette
     usadoHoy: c.enviadosHoy,
     cupoDiario: c.cupoDiario,
     restante: c.restante,
-    seguimientos: items.filter((i) => i.paso > 1 && i.cuentaId === c.id).length,
+    seguimientos: seguimientos.filter((i) => i.cuentaId === c.id).length,
+    aperturas: aperturas.filter((i) => i.cuentaId === c.id).length,
   }))
 
   return {
-    items,
+    aperturas,
+    seguimientos,
     cupo,
     porCuenta,
-    seguimientos: seguimientos.length,
     seguimientosAtrasados: seguimientos.filter((i) => i.diasAtraso > 0).length,
     diasDeAtraso: seguimientos.reduce((a, i) => Math.max(a, i.diasAtraso), 0),
-    nuevos: items.filter((i) => i.paso === 1).length,
     hoy: await resumenDelDia(setterId),
   }
 }
 
-/** Lo que hizo hoy. Es lo que ve en la pantalla de día completado. */
-export async function resumenDelDia(
-  setterId: string,
-): Promise<{ contactados: number; respondieron: number; reuniones: number }> {
+/**
+ * Lo que hizo hoy. Es lo que ve en la pantalla de día completado.
+ *
+ * Los dos trabajos van por separado también acá: "mandé 30 mensajes" no dice
+ * nada si veinte eran seguimientos, porque lo que se le agota es el cupo de
+ * abrir chats y son dos números distintos. Se separan por el mismo filtro que
+ * usa el cupo, así el número de aperturas es exactamente el que le descontó.
+ */
+export async function resumenDelDia(setterId: string): Promise<ResumenDelDia> {
   const hoy = opsDate()
 
   const filas = await db.execute(sql`
     select
       (select count(*)::int from setter_sends ss
         where ss.setter_id = ${setterId}::uuid and ss.ops_date = ${hoy}::date
-          and ss.undone_at is null) as contactados,
+          and ss.undone_at is null
+          and ss.paso in (${PASOS_CON_CUPO})) as aperturas,
+      (select count(*)::int from setter_sends ss
+        where ss.setter_id = ${setterId}::uuid and ss.ops_date = ${hoy}::date
+          and ss.undone_at is null
+          and ss.paso not in (${PASOS_CON_CUPO})) as seguimientos,
       (select count(*)::int from lead_assignments la
         where la.setter_id = ${setterId}::uuid
           and la.respondido_at is not null
@@ -282,12 +337,11 @@ export async function resumenDelDia(
           and (m.created_at at time zone ${OPS_TZ})::date = ${hoy}::date) as reuniones
   `)
 
-  const f = filas.rows[0] as
-    | { contactados: number; respondieron: number; reuniones: number }
-    | undefined
+  const f = filas.rows[0] as ResumenDelDia | undefined
 
   return {
-    contactados: f?.contactados ?? 0,
+    aperturas: f?.aperturas ?? 0,
+    seguimientos: f?.seguimientos ?? 0,
     respondieron: f?.respondieron ?? 0,
     reuniones: f?.reuniones ?? 0,
   }

@@ -258,15 +258,27 @@ export function CartelDeRecordatorio({
  * costado: es la pantalla de entrada, antes de la cola de leads nuevos. Es lo
  * que hace que efectivamente los hagan.
  */
+/**
+ * Con qué arranca el día, cuando hay seguimientos esperando.
+ *
+ * Le muestra **los dos números juntos** a propósito. El cartel decía solo
+ * "hoy te tocan N seguimientos" y ese N incluía aperturas, así que el setter
+ * arrancaba creyendo que iba a seguir charlas y le salían desconocidos. Ahora
+ * el número de seguimientos es solo de seguimientos, y al lado está el otro
+ * trabajo, para que sepa desde el principio que son dos cosas distintas.
+ */
 export function CartelDeSeguimientos({
   cuantos,
   atrasados,
   diasDeAtraso,
+  porContactar,
   onEmpezar,
 }: {
   cuantos: number
   atrasados: number
   diasDeAtraso: number
+  /** Lo que le espera en la otra lista. Va acá para que no lo descubra después. */
+  porContactar: number
   onEmpezar: () => void
 }) {
   return (
@@ -282,9 +294,22 @@ export function CartelDeSeguimientos({
         {atrasados > 0
           ? `${atrasados} ${atrasados === 1 ? 'está atrasado' : 'están atrasados'} ${
               diasDeAtraso === 1 ? '1 día' : `${diasDeAtraso} días`
-            }. Los que ya recibieron el primer mensaje son los que más chance tienen de contestar.`
-          : 'Van primero en la cola: un lead que ya recibió el primer mensaje vale más que uno sin tocar.'}
+            }. Los que ya te leyeron una vez son los que más chance tienen de contestar.`
+          : 'Son chats que ya están abiertos: no gastan cupo. Por eso van primero.'}
       </p>
+
+      <p className="mt-3 rounded-[5px] border border-borde bg-fondo px-2.5 py-2 text-[12.5px] leading-relaxed text-texto-2">
+        {porContactar > 0 ? (
+          <>
+            Aparte tenés <span className="dato text-texto">{porContactar}</span>{' '}
+            {porContactar === 1 ? 'lead' : 'leads'} para contactar por primera vez. Son otra lista,
+            y esa sí gasta cupo.
+          </>
+        ) : (
+          'No tenés leads nuevos para contactar hoy: son otra lista y está vacía.'
+        )}
+      </p>
+
       <Button variant="primaria" className="mt-4 h-12 w-full" onClick={onEmpezar}>
         <Send aria-hidden />
         Empezar seguimientos
@@ -315,7 +340,11 @@ export function CartelDeCambio({
   motivo: string
   onCambiar: (cuentaId: string) => void
   pendiente: boolean
-  /** Seguimientos que esperan en la cuenta siguiente. Le da sentido al cambio. */
+  /**
+   * Mensajes que esperan en la cuenta siguiente y que solo pueden salir de ahí:
+   * sus seguimientos y sus reintentos, porque los dos tienen el hilo en esa
+   * cuenta. Le da sentido al cambio.
+   */
   esperandoEnLaSiguiente: number
 }) {
   return (
@@ -341,10 +370,9 @@ export function CartelDeCambio({
                 pospone; con el número a la vista, no. */}
             {esperandoEnLaSiguiente > 0 ? (
               <p className="mt-1.5 text-[13px] text-ambar">
-                Ahí te esperan{" "}
-                <span className="dato">{esperandoEnLaSiguiente}</span>{" "}
-                {esperandoEnLaSiguiente === 1 ? "seguimiento" : "seguimientos"} que solo se pueden
-                mandar desde esa cuenta.
+                Ahí te esperan <span className="dato">{esperandoEnLaSiguiente}</span>{' '}
+                {esperandoEnLaSiguiente === 1 ? 'mensaje' : 'mensajes'} que solo se pueden mandar
+                desde esa cuenta.
               </p>
             ) : null}
             <Button

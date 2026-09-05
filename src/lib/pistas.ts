@@ -400,6 +400,24 @@ export function primerPasoDe(pista: Pista): PasoDePista {
  * tienen por qué disputarse el mismo número.
  */
 export function consumeCupo(paso: Paso): boolean {
+  return esApertura(paso)
+}
+
+/**
+ * Si el paso **abre el chat**: le escribe por primera vez a alguien que nunca
+ * contestó nada.
+ *
+ * Es el mismo hecho que `consumeCupo` visto desde el otro lado, y por eso hay
+ * una sola implementación: lo único que gasta cupo es abrir chats nuevos. Los
+ * dos nombres existen porque el hecho se usa para dos cosas distintas — el
+ * límite de la cuenta, y **en qué sección de su pantalla trabaja el setter**—,
+ * y en cada lugar se lee mejor con su propio nombre.
+ *
+ * Son tres pasos y ninguno más: la entrada, y los dos reintentos de apertura
+ * del lead que nunca contestó. Todo el resto sale adentro de una conversación
+ * que ya existe.
+ */
+export function esApertura(paso: Paso): boolean {
   const u = ubicacionDePaso(paso)
   if (!u) return false
   // El escalón manda sobre su pista: la oferta vive en la pista que abre chats
@@ -409,6 +427,49 @@ export function consumeCupo(paso: Paso): boolean {
 
 /** Los pasos que descuentan del cupo, para poder filtrarlos en SQL. */
 export const PASOS_QUE_CONSUMEN_CUPO: readonly Paso[] = PASOS_DE_PISTA.filter(consumeCupo)
+
+/* ── Las dos secciones de la pantalla del setter ──────────────────────── */
+
+/**
+ * En qué está trabajando el setter cuando abre la app.
+ *
+ * Son **dos trabajos distintos** y estaban en una sola cola, mezclados: la
+ * pantalla llamaba "seguimiento" a todo lo que no fuera la entrada, así que
+ * decía "hoy te tocan 12 seguimientos" y adentro venían la oferta y los
+ * reintentos de apertura. El setter no podía saber, mirando la tarjeta, si
+ * estaba abriendo un chat con un desconocido o siguiendo una charla empezada.
+ *
+ * La línea es la misma que la del cupo, y no es casualidad: lo que separa a los
+ * dos trabajos es si del otro lado ya te contestaron alguna vez.
+ *
+ *   apertura     le escribís por primera vez. Gasta cupo y arriesga la cuenta.
+ *   seguimiento  el chat ya existe. No gasta nada.
+ */
+export const SECCIONES = ['apertura', 'seguimiento'] as const
+export type Seccion = (typeof SECCIONES)[number]
+
+export const SECCION_META: Record<
+  Seccion,
+  { titulo: string; corto: string; detalle: string }
+> = {
+  apertura: {
+    titulo: 'Lista para contactar hoy',
+    corto: 'Contactar hoy',
+    detalle:
+      'El primer mensaje a alguien que nunca te contestó. Es lo único que gasta cupo: abrir chats nuevos con desconocidos es lo que hace que Instagram restrinja una cuenta.',
+  },
+  seguimiento: {
+    titulo: 'Seguimiento',
+    corto: 'Seguimiento',
+    detalle:
+      'Conversaciones que ya están abiertas. No gastan cupo ni arriesgan la cuenta: seguir un chat empezado no es lo que Instagram castiga.',
+  },
+}
+
+/** En qué sección de la pantalla del setter cae este mensaje. */
+export function seccionDePaso(paso: Paso): Seccion {
+  return esApertura(paso) ? 'apertura' : 'seguimiento'
+}
 
 /* ── Qué se escribe en cada pantalla ──────────────────────────────────── */
 

@@ -50,8 +50,8 @@ export function Cuentas({
       <div className="border-b border-borde px-3 py-2">
         <p className="text-[13px] font-medium text-texto">Tus cuentas</p>
         <p className="mt-0.5 text-[11.5px] leading-relaxed text-texto-2">
-          Los seguimientos salen de la cuenta que abrió cada conversación. Terminá una antes de
-          pasar a la otra.
+          Los seguimientos salen de la cuenta que abrió cada conversación, y no gastan cupo. El
+          número de arriba es solo de chats nuevos. Terminá una cuenta antes de pasar a la otra.
         </p>
       </div>
 
@@ -74,19 +74,31 @@ export function Cuentas({
                 <span className="dato">
                   {c.usadoHoy}/{c.cupoDiario}
                 </span>{' '}
-                mandados
+                chats abiertos
+                {/*
+                  Las dos listas también acá, y por separado. Los seguimientos de
+                  esta cuenta salen igual aunque esté al tope; los reintentos de
+                  apertura no, porque descuentan del mismo cupo que ya se acabó.
+                */}
                 {c.seguimientos > 0 ? (
                   <>
                     {' · '}
-                    <span className={cn('dato', c.restante > 0 ? 'text-ambar' : 'text-rojo')}>
-                      {c.seguimientos}
-                    </span>{' '}
+                    <span className="dato text-verde">{c.seguimientos}</span>{' '}
                     {c.seguimientos === 1 ? 'seguimiento' : 'seguimientos'}
-                    {c.restante === 0 ? ' para mañana' : ''}
                   </>
                 ) : (
                   ' · sin seguimientos'
                 )}
+                {c.aperturas > 0 ? (
+                  <>
+                    {' · '}
+                    <span className={cn('dato', c.restante > 0 ? 'text-ambar' : 'text-rojo')}>
+                      {c.aperturas}
+                    </span>{' '}
+                    por reabrir
+                    {c.restante === 0 ? ' para mañana' : ''}
+                  </>
+                ) : null}
               </p>
             </div>
 
