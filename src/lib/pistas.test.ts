@@ -187,7 +187,8 @@ describe('las dos secciones del setter', () => {
   it('la oferta y las marcas son seguimiento: el chat ya está abierto', () => {
     // Los cuatro que estaban del lado equivocado. La oferta sale cuando el lead
     // acaba de contestar, y las tres marcas cuando el setter registra qué dijo.
-    for (const p of [2, ...PASOS_DE_MARCA]) expect(seccionDePaso(p)).toBe('seguimiento')
+    const yaAbierto: readonly Paso[] = [2, ...PASOS_DE_MARCA]
+    for (const p of yaAbierto) expect(seccionDePaso(p)).toBe('seguimiento')
   })
 
   it('las dos pistas de seguimiento caen enteras en seguimiento', () => {
