@@ -83,6 +83,18 @@ async function calificar(assignmentId: string, dias = 2): Promise<void> {
   )
 }
 
+/** El primer escalón del seguimiento: lo que le toca a un lead calificado. */
+const ESCALON = PISTA_META.seguimiento.pasos[0]!.paso
+
+/** Deja vencido el seguimiento que tenga programado, para poder mandarlo. */
+async function vencerElSeguimiento(assignmentId: string): Promise<void> {
+  await pool.query(
+    `update lead_assignments set proximo_seguimiento_at = now() - interval '1 hour'
+      where id = $1 and proximo_paso is not null`,
+    [assignmentId],
+  )
+}
+
 describe('cupo por cuenta de Instagram', () => {
   it('nunca deja pasar de 30 en el día, aunque se marque de más', async () => {
     const setter = await crearSetter(pool, { cupos: [30] })
@@ -844,13 +856,10 @@ describe('un setter no puede tocar el lead de otro', () => {
     const suyo = await asignar(pool, await crearLeadScrapeado(pool, 1), a.setterId)
 
     await marcar(suyo, a.setterId, a.cuentas[0]!, 1)
-    await pool.query(
-      `update lead_assignments set proximo_seguimiento_at = now() - interval '1 hour'
-        where id = $1`,
-      [suyo],
-    )
+    await calificar(suyo)
+    await vencerElSeguimiento(suyo)
 
-    const r = await marcar(suyo, b.setterId, b.cuentas[0]!, 2)
+    const r = await marcar(suyo, b.setterId, b.cuentas[0]!, ESCALON)
     expect(r.ok).toBe(false)
 
     // El envío de A sigue siendo el único, y desde su cuenta.
@@ -889,12 +898,9 @@ describe('el seguimiento sale de la cuenta que abrió la conversación', () => {
     const a = await asignar(pool, await crearLeadScrapeado(pool, 1), setter.setterId)
 
     await marcar(a, setter.setterId, primera!, 1)
-    await pool.query(
-      `update lead_assignments set proximo_seguimiento_at = now() - interval '1 hour'
-        where id = $1`,
-      [a],
-    )
-    await marcar(a, setter.setterId, primera!, 2)
+    await calificar(a)
+    await vencerElSeguimiento(a)
+    await marcar(a, setter.setterId, primera!, ESCALON)
 
     // Los dos mensajes salieron de la primera: la segunda sigue intacta.
     expect(await contarCupoDeSetter(pool, primera!)).toBe(2)
@@ -961,16 +967,13 @@ describe('el candado de "primero abrí el chat"', () => {
 
     await abrir(a)
     await marcar(a, setter.setterId, cuenta, 1)
-    // Mandada la entrada, para la oferta hay que volver a abrir el chat.
+    // Mandado el primero, para el seguimiento hay que volver a abrir el chat.
     expect(await leerAbierto(a)).toBeNull()
 
-    await pool.query(
-      `update lead_assignments set proximo_seguimiento_at = now() - interval '1 hour'
-        where id = $1`,
-      [a],
-    )
+    await calificar(a)
+    await vencerElSeguimiento(a)
     await abrir(a)
-    await marcar(a, setter.setterId, cuenta, 2)
+    await marcar(a, setter.setterId, cuenta, ESCALON)
     expect(await leerAbierto(a)).toBeNull()
   })
 })

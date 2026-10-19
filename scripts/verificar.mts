@@ -136,7 +136,6 @@ async function main(): Promise<void> {
     '/reuniones',
     '/contactos',
     '/importar',
-    '/configuracion',
     '/configuracion/referencias',
     '/actividad',
   ]) {
@@ -249,6 +248,20 @@ async function verificarEscrituras(
     return r.text()
   }
 
+  /** Lo mismo, pero con la sesión del admin: los textos los escribe él. */
+  const accionDeAdmin = async (nombre: string, datos: unknown): Promise<string> => {
+    const r = await fetch(`${BASE}/textos`, {
+      method: 'POST',
+      headers: {
+        cookie: cookiesAdmin,
+        'content-type': 'text/plain;charset=UTF-8',
+        'next-action': nombre,
+      },
+      body: JSON.stringify(datos),
+    })
+    return r.text()
+  }
+
   try {
     /* Abrir el chat deja la hora registrada. */
     await accion(await idDeAccion('abrirChat'), [id])
@@ -258,6 +271,29 @@ async function verificarEscrituras(
     )
     if (abierto?.abierto_at) bien('abrir el chat', `→ estado ${abierto.estado}`)
     else mal('abrir el chat', 'no quedó registrada la hora de apertura')
+
+    /*
+     * El texto del primer mensaje. Va antes del envío a propósito: sin texto
+     * escrito el lead está bloqueado y "Enviado" tiene que rebotar, que es
+     * justamente la regla nueva.
+     */
+    const sinTexto = await accion(await idDeAccion('marcarEnviado'), [id])
+    const quedoSinMandar = await uno<{ n: number }>(
+      `select count(*)::int as n from setter_sends where assignment_id = $1`,
+      [id],
+    )
+    if (quedoSinMandar?.n === 0) bien('sin texto escrito no se puede mandar', '→ rebotó')
+    else mal('sin texto escrito no se puede mandar', `se mandó igual: ${sinTexto.slice(0, 80)}`)
+
+    await accionDeAdmin(await idDeAccion('guardarTexto'), [
+      { assignmentId: id, paso: 1, body: 'Hola! Te escribo por tu negocio, ¿tenés un minuto?' },
+    ])
+    const textoDeEntrada = await uno<{ body: string }>(
+      `select body from lead_textos where assignment_id = $1 and paso = 1`,
+      [id],
+    )
+    if (textoDeEntrada?.body) bien('escribir el primer mensaje', `→ "${textoDeEntrada.body}"`)
+    else mal('escribir el primer mensaje', 'no se guardó en lead_textos')
 
     /* Marcar enviado consume cupo y programa lo que sigue. */
     await accion(await idDeAccion('marcarEnviado'), [id])
@@ -312,16 +348,16 @@ async function verificarEscrituras(
       'el calificado llega a Seguimientos',
     )
 
-    /* El texto del seguimiento lo escribe el admin, lead por lead. */
-    await accion(await idDeAccion('guardarTexto'), [
+    /* El texto del seguimiento, también escrito a mano. */
+    await accionDeAdmin(await idDeAccion('guardarTexto'), [
       { assignmentId: id, paso: calificado?.paso ?? 3, body: 'Che, ¿lo pudiste ver?' },
     ])
     const texto = await uno<{ body: string }>(
-      `select body from lead_textos where assignment_id = $1`,
+      `select body from lead_textos where assignment_id = $1 and paso <> 1`,
       [id],
     )
-    if (texto?.body) bien('escribir el texto del lead', `→ "${texto.body}"`)
-    else mal('escribir el texto del lead', 'no se guardó en lead_textos')
+    if (texto?.body) bien('escribir el seguimiento', `→ "${texto.body}"`)
+    else mal('escribir el seguimiento', 'no se guardó en lead_textos')
 
     /* Agendar una reunión. */
     const manana = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10)
@@ -406,6 +442,9 @@ async function verificarEscrituras(
 
     /* Deshacer: libera el cupo sin borrar el rastro. */
     const tercero = await leadDePrueba(setterId, 'Deshacer')
+    await accionDeAdmin(await idDeAccion('guardarTexto'), [
+      { assignmentId: tercero.asignacion, paso: 1, body: 'Hola! Una consulta rápida.' },
+    ])
     await accion(await idDeAccion('abrirChat'), [tercero.asignacion])
     await accion(await idDeAccion('marcarEnviado'), [tercero.asignacion])
     const envio = await uno<{ id: string }>(

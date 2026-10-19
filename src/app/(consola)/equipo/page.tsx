@@ -1,4 +1,4 @@
-import { Instagram, Megaphone, Plus, Repeat, UserCog } from 'lucide-react'
+import { Instagram, Megaphone, PencilLine, Plus, Repeat, UserCog } from 'lucide-react'
 import Link from 'next/link'
 import type { Metadata } from 'next'
 
@@ -12,6 +12,7 @@ import { requerirAdmin } from '@/server/session'
 import { leerConfigNotificaciones } from '@/server/setters/notificaciones'
 import { contarParaVaciar } from '@/server/setters/borrar'
 import { armarTablero, listarDeBaja, type FilaTablero } from '@/server/setters/panel'
+import { cuantosSinTexto } from '@/server/setters/textos'
 import { proponerReparto, repartoAutomaticoDelDia } from '@/server/setters/reparto'
 
 import { Accesos, type SetterParaAcceso } from './accesos'
@@ -37,12 +38,13 @@ export default async function PaginaEquipo() {
   // vez por día. Va antes del tablero para que lo que se ve ya la incluya.
   await repartoAutomaticoDelDia()
 
-  const [filas, plan, avisos, bajas, paraVaciar] = await Promise.all([
+  const [filas, plan, avisos, bajas, paraVaciar, sinTexto] = await Promise.all([
     armarTablero(),
     proponerReparto(),
     leerConfigNotificaciones(),
     listarDeBaja(),
     contarParaVaciar(),
+    cuantosSinTexto(),
   ])
 
   const atrasados = filas.filter((f) => f.semaforo === 'rojo').length
@@ -82,6 +84,13 @@ export default async function PaginaEquipo() {
         </div>
 
         <div className="flex flex-wrap gap-1.5">
+          {/*
+            Los leads esperando texto van primero y con el número a la vista:
+            mientras no estén escritos, el setter los ve bloqueados en el
+            celular y no puede hacer nada. Es el cuello de botella de todo el
+            día y no se nota desde ninguna otra pantalla.
+          */}
+          <Atajo href="/textos" icono={PencilLine} texto="Escribir textos" alerta={sinTexto} />
           <Atajo
             href="/equipo/seguimientos"
             icono={Repeat}

@@ -427,19 +427,27 @@ export async function calificarLead(
     const propio = sesion.rol === 'setter'
 
     const previas = await db.execute(sql`
-      select estado, contact_id, setter_id from lead_assignments
+      select estado, contactado_at, contact_id, setter_id from lead_assignments
        where id = ${assignmentId}::uuid
          ${propio ? sql`and setter_id = ${sesion.setterId}::uuid` : sql``}
        limit 1
     `)
     const previa = previas.rows[0] as
-      | { estado: string; contact_id: string; setter_id: string }
+      | { estado: string; contactado_at: Date | null; contact_id: string; setter_id: string }
       | undefined
 
     if (!previa) return { ok: false, error: 'Ese lead no es tuyo.' }
     if (previa.estado === 'calificado') return { ok: false, error: 'Ese lead ya está calificado.' }
-    if (!['asignado', 'abierto', 'saltado', 'contactado', 'segundo_enviado', 'respondido'].includes(previa.estado)) {
+    if (!['contactado', 'segundo_enviado', 'respondido'].includes(previa.estado)) {
       return { ok: false, error: 'Ese lead ya no se puede calificar.' }
+    }
+    /*
+     * Calificar antes de escribirle no tiene sentido y rompe la cola: el lead
+     * entraría al seguimiento sin haber recibido nunca el primer mensaje, y en
+     * el celular aparecería un "seguimiento" de una conversación que no existe.
+     */
+    if (previa.contactado_at === null) {
+      return { ok: false, error: 'Primero mandale el primer mensaje.' }
     }
 
     /*

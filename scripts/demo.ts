@@ -1402,19 +1402,32 @@ async function cargarSetters(): Promise<void> {
                          where la.contact_id = c.id and la.estado not in ('vencido','devuelto'))`,
   )
 
+  const sinTexto = await pool.query<{ n: number }>(
+    `select count(*)::int as n
+       from lead_assignments la
+      where (la.estado in ('asignado', 'abierto', 'saltado')
+             or (la.estado = 'calificado' and la.proximo_paso is not null))
+        and not exists (
+          select 1 from lead_textos t
+           where t.assignment_id = la.id
+             and t.paso = case when la.estado in ('asignado', 'abierto', 'saltado')
+                               then 1 else coalesce(la.proximo_paso, 1) end)`,
+  )
+
   console.log(`
 Equipo de demostración listo. Todo inventado.
 
   Abril Quiroga   2 cuentas · la primera al tope, ya cambió a la segunda
-                  5 seguimientos sin hacer · 6 respuestas esperando · 2 reuniones
+                  5 seguimientos sin hacer · 6 calificados esperando · 2 reuniones
   Bruno Herrera   no arrancó hoy · 15 seguimientos con 2 días de atraso
                   tiene un mensaje BLOQUEANTE sin leer
   Carla Vega      terminó el día: las dos cuentas al tope, seguimientos al día
   Diego Sosa      16 leads sin contactar; los dos primeros son REALES:
                   @salvamosca y @nachocano
-                  4 contactados · 2 esperando la oferta · 1 reunión
+                  4 contactados · 2 calificados en seguimiento · 1 reunión
 
   ${pozo.rows[0]!.n} leads sin asignar en el pozo
+  ${sinTexto.rows[0]!.n} leads esperando que les escribas el mensaje, en /textos
   5 avisos sin leer en la campana
 
 Entran en /ingresar con:
