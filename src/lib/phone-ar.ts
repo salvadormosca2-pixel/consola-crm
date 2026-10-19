@@ -260,5 +260,21 @@ export function normalizarInstagram(crudo: string | null | undefined): Resultado
     }
   }
 
+  /*
+   * Un dominio no es un usuario, aunque pase el filtro de caracteres: el punto
+   * está permitido en los nombres de Instagram, así que `peluqueria.com.ar`
+   * entraba como si fuera una cuenta. Eso es peor que rechazarlo —el lead va al
+   * pozo, alguien gasta su cupo del día abriendo un perfil que no existe y
+   * recién ahí se descubre—, y pasa seguido cuando la columna que se mapeó era
+   * la de la página web.
+   */
+  if (/\.(com|ar|net|org|co|io|app|es|cl|mx|uy|py|br|info|online|shop)(\.|$)/.test(usuario)) {
+    return {
+      ok: false,
+      motivo: 'invalido',
+      detalle: 'Eso parece una página web, no un usuario de Instagram.',
+    }
+  }
+
   return { ok: true, usuario }
 }

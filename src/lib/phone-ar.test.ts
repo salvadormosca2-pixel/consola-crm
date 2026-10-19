@@ -231,6 +231,26 @@ describe('normalizarInstagram', () => {
     if (r.ok) expect(r.usuario).toBe('mi.negocio_ok')
   })
 
+  it('una página web no es un usuario, aunque el punto esté permitido', () => {
+    /*
+     * El punto es válido en los nombres de Instagram, así que `negocio.com.ar`
+     * pasaba el filtro y entraba como cuenta. Eso es peor que rechazarlo: el
+     * lead va al pozo, un setter gasta su cupo del día abriendo un perfil que
+     * no existe, y recién ahí se descubre. Pasa cuando la columna mapeada era
+     * la de la página web.
+     */
+    for (const web of [
+      'peluqueria.com.ar',
+      'www.minegocio.com',
+      'https://minegocio.com.ar/contacto',
+      'tienda.shop',
+    ]) {
+      const r = normalizarInstagram(web)
+      expect(r.ok, web).toBe(false)
+      if (!r.ok) expect(r.detalle).toMatch(/p[áa]gina web/i)
+    }
+  })
+
   it('rechaza lo que Instagram no permite', () => {
     // El guion medio no lo permite Instagram; el numeral sí se corta como
     // fragmento de URL, así que no va en esta lista.

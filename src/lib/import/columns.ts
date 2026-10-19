@@ -50,7 +50,10 @@ const SINONIMOS: Record<Campo, string[]> = {
     'telefono', 'tel', 'celular', 'cel', 'whatsapp', 'wsp', 'wa', 'movil',
     'numero', 'nro', 'phone', 'mobile', 'contactotelefono', 'telefonos',
   ],
-  instagram: ['instagram', 'ig', 'usuario', 'usuarioig', 'usuarioinstagram', 'arroba', 'perfil', 'insta'],
+  instagram: [
+    'instagram', 'ig', 'usuario', 'usuarioig', 'usuarioinstagram', 'arroba', 'perfil',
+    'insta', 'username', 'user', 'igusername', 'cuentainstagram', 'cuentaig', 'usuariode',
+  ],
   niche: ['rubro', 'categoria', 'tipo', 'actividad', 'sector', 'nicho', 'niche', 'industria'],
   bought: [
     'compro', 'quecompro', 'compra', 'producto', 'servicio', 'pedido',
