@@ -809,9 +809,9 @@ function TarjetaDeLead({
           </div>
         ) : bloqueado ? (
           <div className="mt-3 rounded-[5px] border border-rojo/35 bg-rojo-tenue px-2.5 py-2">
-            <p className="text-[13px] font-medium text-rojo">No se puede armar el mensaje</p>
+            <p className="text-[13px] font-medium text-rojo">Todavía no tiene mensaje</p>
             <p className="mt-0.5 text-[12.5px] leading-relaxed text-texto-2">
-              {item.motivoBloqueo} Salteálo y avisale al administrador.
+              {item.motivoBloqueo} Ya le figura en su lista: salteálo y seguí con el que sigue.
             </p>
           </div>
         ) : (
