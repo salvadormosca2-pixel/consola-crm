@@ -1,33 +1,37 @@
 /**
- * Las pistas: por dónde sigue un lead y qué le llega en cada paso.
+ * El recorrido de un lead: qué le toca y cuándo.
  *
- * La corrección de fondo respecto del modelo viejo: **un seguimiento no es un
- * mensaje, es una escalera**. Antes cada situación tenía un solo texto, así que
- * "insistirle al que se calló" era un mensaje y se acababa. En la realidad son
- * cuatro toques con ángulos distintos —reabrir, aportar valor, exclusividad,
- * cierre— y si los tres primeros comparten un solo texto, no hay secuencia: hay
- * un mensaje repetido.
+ * Son dos tramos y nada más, y entre los dos hay una decisión de una persona:
  *
- * Y no son etapas sucesivas de un camino único. Después de la oferta el lead va
- * **a una pista o a la otra**, nunca a las dos:
+ *   primer_contacto  el mensaje de entrada. Uno solo, sale en el acto, y es lo
+ *                    único que abre un chat con un desconocido.
+ *   seguimiento      la escalera de cuatro toques. **Se entra calificando**: el
+ *                    lead contestó, alguien lo miró y decidió que vale la pena
+ *                    seguirlo. El que no se califica no recibe nada más.
  *
- *   primer_contacto  la apertura. Dos pasos, ninguno espera.
- *   silencio         recibió la oferta y no dijo nada. Cuatro pasos.
- *   tibio            contestó la oferta con una duda u objeción. Cuatro pasos.
- *   sin_abrir        nunca contestó la entrada. Dos pasos, y es la única que
- *                    consume cupo: el chat jamás se abrió.
+ * ── Lo que había antes ─────────────────────────────────────────────────
+ *
+ * Había cuatro pistas y dieciocho pasos: entrada y oferta, una escalera para
+ * el que se callaba, otra para el que objetaba, y dos reintentos de apertura.
+ * Para repartir a un lead entre ellas había que clasificar su respuesta —si
+ * contestó el primero o el segundo, si le interesa, si está tibio— y de esa
+ * clasificación salía el texto que le tocaba, elegido de una plantilla.
+ *
+ * Nada de eso queda. **El texto de cada lead lo escribe el admin a mano**, uno
+ * por uno, así que no hay nada que elegir: el único dato que el sistema
+ * necesita es si el lead sigue en juego o no. Esa es la marca de calificado, y
+ * reemplaza sola a las tres clasificaciones y a las dos pistas que salían de
+ * ellas.
  *
  * ── Sobre los números ──────────────────────────────────────────────────
  *
- * `paso` es lo que se guarda en `templates.sequence_step`,
- * `lead_assignments.proximo_paso`, `setter_sends.paso` y
- * `messages.sequence_step`. **No se reordena nunca y no se reusa nunca**: los
- * textos escritos y los envíos hechos apuntan a estos números. Un paso nuevo se
- * agrega al final aunque en el recorrido del lead vaya primero, y uno que sale
- * del modelo queda reservado para siempre (ver `PASOS_RETIRADOS`).
- *
- * Por eso la pista no se guarda en ninguna columna: se deduce del paso, que ya
- * pertenece a una sola. Una columna aparte podría contradecir al número.
+ * `paso` es lo que se guarda en `lead_assignments.proximo_paso`,
+ * `setter_sends.paso`, `lead_textos.paso` y `messages.sequence_step`. **No se
+ * reordena nunca y no se reusa nunca**: los envíos hechos apuntan a estos
+ * números, y el historial tiene que poder decir qué se mandó. Por eso la
+ * escalera conserva los números que ya tenía (3, 10, 11 y 12) en vez de
+ * renumerarse de 1 a 4, y los trece pasos del modelo viejo quedan reservados
+ * para siempre en `PASOS_RETIRADOS`.
  */
 
 /* ── Los pasos ────────────────────────────────────────────────────────── */
@@ -40,21 +44,20 @@ export function esPaso(n: unknown): n is Paso {
 }
 
 /**
- * Pasos del modelo viejo que ya no arranca nadie, pero que siguen existiendo.
+ * Pasos que ya no arranca nadie, pero que siguen existiendo.
  *
- * Cuando cada situación era un mensaje suelto, estos cuatro eran reenganches
- * independientes. Al pasar a escaleras quedaron absorbidos: el 3 sigue vivo
- * como primer escalón del silencio, y estos cuatro no. No se borran ni se
- * reusan porque hay envíos y textos que los apuntan, y el historial tiene que
- * poder decir qué se mandó.
+ * Son los del modelo de pistas y plantillas: la oferta (2), los reenganches
+ * sueltos (4, 5, 9), los tres que salían solos al marcar qué contestó el lead
+ * (6, 7, 8), la escalera del tibio (13 a 16) y los dos reintentos de apertura
+ * (17 y 18). No se borran ni se reusan porque hay envíos que los apuntan.
  */
-export const PASOS_RETIRADOS = [4, 5, 9] as const satisfies readonly Paso[]
+export const PASOS_RETIRADOS = [2, 4, 5, 6, 7, 8, 9, 13, 14, 15, 16, 17, 18] as const satisfies readonly Paso[]
 
 /**
  * Va como tupla y no como `readonly Paso[]`: con el tipo ancho,
  * `(typeof PASOS_RETIRADOS)[number]` se ensancha a *todos* los pasos, y el
  * `Record` de sus etiquetas termina pidiendo una entrada por cada número que
- * existe en vez de por estos tres.
+ * existe en vez de por estos trece.
  */
 export type PasoRetirado = (typeof PASOS_RETIRADOS)[number]
 
@@ -64,35 +67,29 @@ export function estaRetirado(paso: Paso): boolean {
 
 /* ── Las pistas ───────────────────────────────────────────────────────── */
 
-export const PISTAS = ['primer_contacto', 'silencio', 'tibio', 'sin_abrir'] as const
+export const PISTAS = ['primer_contacto', 'seguimiento'] as const
 export type Pista = (typeof PISTAS)[number]
 
 /**
- * Las tres zonas del panel.
+ * Las dos zonas del panel.
  *
- * No es decoración: son tres cosas con consecuencias distintas. La apertura no
- * es un seguimiento, y el reintento es el único que gasta cupo y arriesga la
- * cuenta. Mostrarlas como una sola lista numerada sugiere que son etapas de un
- * mismo camino, y no lo son.
+ * No es decoración: abrir un chat con un desconocido y seguir una conversación
+ * que ya existe son dos cosas con consecuencias distintas. La primera gasta
+ * cupo y puede costar la cuenta; la segunda no gasta nada.
  */
-export const ZONAS = ['primer_contacto', 'seguimientos', 'reintento'] as const
+export const ZONAS = ['primer_contacto', 'seguimientos'] as const
 export type Zona = (typeof ZONAS)[number]
 
 export const ZONA_META: Record<Zona, { titulo: string; detalle: string }> = {
   primer_contacto: {
     titulo: 'Primer contacto',
     detalle:
-      'La apertura. No es un seguimiento: son dos pasos fijos, ninguno espera, y lo que conteste acá decide a qué pista va. Están listados para que se vea el recorrido entero — el texto de los dos se escribe en Mensajes, no acá.',
+      'La apertura. Un solo mensaje, sale en el acto y es lo único que gasta cupo: abrir chats nuevos con desconocidos es lo que hace que Instagram restrinja una cuenta.',
   },
   seguimientos: {
-    titulo: 'Seguimientos',
+    titulo: 'Seguimiento',
     detalle:
-      'Las dos pistas reales, después de la oferta. El lead va a una o a la otra, nunca a las dos. El chat ya está abierto, así que no gastan cupo.',
-  },
-  reintento: {
-    titulo: 'Reintento de apertura',
-    detalle:
-      'El único que consume cupo diario y suma riesgo para la cuenta, porque el chat nunca se abrió. Dos intentos y se corta.',
+      'La escalera del lead calificado. El chat ya está abierto, así que no gasta cupo. Cada escalón espera sus días desde el último movimiento de la conversación.',
   },
 }
 
@@ -109,18 +106,6 @@ export interface PasoDePista {
    * 0 = sale en el acto.
    */
   diasDefault: number
-  /** Un texto que sirve tal cual, para no arrancar de una hoja en blanco. */
-  ejemplo: string
-  /**
-   * Si este escalón gasta cupo, cuando su pista dice otra cosa.
-   *
-   * Existe por la oferta: vive en la pista de primer contacto, que abre chats,
-   * pero ella no abre ninguno —sale adentro de una conversación que el lead
-   * acaba de contestar—. Sin esta excepción, la oferta quedaba bloqueada por el
-   * límite de aperturas del día: el setter conseguía que le contestaran y no
-   * podía responder.
-   */
-  consumeCupo?: boolean
 }
 
 export interface MetaDePista {
@@ -140,155 +125,58 @@ export const PISTA_META: Record<Pista, MetaDePista> = {
   primer_contacto: {
     pista: 'primer_contacto',
     zona: 'primer_contacto',
-    titulo: 'Entrada y oferta',
+    titulo: 'Primer mensaje',
     cuandoEntra: 'Le cayó a un setter y todavía no recibió nada.',
-    alTerminar: 'Según lo que conteste, sigue por silencio o por tibio.',
+    alTerminar: 'Si contesta y se lo califica, entra al seguimiento. Si no, vence y vuelve al pozo.',
     consumeCupo: true,
     pasos: [
       {
         paso: 1,
         orden: 1,
-        label: 'Entrada',
+        label: 'Primer mensaje',
         angulo:
-          'Pregunta suelta, sin vender nada. Lo único que busca es que conteste, y de paso saca la conversación de solicitudes y la lleva a la principal.',
+          'El de entrada, escrito para ese negocio en particular. Lo único que busca es que conteste.',
         diasDefault: 0,
-        ejemplo: 'Hola! Vi el perfil de {{negocio}}, quería hacerte una consulta. ¿Estás?',
-      },
-      {
-        paso: 2,
-        orden: 2,
-        label: 'Oferta',
-        angulo:
-          'Sale en el acto, apenas contesta la entrada: si contestó está mirando el celular ahora. Esperar hasta mañana es perder la conversación que se acaba de ganar. Su respuesta decide a qué pista va.',
-        diasDefault: 0,
-        // El chat ya está abierto y contestando: no es una apertura, no gasta.
-        consumeCupo: false,
-        ejemplo:
-          'Te cuento en dos líneas: hacemos {{oferta}}. Si te sirve te muestro algo parecido a lo tuyo, sin compromiso.',
       },
     ],
   },
 
-  silencio: {
-    pista: 'silencio',
+  seguimiento: {
+    pista: 'seguimiento',
     zona: 'seguimientos',
-    titulo: 'Silencio después de la oferta',
-    cuandoEntra: 'Recibió la oferta y no contestó nada.',
-    alTerminar: 'Nurture: vuelve a entrar a los 30-60 días.',
+    titulo: 'Seguimiento',
+    cuandoEntra: 'Contestó y se lo calificó: es un lead que vale la pena seguir.',
+    alTerminar: 'Se terminó la escalera. De ahí en más queda para retomarlo más adelante.',
     consumeCupo: false,
     pasos: [
       {
         paso: 3,
         orden: 1,
-        label: 'Check-in',
-        angulo: 'Corto y sin vender. Lo único que busca es reabrir la conversación.',
+        label: 'Primer seguimiento',
+        angulo: 'Retomar la conversación donde quedó, con lo que haya dicho.',
         diasDefault: 2,
-        ejemplo: 'Che, te escribí por {{negocio}} y capaz se te pasó. ¿Lo viste?',
       },
       {
         paso: 10,
         orden: 2,
-        label: 'Valor',
-        angulo:
-          'Valor puro: un caso o un número concreto. No pide nada y no repite la oferta.',
+        label: 'Segundo seguimiento',
+        angulo: 'Aportar algo concreto: un caso, un número, una idea para ese negocio.',
         diasDefault: 4,
-        ejemplo:
-          'Te dejo un dato: a un local parecido al tuyo le subimos los turnos un 30% en dos meses. Por si te sirve.',
       },
       {
         paso: 11,
         orden: 3,
-        label: 'Exclusividad',
-        angulo: 'Exclusividad por zona: trabajamos con uno solo por área. Da un motivo para contestar ahora.',
+        label: 'Tercer seguimiento',
+        angulo: 'Dar un motivo para contestar ahora y no la semana que viene.',
         diasDefault: 7,
-        ejemplo:
-          'Che, laburamos con un solo negocio por zona y en la tuya todavía no cerramos con nadie. ¿Te interesa que hablemos antes de definirlo?',
       },
       {
         paso: 12,
         orden: 4,
-        label: 'Breakup',
+        label: 'Último seguimiento',
         angulo:
           'El cierre. Cordial, sin reproche y sin pedir nada: lo único que busca es dejar la puerta abierta.',
         diasDefault: 11,
-        ejemplo:
-          'Te dejo tranquilo por ahora. Si en algún momento te sirve, escribime y lo vemos. Éxitos con {{negocio}}!',
-      },
-    ],
-  },
-
-  tibio: {
-    pista: 'tibio',
-    zona: 'seguimientos',
-    titulo: 'Tibio después de la oferta',
-    cuandoEntra:
-      'Contestó la oferta con una duda o una objeción: "cuánto sale", "después veo", "ando a full".',
-    alTerminar: 'Nurture: vuelve a entrar a los 30-60 días.',
-    consumeCupo: false,
-    pasos: [
-      {
-        paso: 13,
-        orden: 1,
-        label: 'Responder y proponer',
-        angulo: 'Contestar la duda que puso y proponer una llamada de 10 minutos.',
-        diasDefault: 1,
-        ejemplo:
-          'Te respondo lo que preguntaste: {{oferta}}, y arrancamos sin costo de setup. ¿Tenés 10 minutos esta semana para verlo?',
-      },
-      {
-        paso: 14,
-        orden: 2,
-        label: 'Qué lo frena',
-        angulo: 'Preguntar directo cuál de las dos cosas es: el precio o el momento.',
-        diasDefault: 2,
-        ejemplo: 'Che, para no marearte: ¿lo que te frena es el precio o es que no es el momento?',
-      },
-      {
-        paso: 15,
-        orden: 3,
-        label: 'Sacar el riesgo',
-        angulo: 'Según lo que haya respondido, sacarle el riesgo de encima: prueba, plazo o precio.',
-        diasDefault: 4,
-        ejemplo:
-          'Hagamos algo: lo armamos y si en un mes no te sirve, lo damos de baja sin costo. Así no arriesgás nada.',
-      },
-      {
-        paso: 16,
-        orden: 4,
-        label: 'Deadline suave',
-        angulo: 'Una fecha concreta de arranque, sin apretar. Da un motivo para decidir ahora.',
-        diasDefault: 6,
-        ejemplo:
-          'Estoy cerrando la agenda de arranques del mes que viene. ¿Te reservo un lugar o lo dejamos para más adelante?',
-      },
-    ],
-  },
-
-  sin_abrir: {
-    pista: 'sin_abrir',
-    zona: 'reintento',
-    titulo: 'No contestó la entrada',
-    cuandoEntra: 'Nunca contestó la entrada, así que nunca recibió la oferta.',
-    alTerminar: 'Nurture. Después de dos intentos no se insiste más.',
-    consumeCupo: true,
-    pasos: [
-      {
-        paso: 17,
-        orden: 1,
-        label: 'Otra apertura',
-        angulo:
-          'Una apertura distinta, no la misma repetida. Si el primer ángulo no funcionó, repetirlo tampoco va a funcionar.',
-        diasDefault: 7,
-        ejemplo: 'Hola! Te escribí hace unos días por {{negocio}}. ¿Te llego bien por acá?',
-      },
-      {
-        paso: 18,
-        orden: 2,
-        label: 'Última apertura',
-        angulo: 'El último intento, con otro ángulo. Después de este no se insiste más.',
-        diasDefault: 15,
-        ejemplo:
-          'Última que te escribo, prometido. Si en algún momento te sirve {{oferta}}, quedo por acá. Éxitos!',
       },
     ],
   },
@@ -296,48 +184,7 @@ export const PISTA_META: Record<Pista, MetaDePista> = {
 
 export const PISTAS_POR_ZONA: Record<Zona, readonly Pista[]> = {
   primer_contacto: ['primer_contacto'],
-  seguimientos: ['silencio', 'tibio'],
-  reintento: ['sin_abrir'],
-}
-
-/* ── Los que salen apenas el setter marca ─────────────────────────────── */
-
-/**
- * Tres textos que no pertenecen a ninguna pista: no esperan días ni encadenan
- * nada. Salen en el acto porque el lead está del otro lado, ahora.
- */
-export const PASOS_DE_MARCA = [6, 7, 8] as const
-export type PasoDeMarca = (typeof PASOS_DE_MARCA)[number]
-
-export const MARCA_META: Record<PasoDeMarca, { label: string; cuando: string; angulo: string; ejemplo: string }> = {
-  6: {
-    label: 'Le interesa',
-    cuando: 'El setter marcó que contestó la oferta y que le interesa. Sale en el acto.',
-    angulo:
-      'Ya dijo que sí. Tiene que llevarlo a una fecha concreta, no a seguir charlando: cada día entre el sí y la reunión es un lead que se enfría.',
-    ejemplo:
-      'Buenísimo! ¿Te viene bien que hablemos 15 minutos? Decime qué día y hora te queda cómodo y lo dejamos agendado.',
-  },
-  7: {
-    label: 'No le interesa',
-    cuando: 'El setter marcó que contestó la oferta y que no le interesa. Sale en el acto.',
-    angulo:
-      'Cerrar bien. No es para convencerlo: es para poder volver a escribirle dentro de unos meses sin que te tenga bloqueado.',
-    ejemplo:
-      'Dale, te agradezco igual la respuesta. Quedo por acá por si en algún momento te sirve. Éxitos con {{negocio}}!',
-  },
-  8: {
-    label: 'Agendó reunión',
-    cuando: 'El setter cargó la reunión. Sale en el acto.',
-    angulo:
-      'Dejar por escrito lo que se habló. Una reunión que quedó de palabra en un chat de Instagram es una reunión a la que no se presenta nadie.',
-    ejemplo:
-      'Listo, quedamos entonces. Te confirmo por acá el día antes. Si te surge algo avisame y lo movemos sin problema.',
-  },
-}
-
-export function esPasoDeMarca(paso: Paso): paso is PasoDeMarca {
-  return (PASOS_DE_MARCA as readonly number[]).includes(paso)
+  seguimientos: ['seguimiento'],
 }
 
 /* ── Consultas sobre el modelo ────────────────────────────────────────── */
@@ -384,16 +231,10 @@ export function primerPasoDe(pista: Pista): PasoDePista {
 /**
  * Si el paso gasta cupo diario de la cuenta.
  *
- * Solo la apertura y el reintento: los dos escalones que le escriben a alguien
- * que nunca contestó. Todo el resto —la oferta incluida— sale adentro de una
- * conversación que ya existe, y un mensaje ahí no es lo que hace que Instagram
- * restrinja una cuenta. Lo que la restringe es abrir chats nuevos con
- * desconocidos.
- *
- * La oferta es la excepción que hay que mirar dos veces: pertenece a la pista
- * de primer contacto, que sí abre chats, pero ella sale cuando el lead acaba de
- * contestar. Contarla dejaba al setter sin poder responderle a alguien que le
- * estaba escribiendo, que es lo peor que puede pasar en una conversación.
+ * Solo el primer mensaje: es el único que le escribe a alguien que nunca
+ * contestó. Los seguimientos salen adentro de una conversación que ya existe, y
+ * un mensaje ahí no es lo que hace que Instagram restrinja una cuenta. Lo que
+ * la restringe es abrir chats nuevos con desconocidos.
  *
  * Gastar cupo en los seguimientos hacía que trabajar bien a los leads que ya
  * contestaron compitiera con abrir leads nuevos, que son dos cosas que no
@@ -409,20 +250,14 @@ export function consumeCupo(paso: Paso): boolean {
  *
  * Es el mismo hecho que `consumeCupo` visto desde el otro lado, y por eso hay
  * una sola implementación: lo único que gasta cupo es abrir chats nuevos. Los
- * dos nombres existen porque el hecho se usa para dos cosas distintas — el
+ * dos nombres existen porque el hecho se usa para dos cosas distintas —el
  * límite de la cuenta, y **en qué sección de su pantalla trabaja el setter**—,
  * y en cada lugar se lee mejor con su propio nombre.
- *
- * Son tres pasos y ninguno más: la entrada, y los dos reintentos de apertura
- * del lead que nunca contestó. Todo el resto sale adentro de una conversación
- * que ya existe.
  */
 export function esApertura(paso: Paso): boolean {
   const u = ubicacionDePaso(paso)
   if (!u) return false
-  // El escalón manda sobre su pista: la oferta vive en la pista que abre chats
-  // y no abre ninguno.
-  return u.paso.consumeCupo ?? PISTA_META[u.pista].consumeCupo
+  return PISTA_META[u.pista].consumeCupo
 }
 
 /** Los pasos que descuentan del cupo, para poder filtrarlos en SQL. */
@@ -433,14 +268,8 @@ export const PASOS_QUE_CONSUMEN_CUPO: readonly Paso[] = PASOS_DE_PISTA.filter(co
 /**
  * En qué está trabajando el setter cuando abre la app.
  *
- * Son **dos trabajos distintos** y estaban en una sola cola, mezclados: la
- * pantalla llamaba "seguimiento" a todo lo que no fuera la entrada, así que
- * decía "hoy te tocan 12 seguimientos" y adentro venían la oferta y los
- * reintentos de apertura. El setter no podía saber, mirando la tarjeta, si
- * estaba abriendo un chat con un desconocido o siguiendo una charla empezada.
- *
- * La línea es la misma que la del cupo, y no es casualidad: lo que separa a los
- * dos trabajos es si del otro lado ya te contestaron alguna vez.
+ * Son **dos trabajos distintos** y la línea que los separa es si del otro lado
+ * ya te contestaron alguna vez. Es la misma del cupo, y no es casualidad.
  *
  *   apertura     le escribís por primera vez. Gasta cupo y arriesga la cuenta.
  *   seguimiento  el chat ya existe. No gasta nada.
@@ -462,54 +291,13 @@ export const SECCION_META: Record<
     titulo: 'Seguimiento',
     corto: 'Seguimiento',
     detalle:
-      'Conversaciones que ya están abiertas. No gastan cupo ni arriesgan la cuenta: seguir un chat empezado no es lo que Instagram castiga.',
+      'Conversaciones que ya están abiertas, de leads calificados. No gastan cupo ni arriesgan la cuenta: seguir un chat empezado no es lo que Instagram castiga.',
   },
 }
 
 /** En qué sección de la pantalla del setter cae este mensaje. */
 export function seccionDePaso(paso: Paso): Seccion {
   return esApertura(paso) ? 'apertura' : 'seguimiento'
-}
-
-/* ── Qué se escribe en cada pantalla ──────────────────────────────────── */
-
-/**
- * Los pasos cuyo texto se escribe en **Mensajes**: los que no dependen de
- * ningún día.
- *
- * Son la apertura —entrada y oferta, que salen en el acto— y los tres que salen
- * apenas el setter marca qué contestó el lead. Todo lo demás es un escalón de
- * una pista, y su texto se escribe en Seguimientos pegado a su día, porque a
- * los dos días y a los once no se escribe igual.
- */
-export const PASOS_DE_MENSAJES: readonly Paso[] = [
-  ...PISTA_META.primer_contacto.pasos.map((p) => p.paso),
-  ...PASOS_DE_MARCA,
-]
-
-export interface GrupoDeMensajes {
-  titulo: string
-  detalle: string
-  pasos: readonly Paso[]
-}
-
-export const GRUPOS_DE_MENSAJES: readonly GrupoDeMensajes[] = [
-  {
-    titulo: 'Primer contacto',
-    detalle:
-      'La apertura. Los dos salen en el acto: la entrada cuando el setter toma el lead, y la oferta apenas contesta.',
-    pasos: PISTA_META.primer_contacto.pasos.map((p) => p.paso),
-  },
-  {
-    titulo: 'El setter lo marcó',
-    detalle: 'Salen ya, apenas marca en la app qué contestó el lead. No esperan nada.',
-    pasos: PASOS_DE_MARCA,
-  },
-]
-
-/** Si el texto de este paso se escribe en Mensajes y no en Seguimientos. */
-export function seEscribeEnMensajes(paso: Paso): boolean {
-  return PASOS_DE_MENSAJES.includes(paso)
 }
 
 /* ── Etiquetas para todo paso guardado, incluidos los retirados ───────── */
@@ -520,7 +308,6 @@ export interface MetaDePaso {
   cuando: string
   /** Qué tiene que lograr. Es lo que guía cómo escribirlo. */
   objetivo: string
-  ejemplo: string
 }
 
 /**
@@ -531,23 +318,70 @@ export interface MetaDePaso {
  * con un envío de hace dos meses.
  */
 const META_RETIRADOS: Record<PasoRetirado, MetaDePaso> = {
+  2: {
+    label: 'Oferta (retirado)',
+    cuando: 'Del modelo viejo: salía apenas el lead contestaba la entrada.',
+    objetivo: 'Contar qué le ofrecíamos.',
+  },
   4: {
     label: 'Contestó y se enfrió (retirado)',
-    cuando: 'Del modelo viejo. Hoy ese lead va a la pista de tibio.',
+    cuando: 'Del modelo viejo.',
     objetivo: 'Retomar una conversación que ya existía.',
-    ejemplo: '',
   },
   5: {
     label: 'Le interesó y se enfrió (retirado)',
-    cuando: 'Del modelo viejo. Hoy ese lead va a la pista de tibio.',
+    cuando: 'Del modelo viejo.',
     objetivo: 'Volver a poner en tema a alguien que ya había dicho que sí.',
-    ejemplo: '',
+  },
+  6: {
+    label: 'Le interesa (retirado)',
+    cuando: 'Del modelo viejo: salía solo al marcar que le interesaba la oferta.',
+    objetivo: 'Llevarlo a una fecha concreta.',
+  },
+  7: {
+    label: 'No le interesa (retirado)',
+    cuando: 'Del modelo viejo: salía solo al marcar que no le interesaba.',
+    objetivo: 'Cerrar cordialmente y dejar la puerta abierta.',
+  },
+  8: {
+    label: 'Agendó reunión (retirado)',
+    cuando: 'Del modelo viejo: salía solo al cargar la reunión.',
+    objetivo: 'Dejar por escrito lo que se habló.',
   },
   9: {
     label: 'Último reenganche (retirado)',
-    cuando: 'Del modelo viejo. Hoy cierra el último escalón de cada pista.',
+    cuando: 'Del modelo viejo.',
     objetivo: 'Cerrar la relación dejando la puerta abierta.',
-    ejemplo: '',
+  },
+  13: {
+    label: 'Tibio · 1. Responder y proponer (retirado)',
+    cuando: 'De la escalera del tibio. Hoy ese lead se califica y entra al seguimiento.',
+    objetivo: 'Contestar la duda y proponer una llamada.',
+  },
+  14: {
+    label: 'Tibio · 2. Qué lo frena (retirado)',
+    cuando: 'De la escalera del tibio. Hoy ese lead se califica y entra al seguimiento.',
+    objetivo: 'Preguntar si es el precio o el momento.',
+  },
+  15: {
+    label: 'Tibio · 3. Sacar el riesgo (retirado)',
+    cuando: 'De la escalera del tibio. Hoy ese lead se califica y entra al seguimiento.',
+    objetivo: 'Sacarle el riesgo de encima.',
+  },
+  16: {
+    label: 'Tibio · 4. Deadline suave (retirado)',
+    cuando: 'De la escalera del tibio. Hoy ese lead se califica y entra al seguimiento.',
+    objetivo: 'Dar una fecha concreta de arranque.',
+  },
+  17: {
+    label: 'Reintento de apertura (retirado)',
+    cuando: 'Del modelo viejo: se le insistía al que nunca contestó la entrada.',
+    objetivo: 'Abrir con otro ángulo.',
+  },
+  18: {
+    label: 'Última apertura (retirado)',
+    cuando: 'Del modelo viejo: el último intento con el que nunca contestó.',
+    objetivo: 'Último intento antes de dejarlo.',
   },
 }
 
@@ -564,17 +398,7 @@ export const PASO_META: Record<Paso, MetaDePaso> = (() => {
             ? `${meta.cuandoEntra} Sale en el acto.`
             : `${meta.cuandoEntra} Sale a los ${p.diasDefault} días del último movimiento.`,
         objetivo: p.angulo,
-        ejemplo: p.ejemplo,
       }
-    }
-  }
-
-  for (const p of PASOS_DE_MARCA) {
-    salida[p] = {
-      label: MARCA_META[p].label,
-      cuando: MARCA_META[p].cuando,
-      objetivo: MARCA_META[p].angulo,
-      ejemplo: MARCA_META[p].ejemplo,
     }
   }
 

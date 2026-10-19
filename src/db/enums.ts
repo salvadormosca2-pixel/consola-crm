@@ -295,11 +295,21 @@ export const USER_STATUS_META: Record<UserStatus, { label: string; tone: Tono }>
 /** Igual que el `Tono` de la UI, replicado acá para no importar componentes. */
 type Tono = 'neutral' | 'activo' | 'positivo' | 'negativo'
 
+/**
+ * En qué anda cada lead que se le entregó a un setter.
+ *
+ * 'segundo_enviado' y 'respondido' son del modelo viejo —cuando se marcaba a
+ * cuál de los dos mensajes había contestado— y se quedan en el enum porque hay
+ * filas con esos valores. Hoy el recorrido es más corto: se contacta, y si
+ * contestó y vale la pena, se **califica**. Eso es lo único que abre la
+ * escalera de seguimiento.
+ */
 export const LEAD_ESTADOS = [
   'asignado',
   'abierto',
   'saltado',
   'contactado',
+  'calificado',
   'segundo_enviado',
   'respondido',
   'cuenta_inexistente',
@@ -314,6 +324,7 @@ export const LEAD_ESTADO_META: Record<LeadEstado, { label: string; tone: Tono }>
   abierto: { label: 'Chat abierto', tone: 'activo' },
   saltado: { label: 'Salteado', tone: 'neutral' },
   contactado: { label: 'Contactado', tone: 'activo' },
+  calificado: { label: 'Calificado', tone: 'positivo' },
   segundo_enviado: { label: 'Segundo enviado', tone: 'activo' },
   respondido: { label: 'Respondió', tone: 'positivo' },
   cuenta_inexistente: { label: 'Cuenta inexistente', tone: 'negativo' },
@@ -330,6 +341,7 @@ export const ESTADOS_TOMADOS: readonly LeadEstado[] = [
   'abierto',
   'saltado',
   'contactado',
+  'calificado',
   'segundo_enviado',
   'respondido',
   'cuenta_inexistente',
@@ -340,75 +352,6 @@ export const ESTADOS_EN_COLA: readonly LeadEstado[] = ['asignado', 'abierto', 's
 
 /** Estados que cuentan el lead como no trabajado a efectos del vencimiento. */
 export const ESTADOS_SIN_TRABAJAR: readonly LeadEstado[] = ['asignado', 'abierto', 'saltado']
-
-/**
- * Los dos mensajes, que hacen cosas distintas:
- *
- *   primero  el gancho. No dice a qué nos dedicamos, solo abre conversación.
- *   segundo  la oferta. Acá sí le contamos qué le estamos ofreciendo.
- */
-export const SETTER_SEND_TIPOS = ['primero', 'segundo'] as const
-export const setterSendTipoEnum = pgEnum('setter_send_tipo', SETTER_SEND_TIPOS)
-export type SetterSendTipo = (typeof SETTER_SEND_TIPOS)[number]
-
-export const MENSAJE_META: Record<SetterSendTipo, { label: string; detalle: string }> = {
-  primero: {
-    label: 'Primer mensaje',
-    detalle: 'El de entrada. Abre conversación, no ofrece nada todavía.',
-  },
-  segundo: {
-    label: 'Segundo mensaje',
-    detalle: 'La oferta: qué hacemos y qué le proponemos.',
-  },
-}
-
-/**
- * Qué contestó cuando ya vio la oferta.
- *
- * Solo existe para el segundo mensaje: un "me interesa" antes de saber qué le
- * estamos ofreciendo no significa nada.
- *
- * Son tres y no dos porque entre el sí y el no está el que más se pierde: el
- * que contestó con una duda. Tratarlo como un no lo cierra, y tratarlo como un
- * sí le manda un mensaje que no viene al caso.
- */
-export const LEAD_INTERESES = ['interesa', 'no_interesa', 'tibio'] as const
-export const leadInteresEnum = pgEnum('lead_interes', LEAD_INTERESES)
-export type LeadInteres = (typeof LEAD_INTERESES)[number]
-
-export const INTERES_META: Record<LeadInteres, { label: string; tone: Tono; detalle: string }> = {
-  interesa: {
-    label: 'Le interesa',
-    detalle: 'Vio la oferta y dijo que sí. Es el mejor lead que hay: pasa primero.',
-    tone: 'positivo',
-  },
-  no_interesa: {
-    label: 'No le interesa',
-    detalle: 'Vio la oferta y dijo que no. Sale de la cola, pero cuenta como respuesta.',
-    tone: 'negativo',
-  },
-  tibio: {
-    label: 'Tibio',
-    detalle:
-      'Contestó la oferta con una duda o una objeción: precio, momento, "después veo". Ni sí ni no, y es el que más se pierde por tratarlo como un no.',
-    tone: 'activo',
-  },
-}
-
-/**
- * Cómo se lee una respuesta según a qué mensaje llegó. Son dos hechos
- * distintos y se atienden distinto, por eso no comparten etiqueta.
- */
-export const RESPUESTA_META: Record<SetterSendTipo, { label: string; detalle: string }> = {
-  primero: {
-    label: 'Respondió el 1er mensaje',
-    detalle: 'Abrió conversación y todavía no sabe qué le ofrecemos. Entramos nosotros.',
-  },
-  segundo: {
-    label: 'Respondió el 2do mensaje',
-    detalle: 'Ya sabe qué le ofrecemos y contestó que sí o que no.',
-  },
-}
 
 export const CONTACT_ORIGENES = ['cliente', 'scrapeado'] as const
 export const contactOrigenEnum = pgEnum('contact_origen', CONTACT_ORIGENES)
@@ -502,8 +445,11 @@ export const EVENT_TYPES_SETTERS = [
   'lead_abierto',
   'lead_contactado',
   'lead_segundo_enviado',
+  'lead_seguimiento_enviado',
   'lead_respondio',
   'lead_clasificado',
+  'lead_calificado',
+  'texto_escrito',
   'lead_salteado',
   'lead_cuenta_inexistente',
   'lead_descartado',

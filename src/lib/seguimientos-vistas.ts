@@ -2,11 +2,10 @@
  * Las clasificaciones del control de seguimientos.
  *
  * Son el recorrido del trabajo contado en números: cuántos faltan por
- * contactar, cuántos se contactaron, cuántos seguimientos se hicieron, cuántos
- * faltan, cuántos se atrasaron, cuántos contestaron y cuántos están listos
- * para comprar.
+ * contactar, cuántos se contactaron, cuántos quedaron calificados, cuántos
+ * seguimientos se hicieron, cuántos faltan y cuántos se atrasaron.
  *
- * Las mismas siete se usan en la pantalla general y en la ficha de cada setter,
+ * Las mismas seis se usan en la pantalla general y en la ficha de cada setter,
  * a propósito: si el vocabulario cambia entre pantallas, los números dejan de
  * poder compararse.
  *
@@ -17,11 +16,10 @@
 export const CLASIFICACIONES = [
   'por_contactar',
   'contactados',
+  'calificados',
   'seguimiento_hecho',
   'falta_seguimiento',
   'atrasados',
-  'contestaron',
-  'listos',
 ] as const
 export type Clasificacion = (typeof CLASIFICACIONES)[number]
 
@@ -51,15 +49,24 @@ export const CLASIFICACION_META: Record<Clasificacion, MetaDeClasificacion> = {
   contactados: {
     label: 'Contactados',
     enSetter: 'contactó a',
-    detalle: 'Ya recibieron el mensaje de entrada.',
+    detalle: 'Ya recibieron el primer mensaje.',
     grupo: 'trabajo',
     tono: 'neutro',
     vacio: 'Todavía no se contactó a nadie.',
   },
+  calificados: {
+    label: 'Calificados',
+    enSetter: 'calificó a',
+    detalle:
+      'Contestaron y se decidió seguirlos. Son los únicos que reciben seguimiento, y el número que de verdad mide el trabajo de un setter.',
+    grupo: 'resultado',
+    tono: 'bueno',
+    vacio: 'Todavía no hay ninguno calificado.',
+  },
   seguimiento_hecho: {
     label: 'Seguimiento hecho',
     enSetter: 'hizo seguimiento a',
-    detalle: 'Recibieron al menos un mensaje después de la entrada.',
+    detalle: 'Recibieron al menos un mensaje después del primero.',
     grupo: 'trabajo',
     tono: 'bueno',
     vacio: 'Todavía no se hizo ningún seguimiento.',
@@ -79,22 +86,6 @@ export const CLASIFICACION_META: Record<Clasificacion, MetaDeClasificacion> = {
     grupo: 'trabajo',
     tono: 'malo',
     vacio: 'No hay ninguno atrasado.',
-  },
-  contestaron: {
-    label: 'Contestaron',
-    enSetter: 'le contestaron',
-    detalle: 'Respondieron alguno de los mensajes.',
-    grupo: 'resultado',
-    tono: 'bueno',
-    vacio: 'Todavía no contestó nadie.',
-  },
-  listos: {
-    label: 'Listos para comprar',
-    enSetter: 'tiene listos',
-    detalle: 'Vieron la oferta y dijeron que les interesa. Son los que hay que atender hoy.',
-    grupo: 'resultado',
-    tono: 'bueno',
-    vacio: 'Todavía no hay ninguno listo para comprar.',
   },
 }
 

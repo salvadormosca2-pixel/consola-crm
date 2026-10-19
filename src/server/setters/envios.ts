@@ -3,14 +3,8 @@ import 'server-only'
 import { sql } from 'drizzle-orm'
 
 import { db, type Db } from '@/db'
-import type { SetterSendTipo } from '@/db/enums'
-import {
-  diasDelPaso,
-  proximoSeguimiento,
-  type PasoDeSeguimiento,
-  type RespondioA,
-} from '@/lib/setters-config'
-import { consumeCupo, primerPasoDe } from '@/lib/pistas'
+import { proximoSeguimiento, type PasoDeSeguimiento } from '@/lib/setters-config'
+import { consumeCupo } from '@/lib/pistas'
 import { leerConfigSetters } from '@/server/setters/config'
 import { PASOS_CON_CUPO } from '@/server/setters/cupo'
 import { opsDate } from '@/lib/tz'
@@ -26,10 +20,9 @@ import { opsDate } from '@/lib/tz'
  *      el contador guardado.
  *   3. Si la cuenta llegó a su cupo, se rechaza. Acá no hay excepción posible:
  *      pasarse de 30 en una cuenta scrapeando en frío es perderla.
- *   4. Se registra el envío, se avanza el lead y se programa el segundo
- *      mensaje.
+ *   4. Se registra el envío y se avanza el lead al escalón siguiente.
  *
- * El índice único `(assignment_id, tipo)` hace que reintentar sea gratis: la
+ * El índice único `(assignment_id, paso)` hace que reintentar sea gratis: la
  * marca que el celular guardó sin señal y sincronizó dos veces entra una sola.
  */
 
@@ -42,8 +35,6 @@ export type ResultadoEnvio =
       cupo: number
       restante: number
       sendId: string | null
-      /** Cuándo le toca el segundo mensaje, si acaba de mandarse el primero. */
-      segundoAt: Date | null
     }
   | { ok: false; motivo: 'cupo' | 'estado' | 'cuenta' | 'error'; detalle: string }
 
@@ -61,7 +52,6 @@ interface FilaAsignacion {
   setter_id: string
   estado: string
   contactado_at: Date | null
-  respondio_a: string | null
 }
 
 export async function registrarEnvio(
@@ -69,11 +59,9 @@ export async function registrarEnvio(
     assignmentId: string
     setterId: string
     cuentaId: string
-    /** Cuál de las cinco situaciones. 1 entrada, 2 oferta, 3-5 reenganches. */
+    /** Qué mensaje: 1 el primero, y 3, 10, 11 o 12 los del seguimiento. */
     paso: PasoDeSeguimiento
     body: string
-    templateId: string | null
-    templateVariant: number | null
     actorUserId: string | null
   },
   /** Se inyecta en los tests de concurrencia, que corren contra otra base. */
@@ -127,7 +115,7 @@ export async function registrarEnvio(
 
       /* ── 3. Verificar el lead ──────────────────────────────────────── */
       const asignaciones = await tx.execute(sql`
-        select id, contact_id, setter_id, estado, contactado_at, respondio_a
+        select id, contact_id, setter_id, estado, contactado_at
           from lead_assignments
          where id = ${params.assignmentId}::uuid
            for update
@@ -139,29 +127,19 @@ export async function registrarEnvio(
       }
 
       /*
-       * La entrada sale sobre un lead sin tocar. La oferta sale sobre uno
-       * contactado —le toca por tiempo— o sobre uno que **acaba de contestar
-       * la entrada**, que es el caso bueno: ahí la oferta va enseguida, y por
-       * eso el estado es "respondido" y no "contactado".
+       * El primer mensaje sale sobre un lead sin tocar. Los escalones del
+       * seguimiento salen sobre uno calificado, y ahí lo que manda no es el
+       * estado sino que el paso sea el que tenía programado, cosa que garantiza
+       * el índice único por paso unos renglones más abajo.
        *
-       * Los reenganches salen sobre leads ya trabajados: ahí lo que manda no
-       * es el estado sino que el paso sea el que tenía programado, y eso lo
-       * garantiza el índice único por paso unos renglones más abajo.
+       * Los dos estados del modelo viejo siguen en la lista porque hay leads
+       * vivos con esas filas: los que venían de "respondió" o "segundo
+       * enviado" se siguen pudiendo trabajar hasta que terminen su escalera.
        */
-      const contestoLaEntrada = asignacion.respondio_a === 'primero'
       const esperado =
         params.paso === 1
           ? ['asignado', 'abierto', 'saltado']
-          : params.paso === 2
-            ? contestoLaEntrada
-              ? ['contactado', 'respondido']
-              : ['contactado']
-            : /*
-               * Los reenganches y los tres que salen por marca del setter caen
-               * todos acá: sobre un lead ya trabajado. Lo que manda no es el
-               * estado sino que el paso sea el que tenía programado.
-               */
-              ['contactado', 'segundo_enviado', 'respondido']
+          : ['calificado', 'contactado', 'segundo_enviado', 'respondido']
 
       if (!esperado.includes(asignacion.estado)) {
         /*
@@ -184,7 +162,6 @@ export async function registrarEnvio(
             cupo: cuenta.cupo_diario,
             restante: Math.max(cuenta.cupo_diario - usadoHoy, 0),
             sendId: (previos.rows[0] as { id: string }).id,
-            segundoAt: null,
           }
         }
         return {
@@ -213,16 +190,13 @@ export async function registrarEnvio(
       /* ── 4. Registrar ──────────────────────────────────────────────── */
       const ahora = new Date()
       const paso = params.paso
-      // `tipo` se conserva para los contadores de seguimientos y la línea de
-      // tiempo: la entrada es el paso 1, todo lo demás es seguimiento.
-      const tipo: SetterSendTipo = paso === 1 ? 'primero' : 'segundo'
 
       const mensajes = await tx.execute(sql`
-        insert into messages (contact_id, account_id, channel, direction, body, template_id,
-                              template_variant, sequence_step, status, send_mode,
+        insert into messages (contact_id, account_id, channel, direction, body,
+                              sequence_step, status, send_mode,
                               idempotency_key, sent_at)
         values (${asignacion.contact_id}::uuid, null, 'instagram', 'out', ${params.body},
-                ${params.templateId}::uuid, ${params.templateVariant}, ${paso},
+                ${paso},
                 'enviado', 'manual',
                 ${`setter:${params.assignmentId}:${paso}`}, ${ahora.toISOString()}::timestamptz)
         on conflict do nothing
@@ -232,9 +206,9 @@ export async function registrarEnvio(
 
       const envios = await tx.execute(sql`
         insert into setter_sends (assignment_id, setter_id, setter_account_id, contact_id,
-                                  tipo, paso, ops_date, sent_at, message_id)
+                                  paso, ops_date, sent_at, message_id)
         values (${params.assignmentId}::uuid, ${params.setterId}::uuid, ${cuenta.id}::uuid,
-                ${asignacion.contact_id}::uuid, ${tipo}, ${paso}, ${hoy}::date,
+                ${asignacion.contact_id}::uuid, ${paso}, ${hoy}::date,
                 ${ahora.toISOString()}::timestamptz, ${messageId}::uuid)
         on conflict do nothing
         returning id
@@ -250,38 +224,20 @@ export async function registrarEnvio(
           cupo: cuenta.cupo_diario,
           restante: Math.max(cuenta.cupo_diario - usadoHoy, 0),
           sendId: null,
-          segundoAt: null,
         }
       }
 
       /*
-       * Por dónde sigue. Lo decide el modelo de pistas y depende de una sola
-       * cosa: si el lead abrió la boca.
+       * Por dónde sigue.
        *
-       *   · mandada la entrada y sin respuesta, nunca va a ver la oferta: se va
-       *     al reintento de apertura. Si contestó, la oferta ya se la programó
-       *     la acción que marcó la respuesta, y salió en el acto — acá no hay
-       *     nada que encadenar.
-       *   · mandada la oferta, lo que importa es si contestó *la oferta*.
-       *     Haber contestado la entrada no cuenta: ese lead ya habló una vez,
-       *     pero ante la oferta se calló igual, y el que se calla entra a
-       *     silencio. Solo si contestó la oferta se frena, porque ahí decide
-       *     una persona en la cola de clasificación.
-       *
-       * Dentro de una pista no hay bifurcación: se baja un escalón por vez, y
-       * al final de la escalera no sigue nada. Las tres situaciones que salen
-       * por marca del setter tampoco encadenan: las programa quien las marca.
+       *   · mandado **el primer mensaje**, no se encadena nada. Lo que sigue
+       *     no depende del reloj sino de que alguien lo califique: si contestó
+       *     y vale la pena seguirlo, calificarlo le abre la escalera. Si nadie
+       *     lo califica, el lead vence y vuelve al pozo.
+       *   · mandado **un escalón del seguimiento**, le toca el siguiente de la
+       *     escalera, y al final no sigue nada.
        */
-      const siguiente = proximoSeguimiento(cfg, paso, ahora, asignacion.respondio_a as RespondioA)
-
-      /*
-       * `segundo_programado_at` es el reloj que miran los recordatorios, las
-       * tareas y el reparto para saber si a un lead le quedó algo pendiente. Se
-       * sigue llenando con lo que venga después de la entrada —que ahora es el
-       * reintento, no la oferta— para que esas tres cosas sigan contando lo
-       * mismo: un toque programado que ya venció.
-       */
-      const segundoAt = paso === 1 ? (siguiente?.cuando ?? null) : null
+      const siguiente = paso === 1 ? null : proximoSeguimiento(cfg, paso, ahora)
 
       if (paso === 1) {
         await tx.execute(sql`
@@ -290,30 +246,16 @@ export async function registrarEnvio(
                  contactado_at = ${ahora.toISOString()}::timestamptz,
                  abierto_at = null,
                  setter_account_id = ${cuenta.id}::uuid,
-                 segundo_programado_at = ${segundoAt?.toISOString() ?? null}::timestamptz,
-                 proximo_paso = ${siguiente?.paso ?? null},
-                 proximo_seguimiento_at = ${siguiente?.cuando.toISOString() ?? null}::timestamptz,
-                 pospuesto_at = null
-           where id = ${params.assignmentId}::uuid
-        `)
-      } else if (paso === 2) {
-        await tx.execute(sql`
-          update lead_assignments
-             set estado = 'segundo_enviado',
-                 segundo_mensaje_at = ${ahora.toISOString()}::timestamptz,
-                 abierto_at = null,
-                 segundo_programado_at = null,
-                 proximo_paso = ${siguiente?.paso ?? null},
-                 proximo_seguimiento_at = ${siguiente?.cuando.toISOString() ?? null}::timestamptz,
+                 proximo_paso = null,
+                 proximo_seguimiento_at = null,
                  pospuesto_at = null
            where id = ${params.assignmentId}::uuid
         `)
       } else {
         /*
-         * Un escalón de seguimiento no cambia el estado del lead: seguía siendo
-         * "respondió" o "segundo enviado" antes y lo sigue siendo. Lo único que
-         * cambia es qué le toca después: el escalón siguiente de su pista, o
-         * nada si era el último y de ahí en más queda para nurture.
+         * Un escalón de seguimiento no cambia el estado del lead: seguía
+         * calificado antes y lo sigue estando. Lo único que cambia es qué le
+         * toca después: el escalón siguiente, o nada si era el último.
          */
         await tx.execute(sql`
           update lead_assignments
@@ -353,7 +295,7 @@ export async function registrarEnvio(
 
       await tx.execute(sql`
         insert into events (type, contact_id, message_id, actor_user_id, payload_jsonb)
-        values (${paso === 1 ? 'lead_contactado' : 'lead_segundo_enviado'},
+        values (${paso === 1 ? 'lead_contactado' : 'lead_seguimiento_enviado'},
                 ${asignacion.contact_id}::uuid, ${messageId}::uuid, ${params.actorUserId}::uuid,
                 ${JSON.stringify({
                   setterId: params.setterId,
@@ -370,7 +312,6 @@ export async function registrarEnvio(
         cupo: cuenta.cupo_diario,
         restante: Math.max(cuenta.cupo_diario - usadoHoy - 1, 0),
         sendId,
-        segundoAt,
       }
     })
   } catch (err) {
@@ -396,7 +337,6 @@ export async function deshacerEnvio(
   actorUserId: string | null,
   cliente: Db = db,
 ): Promise<{ ok: boolean; error?: string }> {
-  const cfg = await leerConfigSetters(cliente)
 
   try {
     return await cliente.transaction(async (tx) => {
@@ -430,7 +370,7 @@ export async function deshacerEnvio(
       if (envio.paso === 1) {
         await tx.execute(sql`
           update lead_assignments
-             set estado = 'abierto', contactado_at = null, segundo_programado_at = null,
+             set estado = 'abierto', contactado_at = null,
                  proximo_paso = null, proximo_seguimiento_at = null
            where id = ${envio.assignment_id}::uuid
         `)
@@ -445,45 +385,9 @@ export async function deshacerEnvio(
                  updated_at = now()
            where id = ${envio.contact_id}::uuid
         `)
-      } else if (envio.paso === 2) {
-        /*
-         * Al deshacer la oferta, adónde vuelve el lead depende de por qué le
-         * había tocado:
-         *
-         *   · si había contestado la entrada, la oferta era la respuesta a esa
-         *     contestación y le vuelve a tocar **ya mismo**: nunca fue una
-         *     espera.
-         *   · si nunca contestó, la oferta no le corresponde. Vuelve adonde
-         *     corresponde a alguien que no abrió el chat: al reintento de
-         *     apertura, contando desde su primer mensaje. Son leads viejos, de
-         *     cuando la oferta salía igual a las horas.
-         */
-        const reintento = primerPasoDe('sin_abrir').paso
-        const diasReintento = `${diasDelPaso(cfg, reintento)} days`
-        await tx.execute(sql`
-          update lead_assignments
-             set estado = case when respondio_a is not null then 'respondido'::lead_assignment_estado
-                               else 'contactado'::lead_assignment_estado end,
-                 segundo_mensaje_at = null,
-                 proximo_paso = case when respondio_a is null then ${reintento} else 2 end,
-                 segundo_programado_at = case when respondio_a is null
-                   then coalesce(contactado_at, now()) + ${diasReintento}::interval
-                   end,
-                 proximo_seguimiento_at = case when respondio_a is null
-                   then coalesce(contactado_at, now()) + ${diasReintento}::interval
-                   else now() end
-           where id = ${envio.assignment_id}::uuid
-        `)
-        await tx.execute(sql`
-          update contacts
-             set sent_count = greatest(sent_count - 1, 0),
-                 sequence_step = greatest(sequence_step - 1, 0),
-                 updated_at = now()
-           where id = ${envio.contact_id}::uuid
-        `)
       } else {
-        // Un reenganche deshecho vuelve a quedar pendiente: si se marcó sin
-        // querer, el lead no puede perder su último intento por eso.
+        // Un escalón deshecho vuelve a quedar pendiente: si se marcó sin
+        // querer, el lead no puede perder ese toque por eso.
         await tx.execute(sql`
           update lead_assignments
              set proximo_paso = ${envio.paso}, proximo_seguimiento_at = now()

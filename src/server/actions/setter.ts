@@ -9,12 +9,7 @@ import { db } from '@/db'
 import type { EstadoAccion } from '@/lib/form-state'
 import { consumeCupo } from '@/lib/pistas'
 import { cuantosEntregar, frenoDelEnvio } from '@/lib/setters-cupo'
-import {
-  mensajeDeReunion,
-  ofertaTrasLaRespuesta,
-  trasClasificar,
-  type DestinoDeClasificacion,
-} from '@/lib/setters-config'
+import { alCalificar } from '@/lib/setters-config'
 import { OPS_TZ } from '@/lib/tz'
 import { borrarSuscripcion, guardarSuscripcion } from '@/server/push'
 import { ErrorDePermiso, exigirSesion, exigirSetter } from '@/server/session'
@@ -24,7 +19,7 @@ import { leerCupoDeSetter } from '@/server/setters/cupo'
 import { agregarLeadPropio } from '@/server/setters/leads'
 import { deshacerEnvio, registrarEnvio } from '@/server/setters/envios'
 import { notificarYAvisar } from '@/server/setters/notificaciones'
-import { linksDeInstagram, mensajeDeAsignacion } from '@/server/setters/plantillas'
+import { mensajeDeAsignacion } from '@/server/setters/textos'
 import { reponerTrasSaltear } from '@/server/setters/reparto'
 
 /**
@@ -90,7 +85,7 @@ export async function agregarMiLead(datos: unknown): Promise<EstadoAccion> {
  * del botón "Enviado" se rearma paso por paso.
  *
  * Antes se sellaba una sola vez con un `coalesce` y no se limpiaba nunca, así
- * que a partir de la oferta el botón ya venía habilitado sin haber abierto
+ * que a partir del segundo mensaje el botón ya venía habilitado sin haber abierto
  * nada: el candado solo servía en la entrada, que es justo donde menos falta
  * hace: en un seguimiento el pulgar ya conoce la pantalla y marca de memoria.
  */
@@ -169,10 +164,9 @@ export async function marcarEnviado(assignmentId: string): Promise<ResultadoMarc
      * hasta saber qué escalón es, no se puede saber si el límite lo alcanza.
      *
      * Antes el cupo se miraba primero y frenaba todo por igual. En la práctica
-     * eso era: el setter abría Instagram, mandaba la oferta a alguien que le
-     * acababa de contestar, tocaba "Enviado" y le saltaba "llegaste al límite".
-     * El mensaje ya estaba mandado y el sistema no lo registraba, así que el
-     * lead se quedaba sin clasificar y sin próximo paso.
+     * eso era: el setter abría Instagram, mandaba el seguimiento a alguien que
+     * le acababa de contestar, tocaba "Enviado" y le saltaba "llegaste al
+     * límite". El mensaje ya estaba mandado y el sistema no lo registraba.
      */
     const mensaje = await mensajeDeAsignacion(assignmentId, sesion.setterId)
     if (!mensaje.ok) return { ok: false, error: mensaje.motivo }
@@ -180,9 +174,9 @@ export async function marcarEnviado(assignmentId: string): Promise<ResultadoMarc
     /*
      * El cupo frena las aperturas y nada más.
      *
-     * La oferta y los seguimientos salen en un chat que ya existe: no son lo
-     * que hace que Instagram restrinja una cuenta, y frenarlos deja una
-     * conversación empezada sin respuesta, que es el peor lugar donde parar.
+     * Los seguimientos salen en un chat que ya existe: no son lo que hace que
+     * Instagram restrinja una cuenta, y frenarlos deja una conversación
+     * empezada sin respuesta, que es el peor lugar donde parar.
      */
     const freno = frenoDelEnvio({
       gastaCupo: consumeCupo(mensaje.paso),
@@ -208,8 +202,6 @@ export async function marcarEnviado(assignmentId: string): Promise<ResultadoMarc
       cuentaId: cuenta.id,
       paso: mensaje.paso,
       body: mensaje.texto,
-      templateId: mensaje.templateId,
-      templateVariant: mensaje.variante,
       actorUserId: sesion.userId,
     })
 
@@ -345,12 +337,21 @@ export async function descartarLead(assignmentId: string): Promise<EstadoAccion>
   try {
     const sesion = await exigirSetter()
 
+    /*
+     * Se puede descartar antes y después de escribirle. Antes es el perfil que
+     * se ve y no sirve; después es el que contestó cualquier cosa —un "no", un
+     * insulto, un negocio que no es— y que no tiene sentido calificar. Sin la
+     * segunda mitad, ese lead se quedaba contactado para siempre, ocupando
+     * lugar en la lista de "sin calificar" sin que nadie pudiera sacarlo.
+     */
     const filas = await db.execute(sql`
       update lead_assignments
          set estado = 'cuenta_inexistente', devuelto_at = now(),
+             proximo_paso = null, proximo_seguimiento_at = null,
              devuelto_motivo = 'El setter lo descartó: no sirve como lead.'
        where id = ${assignmentId}::uuid and setter_id = ${sesion.setterId}::uuid
-         and estado in ('asignado', 'abierto', 'saltado')
+         and estado in ('asignado', 'abierto', 'saltado', 'contactado',
+                        'segundo_enviado', 'respondido', 'calificado')
       returning contact_id
     `)
 
@@ -389,97 +390,36 @@ export async function deshacerMarca(sendId: string): Promise<EstadoAccion> {
   }
 }
 
-export interface MensajeListo extends EstadoAccion {
-  texto?: string
-  linkDirecto?: string
-  igUsername?: string
-  /** Cuál de las cinco situaciones salió elegida. Sirve para titular la hoja. */
-  paso?: number
-}
+/* ── Calificar y reunión ──────────────────────────────────────────────── */
 
-/**
- * El mensaje que le toca a un lead, armado y listo para copiar.
- *
- * Existe para poder mandar desde "Mis leads" sin pasar por la cola del día: el
- * caso que importa es el lead que acaba de contestar la entrada y necesita la
- * oferta **ahora**, no mañana cuando le toque en la cola.
- *
- * Igual que en la cola, el texto lo decide el servidor con lo que el admin
- * escribió para ese rubro. Acá no se inventa nada.
- */
-export async function verMensajePreparado(assignmentId: string): Promise<MensajeListo> {
-  try {
-    const sesion = await exigirSetter()
-
-    const filas = await db.execute(sql`
-      select c.ig_username
-        from lead_assignments la
-        join contacts c on c.id = la.contact_id
-       where la.id = ${assignmentId}::uuid and la.setter_id = ${sesion.setterId}::uuid
-       limit 1
-    `)
-    const fila = filas.rows[0] as { ig_username: string } | undefined
-    if (!fila) return { ok: false, error: 'Ese lead ya no es tuyo.' }
-
-    const mensaje = await mensajeDeAsignacion(assignmentId, sesion.setterId)
-    if (!mensaje.ok) return { ok: false, error: mensaje.motivo }
-
-    return {
-      ok: true,
-      error: null,
-      texto: mensaje.texto,
-      paso: mensaje.paso,
-      igUsername: fila.ig_username,
-      ...linksDeInstagram(fila.ig_username),
-    }
-  } catch (err) {
-    return alFallar(err, 'No se pudo preparar el mensaje.')
-  }
-}
-
-/* ── Respondió y reunión ──────────────────────────────────────────────── */
-
-const respuestaSchema = z.object({
+const calificarSchema = z.object({
   nota: z.string().trim().max(500).optional(),
-  /**
-   * Solo se usa si el lead ya recibió la oferta.
-   *
-   * Son tres y no dos: entre el sí y el no está el que contestó con una duda,
-   * que es el que más se pierde. Tratarlo como un no lo cierra para siempre.
-   */
-  interes: z.enum(['interesa', 'no_interesa', 'tibio']).optional(),
 })
 
-/** De lo que marca el setter a la pista por la que sigue el lead. */
-const DESTINO_DEL_INTERES: Record<'interesa' | 'no_interesa' | 'tibio', DestinoDeClasificacion> = {
-  interesa: 'interesado',
-  no_interesa: 'no_interesa',
-  tibio: 'tibio',
-}
-
 /**
- * El lead contestó. Hay dos versiones y no significan lo mismo.
+ * Calificar un lead: contestó y vale la pena seguirlo.
  *
- *   · Contestó el **primer** mensaje: abrió conversación y todavía no sabe a
- *     qué nos dedicamos. Lo único que importa es que contestó —lo que haya
- *     dicho es un "hola"— así que **no se le pide nada escrito al setter**.
- *     Hacerlo escribir ahí es fricción por nada, y lo que se escribe por
- *     obligación no se lee nunca.
- *   · Contestó el **segundo**, que es el que lleva la oferta: ya sabe qué le
- *     estamos ofreciendo y está diciendo que sí o que no. Acá **la nota es
- *     obligatoria**: qué dijo exactamente es lo que decide cómo se sigue, y es
- *     lo único que queda escrito de esa conversación cuando yo la retomo.
+ * **Es la única marca que abre la escalera de seguimiento**, y la pone una
+ * persona. Reemplaza a todo lo que había antes —marcar a cuál de los dos
+ * mensajes contestó, y después clasificar esa respuesta en interesado, tibio o
+ * no interesa— que era un árbol de decisiones para elegir, al final, cuál de
+ * las plantillas le tocaba. Sin plantillas que elegir, ese árbol no decidía
+ * nada: el texto lo escribe el admin mirando el lead.
  *
- * A cuál contestó **lo decide el servidor** mirando el estado, no el celular:
- * es el único que sabe con certeza qué mensajes salieron.
+ * Lo que no se califica no recibe nada más. No es un olvido: un lead al que
+ * hay que escribirle cuatro veces a mano es trabajo, y el que no contestó o
+ * contestó cualquier cosa no se lo merece antes que uno nuevo.
+ *
+ * La nota es opcional pero es lo que después se lee para escribirle: queda a
+ * la vista en la pantalla de Textos, al lado del campo.
  */
-export async function marcarRespondio(
+export async function calificarLead(
   assignmentId: string,
-  datos?: { nota?: string; interes?: string },
+  datos?: { nota?: string },
 ): Promise<EstadoAccion> {
   try {
     const sesion = await exigirSesion()
-    const parsed = respuestaSchema.safeParse(datos ?? {})
+    const parsed = calificarSchema.safeParse(datos ?? {})
     if (!parsed.success) return { ok: false, error: 'Revisá los datos.' }
     // Zod recorta pero no descarta: una nota de solo espacios llega como ''.
     const texto = parsed.data.nota && parsed.data.nota.length > 0 ? parsed.data.nota : null
@@ -497,58 +437,27 @@ export async function marcarRespondio(
       | undefined
 
     if (!previa) return { ok: false, error: 'Ese lead no es tuyo.' }
-    if (!['asignado', 'abierto', 'saltado', 'contactado', 'segundo_enviado'].includes(previa.estado)) {
-      return { ok: false, error: 'Ese lead ya está marcado.' }
-    }
-
-    const yaVioLaOferta = previa.estado === 'segundo_enviado'
-    const respondioA = yaVioLaOferta ? 'segundo' : 'primero'
-    const interes = yaVioLaOferta ? (parsed.data.interes ?? 'interesa') : null
-
-    if (yaVioLaOferta && !parsed.data.interes) {
-      return { ok: false, error: 'Decime si le interesa, si no, o si quedó tibio.' }
+    if (previa.estado === 'calificado') return { ok: false, error: 'Ese lead ya está calificado.' }
+    if (!['asignado', 'abierto', 'saltado', 'contactado', 'segundo_enviado', 'respondido'].includes(previa.estado)) {
+      return { ok: false, error: 'Ese lead ya no se puede calificar.' }
     }
 
     /*
-     * La nota es obligatoria solo acá. Cuando contestan la oferta, lo que
-     * dijeron es la información: decide si se le insiste, si se le baja el
-     * precio o si se cierra. Un "le interesa" pelado no le sirve a nadie.
-     *
-     * Se valida en el servidor y no solo en la pantalla porque es una regla
-     * del negocio, no una comodidad del formulario.
-     */
-    if (yaVioLaOferta && texto === null) {
-      return { ok: false, error: 'Escribí qué dijo: es lo que necesito para seguirlo.' }
-    }
-
-    /*
-     * Contestar no es el final: es donde el lead pasa a lo que sigue.
-     *
-     *   · contestó la entrada → la oferta, que es de lo que todavía no se
-     *     enteró, y sale **ya**: si contestó está mirando el celular ahora.
-     *   · contestó la oferta → adónde va lo decide lo que se marcó, y son tres
-     *     destinos distintos: el sí arranca el mensaje que lleva a una fecha, el
-     *     no arranca el cierre cordial, y el tibio entra a su pista de cuatro
-     *     escalones. Los dos primeros salen en el acto; el tibio espera su día.
-     *
-     * Marcar la respuesta a la oferta **es** clasificarla, así que el lead no
-     * pasa por la cola: la decisión ya está tomada y queda sellada acá.
+     * El primer escalón espera sus días desde ahora, que es cuando el lead
+     * habló. Contarlo desde el primer mensaje haría que un lead que contestó
+     * tarde reciba el seguimiento encima de su propia respuesta.
      */
     const cfg = await leerConfigSetters()
-    const siguiente =
-      respondioA === 'primero'
-        ? ofertaTrasLaRespuesta()
-        : trasClasificar(cfg, DESTINO_DEL_INTERES[interes ?? 'interesa'])
+    const siguiente = alCalificar(cfg)
 
     const filas = await db.execute(sql`
       update lead_assignments
-         set estado = 'respondido', respondido_at = now(), segundo_programado_at = null,
-             respondio_a = ${respondioA}::setter_send_tipo,
-             interes = ${interes}::lead_interes,
-             clasificado_at = ${yaVioLaOferta ? sql`now()` : sql`null`},
-             clasificado_por = ${yaVioLaOferta ? sql`${sesion.userId}::uuid` : sql`null`},
-             proximo_paso = ${siguiente?.paso ?? null},
-             proximo_seguimiento_at = ${siguiente?.cuando.toISOString() ?? null}::timestamptz,
+         set estado = 'calificado',
+             respondido_at = coalesce(respondido_at, now()),
+             calificado_at = now(),
+             calificado_por = ${sesion.userId}::uuid,
+             proximo_paso = ${siguiente.paso},
+             proximo_seguimiento_at = ${siguiente.cuando.toISOString()}::timestamptz,
              nota = coalesce(${texto}, nota),
              marcado_por = ${propio ? null : sesion.userId}::uuid
        where id = ${assignmentId}::uuid
@@ -558,16 +467,9 @@ export async function marcarRespondio(
     const fila = filas.rows[0] as { contact_id: string; setter_id: string } | undefined
     if (!fila) return { ok: false, error: 'Ese lead ya no está en tu cola.' }
 
-    /*
-     * Un "no me interesa" es un no de verdad: el contacto se da por perdido y
-     * no aparece en mi cola de trabajo. Los otros dos casos van a la bandeja
-     * como 'respondido', que es donde los clasifico como siempre.
-     */
-    const etapa = interes === 'no_interesa' ? 'perdido' : 'respondido'
-
     await db.execute(sql`
       update contacts
-         set stage = ${etapa}::contact_stage,
+         set stage = 'interesado'::contact_stage,
              received_count = greatest(received_count, 1),
              last_inbound_at = now(),
              first_replied_at = coalesce(first_replied_at, now()),
@@ -579,8 +481,8 @@ export async function marcarRespondio(
 
     await db.execute(sql`
       insert into events (type, contact_id, actor_user_id, payload_jsonb)
-      values ('lead_respondio', ${fila.contact_id}::uuid, ${sesion.userId}::uuid,
-              ${JSON.stringify({ porElAdmin: !propio, nota: texto, respondioA, interes })}::jsonb)
+      values ('lead_calificado', ${fila.contact_id}::uuid, ${sesion.userId}::uuid,
+              ${JSON.stringify({ porElAdmin: !propio, nota: texto })}::jsonb)
     `)
 
     const info = await db.execute(sql`
@@ -595,32 +497,28 @@ export async function marcarRespondio(
     const negocio = d?.business_name ?? 'un lead'
     const cola = texto ? ` · "${texto}"` : ''
 
+    /*
+     * El aviso lleva a Textos y no a la bandeja: un lead recién calificado es,
+     * antes que nada, un mensaje que tengo que escribir. Si eso no pasa, el
+     * seguimiento le toca y el setter lo ve bloqueado.
+     */
     await notificarYAvisar(
       {
         tipo: 'respondio',
-        texto:
-          respondioA === 'primero'
-            ? `${quien}: ${negocio} contestó el primer mensaje${cola}`
-            : interes === 'interesa'
-              ? `${quien}: a ${negocio} LE INTERESA la oferta${cola}`
-              : `${quien}: ${negocio} vio la oferta y no le interesa${cola}`,
-        enlace: interes === 'no_interesa' ? '/equipo/leads?ver=oferta' : '/respondieron',
+        texto: `${quien} calificó a ${negocio}${cola}`,
+        enlace: '/textos',
         setterId: fila.setter_id,
         contactId: fila.contact_id,
       },
-      respondioA === 'primero'
-        ? 'Contestó el primer mensaje'
-        : interes === 'interesa'
-          ? 'Le interesa la oferta'
-          : 'Respuesta a la oferta',
+      'Lead calificado',
     )
 
     refrescar()
-    revalidatePath('/respondieron')
+    revalidatePath('/textos')
     revalidatePath('/equipo')
     return { ok: true, error: null }
   } catch (err) {
-    return alFallar(err, 'No se pudo marcar la respuesta.')
+    return alFallar(err, 'No se pudo calificar el lead.')
   }
 }
 
@@ -663,17 +561,11 @@ export async function agendarReunion(
       | undefined
     if (!fila) return { ok: false, error: 'Ese lead no es tuyo.' }
 
-    // Quien acepta una reunión después de ver la oferta está diciendo que sí.
-    const vioLaOferta = fila.estado === 'segundo_enviado'
-
     /*
      * La fecha y la hora se escriben en la zona de operación, no en la del
      * celular: si el setter viaja, la reunión no tiene que moverse sola.
      */
     const cuando = `${parsed.data.fecha} ${parsed.data.hora}`
-
-    // La confirmación por escrito, que sale apenas queda agendada.
-    const reunionAlLead = mensajeDeReunion()
 
     const reuniones = await db.execute(sql`
       insert into meetings (contact_id, scheduled_at, type, notes, setter_id)
@@ -686,31 +578,19 @@ export async function agendarReunion(
     `)
     const reunion = reuniones.rows[0] as { id: string; scheduled_at: Date }
 
+    /*
+     * Agendar es la mejor calificación que hay: no hace falta que alguien lo
+     * marque aparte. Lo que tenga programado se respeta —el seguimiento sigue
+     * su escalera hasta la reunión— y si no tenía nada, queda calificado sin
+     * próximo paso: el mensaje de confirmación se escribe en Textos si hace
+     * falta, como cualquier otro.
+     */
     await db.execute(sql`
       update lead_assignments
-         set estado = 'respondido',
+         set estado = 'calificado',
              respondido_at = coalesce(respondido_at, now()),
-             segundo_programado_at = null,
-             respondio_a = coalesce(respondio_a,
-                                    ${vioLaOferta ? 'segundo' : 'primero'}::setter_send_tipo),
-             interes = case when ${vioLaOferta} then coalesce(interes, 'interesa'::lead_interes)
-                            else interes end,
-             /*
-              * Agendar **es** clasificar, y la más alta que hay. Sin esto el
-              * lead quedaba figurando en la cola de clasificación como si nadie
-              * hubiera decidido nada, con la reunión ya cargada: el mejor
-              * resultado posible, contado como trabajo pendiente y sumando
-              * atraso al SLA.
-              */
-             clasificado_at = coalesce(clasificado_at, now()),
-             clasificado_por = coalesce(clasificado_por, ${sesion.userId}::uuid),
-             /*
-              * Agendar no corta la conversación: la confirma. Antes esto ponía
-              * el próximo paso en null y la reunión quedaba de palabra en un
-              * chat de Instagram, que es a lo que no se presenta nadie.
-              */
-             proximo_paso = ${reunionAlLead.paso},
-             proximo_seguimiento_at = ${reunionAlLead.cuando.toISOString()}::timestamptz,
+             calificado_at = coalesce(calificado_at, now()),
+             calificado_por = coalesce(calificado_por, ${sesion.userId}::uuid),
              marcado_por = ${propio ? null : sesion.userId}::uuid
        where id = ${assignmentId}::uuid
     `)

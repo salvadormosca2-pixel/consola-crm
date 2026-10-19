@@ -24,7 +24,6 @@ import {
   contactStageEnum,
   importActionEnum,
   leadAssignmentEstadoEnum,
-  leadInteresEnum,
   meetingOutcomeEnum,
   meetingStatusEnum,
   meetingTypeEnum,
@@ -34,7 +33,6 @@ import {
   msgStatusEnum,
   notificacionTipoEnum,
   recordatorioTipoEnum,
-  setterSendTipoEnum,
   syncStatusEnum,
   templateChannelEnum,
   userRoleEnum,
@@ -586,7 +584,7 @@ export const savedViews = pgTable('saved_views', {
   createdAt: createdAt(),
 })
 
-/** Clave-valor para {{mi_nombre}}, {{oferta}} y la zona horaria operativa. */
+/** Clave-valor de la configuración: días de la escalera, horarios, umbrales. */
 export const settings = pgTable('settings', {
   key: text('key').primaryKey(),
   value: jsonb('value_jsonb').notNull(),
@@ -678,40 +676,22 @@ export const leadAssignments = pgTable('lead_assignments', {
   pospuestoAt: timestamp('pospuesto_at', { withTimezone: true }),
   contactadoAt: timestamp('contactado_at', { withTimezone: true }),
   /**
-   * Cuándo le toca el segundo mensaje. Se calcula al contactar y se pone en
-   * null si el lead responde: nunca un segundo mensaje a alguien que contestó.
-   */
-  segundoProgramadoAt: timestamp('segundo_programado_at', { withTimezone: true }),
-  segundoMensajeAt: timestamp('segundo_mensaje_at', { withTimezone: true }),
-  /**
-   * Qué mensaje le toca la próxima vez y cuándo. Reemplaza al par fijo de
-   * "segundo mensaje": con cinco situaciones, una columna por paso no escala.
-   * `proximoPaso` en null significa que ya no se le manda nada más.
+   * Qué mensaje le toca la próxima vez y cuándo. `proximoPaso` en null
+   * significa que ya no se le manda nada más: o nadie lo calificó todavía, o
+   * terminó la escalera.
    */
   proximoPaso: smallint('proximo_paso'),
   proximoSeguimientoAt: timestamp('proximo_seguimiento_at', { withTimezone: true }),
   respondidoAt: timestamp('respondido_at', { withTimezone: true }),
   /**
-   * A cuál de los dos mensajes contestó. Se deduce del estado al marcar y se
-   * sella acá, porque después el estado sigue cambiando.
+   * Cuándo alguien lo calificó, y quién.
    *
-   * Contestar el primero es abrir una conversación; contestar el segundo es
-   * responder a la oferta. La primera la sigue el equipo, la segunda ya es un
-   * sí o un no.
+   * Calificar es la única decisión que mueve un lead del primer mensaje al
+   * seguimiento, y la toma una persona: que haya contestado no dice si vale la
+   * pena seguirlo. Mientras esto sea null el lead no tiene programado nada.
    */
-  respondioA: setterSendTipoEnum('respondio_a'),
-  /** Solo con `respondioA = 'segundo'`: si le interesa, si no, o si quedó tibio. */
-  interes: leadInteresEnum('interes'),
-  /**
-   * Cuándo alguien decidió a qué pista va este lead.
-   *
-   * Contestar la oferta no dice adónde sigue: entre "cuánto sale" y "no me
-   * interesa" decide una persona mirando el hilo. Mientras esto sea null el
-   * lead está parado esperando esa decisión, y es la espera más cara que hay
-   * porque ya habló.
-   */
-  clasificadoAt: timestamp('clasificado_at', { withTimezone: true }),
-  clasificadoPor: uuid('clasificado_por').references(() => users.id, { onDelete: 'set null' }),
+  calificadoAt: timestamp('calificado_at', { withTimezone: true }),
+  calificadoPor: uuid('calificado_por').references(() => users.id, { onDelete: 'set null' }),
   devueltoAt: timestamp('devuelto_at', { withTimezone: true }),
   devueltoMotivo: text('devuelto_motivo'),
   /** Si lo marcó el admin en lugar del setter, queda quién fue. */
@@ -731,24 +711,17 @@ export const leadAssignments = pgTable('lead_assignments', {
   index('lead_assignments_vencimiento_idx')
     .on(t.venceAt)
     .where(sql`${t.estado} in ('asignado', 'abierto', 'saltado')`),
-  index('lead_assignments_segundo_idx')
-    .on(t.segundoProgramadoAt)
-    .where(sql`${t.estado} = 'contactado' and ${t.segundoProgramadoAt} is not null`),
   index('lead_assignments_contacto_idx').on(t.contactId, sql`${t.createdAt} desc`),
   index('lead_assignments_proximo_idx')
     .on(t.setterId, t.proximoSeguimientoAt)
     .where(sql`${t.proximoSeguimientoAt} is not null`),
   index('lead_assignments_respuesta_idx')
-    .on(t.respondioA, sql`${t.respondidoAt} desc`)
-    .where(sql`${t.respondioA} is not null`),
-  index('lead_assignments_oferta_idx')
-    .on(t.setterId, sql`${t.segundoMensajeAt} desc`)
-    .where(sql`${t.estado} = 'segundo_enviado'`),
-  /* La cola de clasificación: contestaron la oferta y nadie decidió todavía. */
-  index('lead_assignments_sin_clasificar_idx')
-    .on(t.respondidoAt)
-    .where(sql`${t.respondioA} = 'segundo' and ${t.clasificadoAt} is null`),
-  check('lead_interes_solo_con_oferta', sql`${t.interes} is null or ${t.respondioA} = 'segundo'`),
+    .on(t.setterId, sql`${t.respondidoAt} desc`)
+    .where(sql`${t.respondidoAt} is not null`),
+  /* Los calificados de cada setter: es la lista que se trabaja todos los días. */
+  index('lead_assignments_calificado_idx')
+    .on(t.setterId, sql`${t.calificadoAt} desc`)
+    .where(sql`${t.calificadoAt} is not null`),
   /*
    * El paso que le toca y cuándo le toca son un par. Separados, la cola cae a
    * su valor por defecto y le muestra la entrada a un lead con el que ya se
@@ -758,6 +731,43 @@ export const leadAssignments = pgTable('lead_assignments', {
     'lead_proximo_par',
     sql`(${t.proximoPaso} is null) = (${t.proximoSeguimientoAt} is null)`,
   ),
+])
+
+/**
+ * El texto que se le manda a **ese** lead en **ese** paso.
+ *
+ * Una fila por lead y por paso, escrita a mano por el admin. No hay plantillas
+ * ni variables: cada negocio recibe un mensaje pensado para él, y lo que el
+ * setter copia y pega es exactamente lo que está acá.
+ *
+ * Antes esto salía de `templates`: un texto por paso y por rubro, con
+ * `{{negocio}}` adentro. Servía para mandar mil mensajes iguales, que es justo
+ * lo que hace que una cuenta de Instagram quede restringida y lo que hace que
+ * nadie conteste. El precio de escribirlos uno por uno es el tiempo del admin,
+ * y es un precio que se paga a propósito.
+ *
+ * Sin texto no sale nada: el lead aparece en la cola del setter bloqueado, con
+ * el motivo a la vista, y en la pantalla de Textos del admin esperando que lo
+ * escriba.
+ */
+export const leadTextos = pgTable('lead_textos', {
+  id: id(),
+  assignmentId: uuid('assignment_id')
+    .notNull()
+    .references(() => leadAssignments.id, { onDelete: 'cascade' }),
+  /** El paso al que pertenece: 1 el primer mensaje, y los de la escalera. */
+  paso: smallint('paso').notNull(),
+  body: text('body').notNull(),
+  escritoPor: uuid('escrito_por').references(() => users.id, { onDelete: 'set null' }),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (t) => [
+  /*
+   * Uno solo por lead y por paso. El admin lo reescribe hasta que le gusta
+   * —mientras no haya salido— y lo que vale es la última versión, no una pila
+   * de borradores que nadie sabe cuál se mandó.
+   */
+  uniqueIndex('lead_textos_unico').on(t.assignmentId, t.paso),
 ])
 
 /**
@@ -783,8 +793,7 @@ export const setterSends = pgTable('setter_sends', {
   contactId: uuid('contact_id')
     .notNull()
     .references(() => contacts.id, { onDelete: 'cascade' }),
-  tipo: setterSendTipoEnum('tipo').notNull(),
-  /** Cuál de las cinco situaciones se mandó. 1 entrada … 5 reenganche. */
+  /** Qué mensaje se mandó: 1 el primero, y los de la escalera después. */
   paso: smallint('paso').notNull(),
   /** Fecha operativa ya resuelta: el cupo es por día en Catamarca, no en UTC. */
   opsDate: date('ops_date').notNull(),

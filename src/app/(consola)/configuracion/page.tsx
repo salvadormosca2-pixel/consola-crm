@@ -8,5 +8,5 @@ import { redirect } from 'next/navigation'
  * nada. Referencias sigue colgando de acá.
  */
 export default function PaginaConfiguracion() {
-  redirect('/mensajes')
+  redirect('/textos')
 }

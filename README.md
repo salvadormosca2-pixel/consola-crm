@@ -152,8 +152,9 @@ notificaciones. Sin `TAREAS_SECRET` en el entorno, la ruta no atiende a nadie.
 npm run demo:setters
 ```
 
-Crea tres setters con sus cuentas, las dos plantillas de Instagram y 180 leads
-scrapeados en el pozo. Imprime los emails y la contraseña con la que entran.
+Crea tres setters con sus cuentas, 180 leads scrapeados en el pozo y el texto
+escrito de casi todos (unos cuantos quedan sin escribir, que es lo que llena la
+pantalla de Textos). Imprime los emails y la contraseña con la que entran.
 
 ---
 
@@ -324,7 +325,7 @@ archivo. Por eso el reparto se dispara al leer y no depende de él.
 | `npm run user:create` | Da de alta (o repone la contraseña de) un admin |
 | `npm run iconos` | Regenera los íconos de la PWA |
 | `npm run push:claves` | Genera el par de claves VAPID para las notificaciones |
-| `npm run demo:setters` | Equipo de setters de prueba, plantillas de IG y pozo de leads |
+| `npm run demo:setters` | Equipo de setters de prueba, con sus leads y sus textos |
 
 Para pasarle argumentos a `user:create` usá `npx tsx` directo, porque npm se
 come los flags que empiezan con `--`:

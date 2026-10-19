@@ -6,12 +6,14 @@ import { resolve } from 'node:path'
 import { Pool } from 'pg'
 import * as XLSX from 'xlsx'
 
+import { PISTA_META } from '../src/lib/pistas'
+
 /**
  * Datos de demostración, para poder ver la consola funcionando antes de tener
  * datos reales.
  *
  *   npm run demo:cargar      carga cuentas, contactos e historial + genera un Excel
- *   npm run demo:setters     equipo de setters, plantillas de IG y un pozo de leads
+ *   npm run demo:setters     equipo de setters, con sus leads y sus textos
  *   npm run demo:historial   borra el historial inventado, deja los contactos en cero
  *   npm run demo:limpiar     borra todo y deja la base como recién migrada
  *
@@ -529,70 +531,14 @@ async function cargarSetters(): Promise<void> {
   // Los eventos de los setters se reconstruyen más abajo: si quedaran los de
   // la corrida anterior, la pantalla de Actividad contaría el doble.
   await pool.query(`delete from events where actor_user_id is null and contact_id is null`)
-  await pool.query(`delete from templates where name like 'DEMO%'`)
 
-  /* ── Los cinco mensajes ─────────────────────────────────────────────────
-     Uno por situación. **Son de relleno**: están para que la demostración
-     funcione, no para usarlos. Los reales los escribe el admin en Mensajes,
-     con sus palabras y por rubro.                                          */
-
-  const PLANTILLAS: Array<{ paso: number; nombre: string; cuerpo: string; variantes: string[] }> = [
-    {
-      paso: 1,
-      nombre: 'DEMO entrada',
-      cuerpo: 'Hola! Vi el perfil de {{negocio}}, quería hacerte una consulta. ¿Estás?',
-      variantes: [
-        'Buenas! Una pregunta sobre {{negocio}}, ¿me podés ayudar?',
-        'Hola! Te escribo por {{negocio}}, ¿tenés un minuto?',
-      ],
-    },
-    {
-      paso: 2,
-      nombre: 'DEMO oferta',
-      cuerpo:
-        'Te cuento en dos líneas: hacemos {{oferta}} para negocios como {{negocio}}. Si querés te muestro algo parecido a lo tuyo, sin compromiso.',
-      variantes: [],
-    },
-    {
-      paso: 3,
-      nombre: 'DEMO nunca contestó',
-      cuerpo:
-        'Che, te escribí por {{negocio}} y capaz se te pasó. Si no te interesa no hay drama, avisame y no te escribo más.',
-      variantes: [],
-    },
-    {
-      paso: 4,
-      nombre: 'DEMO contestó y se enfrió',
-      cuerpo:
-        'Hola! Quedamos por la mitad la otra vez. ¿Seguís interesado o lo dejamos para más adelante?',
-      variantes: [],
-    },
-    {
-      paso: 5,
-      nombre: 'DEMO le interesó y se enfrió',
-      cuerpo:
-        'Hola! Habíamos quedado en avanzar con lo de {{oferta}}. ¿Te viene bien una llamada esta semana o lo vemos más adelante?',
-      variantes: [],
-    },
-  ]
-
-  for (const t of PLANTILLAS) {
-    await pool.query(
-      `insert into templates (name, channel, sequence_step, body, variants, active, is_opening,
-                              pilot_status)
-       values ($1, 'instagram', $2, $3, $4::jsonb, true, $5, 'aprobada')`,
-      [t.nombre, t.paso, t.cuerpo, JSON.stringify(t.variantes), t.paso === 1],
-    )
-  }
-
-  // El mensaje de la oferta usa {{oferta}}: sin esto no se puede armar y todos
-  // los leads quedarían bloqueados en la cola.
-  await pool.query(
-    `insert into settings (key, value_jsonb, updated_at)
-     values ('mensajes', $1::jsonb, now())
-     on conflict (key) do update set value_jsonb = excluded.value_jsonb, updated_at = now()`,
-    [JSON.stringify({ miNombre: 'Salvador', oferta: 'webs, automatizaciones y CRM' })],
-  )
+  /* ── Los textos de cada lead ────────────────────────────────────────────
+     Ya no hay plantillas: el mensaje lo escribe el admin lead por lead, en la
+     pantalla de Textos. Acá se escriben solos al final de la carga —ver
+     `escribirTextos`— porque sin texto todos los leads de la demo aparecerían
+     bloqueados en la cola del celular, que no es lo que se quiere mostrar.
+     Igual quedan unos cuantos sin escribir: esa cola con trabajo pendiente
+     también es parte de la demostración.                                   */
 
   /* ── Referencias ────────────────────────────────────────────────────────
      Lo que el setter lee cuando el cliente pregunta algo que no estaba en el
@@ -797,9 +743,13 @@ async function cargarSetters(): Promise<void> {
     setterId?: string
     cuentaId?: string
     estado?: string
-    /** Envíos ya hechos: cuántos días atrás salió cada uno. */
+    /**
+     * Envíos ya hechos: cuántos días atrás salió cada uno. 'primero' es el
+     * mensaje de entrada; 'segundo' es el primer escalón del seguimiento, que
+     * es lo único que sale después y solo sobre un lead calificado.
+     */
     envios?: Array<{ tipo: 'primero' | 'segundo'; diasAtras: number }>
-    /** Horas desde ahora hasta el segundo mensaje. Negativo = atrasado. */
+    /** Horas desde ahora hasta el próximo seguimiento. Negativo = atrasado. */
     segundoEnHoras?: number | null
     horasParaVencer?: number
     respondidoHaceHoras?: number
@@ -871,38 +821,55 @@ async function cargarSetters(): Promise<void> {
 
     if (!opts.setterId) return
 
+    /*
+     * 'respondido' y 'segundo_enviado' eran los estados del lead que había
+     * contestado y del que ya había recibido la oferta. Ninguno de los dos
+     * existe en el recorrido nuevo: el lead que contestó y sirve queda
+     * **calificado**, y es el único que recibe seguimientos. Los fixtures de
+     * abajo siguen escritos con los nombres viejos y se traducen acá para no
+     * reescribirlos uno por uno.
+     */
+    const estado = ['respondido', 'segundo_enviado'].includes(opts.estado ?? '')
+      ? 'calificado'
+      : (opts.estado ?? 'asignado')
+    const calificado = estado === 'calificado'
+    const primerEscalon = PISTA_META.seguimiento.pasos[0]!.paso
+
     const a = await pool.query<{ id: string }>(
       `insert into lead_assignments (contact_id, setter_id, setter_account_id, estado,
                                      asignado_at, vence_at, abierto_at, contactado_at,
-                                     segundo_programado_at, segundo_mensaje_at,
-                                     respondido_at, devuelto_at, devuelto_motivo, nota)
+                                     respondido_at, calificado_at,
+                                     proximo_paso, proximo_seguimiento_at,
+                                     devuelto_at, devuelto_motivo, nota)
        values ($1::uuid, $2::uuid, $3::uuid, $4::lead_assignment_estado,
                now() - ($5::text || ' hours')::interval,
                now() + ($6::text || ' hours')::interval,
                case when $4::text <> 'asignado' then now() - ($5::text || ' hours')::interval else null end,
                case when $7::boolean then now() - ($8::text || ' days')::interval else null end,
-               case when $9::text is null then null else now() + ($9::text || ' hours')::interval end,
+               case when $9::text is null then null else now() - ($9::text || ' hours')::interval end,
                case when $10::boolean then now() - interval '2 hours' else null end,
-               case when $11::text is null then null else now() - ($11::text || ' hours')::interval end,
+               case when $10::boolean then $11::int else null end,
+               case when $10::boolean
+                    then now() + (coalesce($12::text, '48') || ' hours')::interval
+                    else null end,
                case when $4::text in ('vencido','devuelto','cuenta_inexistente') then now() else null end,
-               $12::text, $13::text)
+               $13::text, $14::text)
        returning id`,
-    // `proximo_paso` y `proximo_seguimiento_at` se completan después, en un
-    // solo paso al final: dependen del estado en que quedó cada lead.
       [
         contactId,
         opts.setterId,
         opts.envios?.length ? (opts.cuentaId ?? null) : null,
-        opts.estado ?? 'asignado',
+        estado,
         String((opts.envios?.[0]?.diasAtras ?? 0) * 24 + 2),
         String(opts.horasParaVencer ?? 40),
         (opts.envios?.length ?? 0) > 0,
         String(opts.envios?.[0]?.diasAtras ?? 0),
+        opts.respondidoHaceHoras === undefined ? null : String(opts.respondidoHaceHoras),
+        calificado,
+        primerEscalon,
         opts.segundoEnHoras === null || opts.segundoEnHoras === undefined
           ? null
           : String(opts.segundoEnHoras),
-        (opts.envios ?? []).some((e) => e.tipo === 'segundo'),
-        opts.respondidoHaceHoras === undefined ? null : String(opts.respondidoHaceHoras),
         opts.motivo ?? null,
         opts.nota ?? null,
       ],
@@ -912,8 +879,8 @@ async function cargarSetters(): Promise<void> {
     for (const envio of opts.envios ?? []) {
       await pool.query(
         `insert into setter_sends (assignment_id, setter_id, setter_account_id, contact_id,
-                                   tipo, paso, ops_date, sent_at)
-         values ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::setter_send_tipo, $8::int,
+                                   paso, ops_date, sent_at)
+         values ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::int,
                  (now() at time zone $7::text)::date - ($6::text)::int,
                  now() - ($6::text || ' days')::interval - (random() * interval '6 hours'))`,
         [
@@ -921,10 +888,9 @@ async function cargarSetters(): Promise<void> {
           opts.setterId,
           opts.cuentaId,
           contactId,
-          envio.tipo,
+          envio.tipo === 'primero' ? 1 : PISTA_META.seguimiento.pasos[0]!.paso,
           String(envio.diasAtras),
           TZ,
-          envio.tipo === 'primero' ? 1 : 2,
         ],
       )
     }
@@ -1236,126 +1202,68 @@ async function cargarSetters(): Promise<void> {
 
   for (let i = 0; i < 140; i++) await crearLead({})
 
-  /* ── Respuestas a la oferta ─────────────────────────────────────────
-     Un puñado de los que respondieron ya había recibido el segundo mensaje,
-     así que su respuesta es un sí o un no a lo que ofrecemos. */
+  /* ── Lo que anotó el setter al calificar ─────────────────────────────
+     Es lo que después se lee en Textos para escribirle el seguimiento, así
+     que en la demo tampoco puede faltar: sin la nota, esa pantalla queda con
+     un campo vacío y nada al lado.                                       */
 
-  /* ── El próximo seguimiento de cada lead ─────────────────────────────── */
-
-  // Los que esperan la oferta.
-  await pool.query(
-    `update lead_assignments
-        set proximo_paso = 2, proximo_seguimiento_at = segundo_programado_at
-      where estado = 'contactado' and segundo_programado_at is not null`,
-  )
-  // Los que recibieron los dos y siguen callados: les toca el último intento.
-  await pool.query(
-    `update lead_assignments
-        set proximo_paso = 3,
-            proximo_seguimiento_at = coalesce(segundo_mensaje_at, now()) + interval '3 days'
-      where estado = 'segundo_enviado' and respondido_at is null`,
-  )
-
-  await pool.query(
-    `update lead_assignments set respondio_a = 'primero'
-      where respondido_at is not null and respondio_a is null`,
-  )
-  await pool.query(
-    `update lead_assignments la
-        set respondio_a = 'segundo', interes = 'interesa'
-       from (select id from lead_assignments
-              where respondido_at is not null
-              order by respondido_at desc limit 4) e
-      where la.id = e.id`,
-  )
-  await pool.query(
-    `update lead_assignments la
-        set respondio_a = 'segundo', interes = 'no_interesa'
-       from (select id from lead_assignments
-              where respondido_at is not null and respondio_a = 'primero'
-              order by respondido_at asc limit 3) e
-      where la.id = e.id`,
-  )
-
-  /* Al contestar la oferta el setter tiene que anotar qué dijeron: es
-     obligatorio en la app, así que en la demo tampoco puede faltar. */
   const DIJERON = [
     'Le interesa pero quiere arrancar el mes que viene.',
     'Preguntó si hacemos prueba de un mes antes de firmar.',
     'Le gustó, pide ver ejemplos del rubro antes de decidir.',
     'Dice que ahora está con poco presupuesto, retomar en marzo.',
     'Ya trabaja con alguien, quedó en avisar si se libera.',
-    'No le interesa, dice que no usa redes para el negocio.',
-    'Dijo que no, atiende solo por local.',
   ]
-  const conOferta = await pool.query<{ id: string }>(
-    `select id from lead_assignments where respondio_a = 'segundo' order by respondido_at desc`,
+  const calificados = await pool.query<{ id: string }>(
+    `select id from lead_assignments
+      where estado = 'calificado' and nota is null
+      order by calificado_at desc`,
   )
-  for (const [i, fila] of conOferta.rows.entries()) {
+  for (const [i, fila] of calificados.rows.entries()) {
     await pool.query(`update lead_assignments set nota = $1 where id = $2`, [
       DIJERON[i % DIJERON.length],
       fila.id,
     ])
   }
 
-  /*
-   * Al que contestó la entrada le toca la oferta, y le toca ya: recién ahí se
-   * entera de a qué nos dedicamos. Al que contestó la oferta y le interesó le
-   * toca el reenganche, por si se enfría. Un "no me interesa" no encadena nada.
-   */
-  await pool.query(
-    `update lead_assignments
-        set proximo_paso = 2, proximo_seguimiento_at = respondido_at
-      where respondido_at is not null and respondio_a = 'primero'
-        and estado <> 'segundo_enviado'`,
-  )
-  await pool.query(
-    `update lead_assignments
-        set proximo_paso = 5, proximo_seguimiento_at = respondido_at + interval '5 days'
-      where respondido_at is not null and respondio_a = 'segundo'
-        and interes is distinct from 'no_interesa'`,
-  )
-  await pool.query(
-    `update lead_assignments
-        set proximo_paso = null, proximo_seguimiento_at = null
-      where interes = 'no_interesa'`,
-  )
+  /* ── Seguimientos atrasados ──────────────────────────────────────────
+     Sin esto el control de seguimientos mostraría todo en verde, y lo que
+     sirve de esa pantalla es justamente ver dónde se traba el equipo.    */
 
-  /* ── Seguimientos atrasados de las cuatro situaciones ────────────────
-     Sin esto el control de seguimientos solo mostraría la oferta, y no se
-     vería lo que sirve: en cuál de los cuatro mensajes se traba el equipo. */
-
-  // Último intento (paso 3): recibieron los dos y nunca dijeron nada.
   await pool.query(
     `update lead_assignments la
         set proximo_seguimiento_at = now() - (interval '1 day' * (1 + (row_number) % 4))
-       from (select id, row_number() over (order by segundo_mensaje_at) as row_number
+       from (select id, row_number() over (order by calificado_at) as row_number
                from lead_assignments
-              where proximo_paso = 3 and respondido_at is null
+              where estado = 'calificado'
               limit 9) e
       where la.id = e.id`,
   )
 
-  /* Contestó y se enfrió (paso 4): abrieron conversación, les mandamos la
-     oferta y se callaron. Es el reenganche que más duele dejar pasar. */
-  await pool.query(
-    `update lead_assignments la
-        set respondio_a = 'primero', respondido_at = now() - interval '6 days',
-            proximo_paso = 4, proximo_seguimiento_at = now() - (interval '1 day' * (1 + (row_number) % 3))
-       from (select id, row_number() over (order by segundo_mensaje_at desc) as row_number
-               from lead_assignments
-              where estado = 'segundo_enviado' and respondido_at is null
-              limit 4) e
-      where la.id = e.id`,
-  )
+  /* ── Los textos de cada lead ─────────────────────────────────────────
+     El mensaje lo escribe el admin lead por lead: sin el suyo, el lead viaja
+     bloqueado a la cola del celular. Acá se escriben casi todos —si no, la
+     demo abre con la cola entera trabada— y quedan algunos sin escribir a
+     propósito, que es lo que llena la pantalla de Textos.                */
 
-  // Le interesó y se enfrió (paso 5): dijeron que sí y desaparecieron.
   await pool.query(
-    `update lead_assignments la
-        set proximo_seguimiento_at = now() - interval '2 days'
-       from (select id from lead_assignments
-              where proximo_paso = 5 order by respondido_at desc limit 2) e
-      where la.id = e.id`,
+    `insert into lead_textos (assignment_id, paso, body)
+     select la.id,
+            case when la.estado in ('asignado', 'abierto', 'saltado') then 1
+                 else coalesce(la.proximo_paso, 1) end,
+            case when la.estado in ('asignado', 'abierto', 'saltado')
+                 then 'Hola! Vi el perfil de ' || c.business_name ||
+                      ', quería hacerte una consulta. ¿Estás?'
+                 else 'Che, quedamos por la mitad la otra vez con lo de ' ||
+                      c.business_name || '. ¿Lo pudiste ver?'
+            end
+       from lead_assignments la
+       join contacts c on c.id = la.contact_id
+      where (la.estado in ('asignado', 'abierto', 'saltado')
+             or (la.estado = 'calificado' and la.proximo_paso is not null))
+        -- Uno de cada seis queda sin texto: es la cola de trabajo del admin.
+        and ('x' || substr(md5(la.id::text), 1, 8))::bit(32)::int % 6 <> 0
+     on conflict do nothing`,
   )
 
   /* ── Diego arranca el día limpio ─────────────────────────────────────
@@ -1382,7 +1290,7 @@ async function cargarSetters(): Promise<void> {
 
   await pool.query(
     `insert into events (type, contact_id, actor_user_id, created_at, payload_jsonb)
-     select case when ss.paso = 1 then 'lead_contactado' else 'lead_segundo_enviado' end,
+     select case when ss.paso = 1 then 'lead_contactado' else 'lead_seguimiento_enviado' end,
             ss.contact_id, u.id, ss.sent_at,
             jsonb_build_object('cuenta', sa.ig_username, 'cupo', sa.cupo_diario)
        from setter_sends ss
@@ -1394,13 +1302,12 @@ async function cargarSetters(): Promise<void> {
 
   await pool.query(
     `insert into events (type, contact_id, actor_user_id, created_at, payload_jsonb)
-     select 'lead_respondio', la.contact_id, u.id, la.respondido_at,
-            jsonb_build_object('respondioA', la.respondio_a, 'interes', la.interes,
-                               'nota', la.nota)
+     select 'lead_calificado', la.contact_id, u.id, la.calificado_at,
+            jsonb_build_object('nota', la.nota)
        from lead_assignments la
        join setters s on s.id = la.setter_id
        join users u on u.id = s.user_id
-      where la.respondido_at is not null`,
+      where la.calificado_at is not null`,
   )
 
   await pool.query(

@@ -19,8 +19,13 @@ import { AbrirInstagram } from '@/components/setter/abrir-instagram'
 import { ActivarAvisos, CintaInstalar } from '@/components/setter/pwa'
 import { Button } from '@/components/ui/button'
 import { Chip, Panel } from '@/components/ui/panel'
-import { PASO_META } from '@/lib/mensajes-config'
-import { SECCIONES, SECCION_META, ubicacionDePaso, type Seccion } from '@/lib/pistas'
+import {
+  PASO_META,
+  SECCIONES,
+  SECCION_META,
+  ubicacionDePaso,
+  type Seccion,
+} from '@/lib/pistas'
 import { copiarAlPortapapeles } from '@/lib/copiar'
 import { motivoDelCambio } from '@/lib/setters-cupo'
 import * as outbox from '@/lib/outbox'
@@ -156,8 +161,8 @@ export function Cola({
    * El tope frena una lista y no la otra.
    *
    * Llegar al límite del día tapaba la cola entera con el cartel de "terminaste
-   * por hoy", y adentro quedaban las ofertas y los seguimientos: mensajes que
-   * salen en chats ya abiertos y no gastan cupo. El setter conseguía que le
+   * por hoy", y adentro quedaban los seguimientos: mensajes que salen en chats
+   * ya abiertos y no gastan cupo. El setter conseguía que le
    * contestaran y no podía responder hasta el día siguiente.
    *
    * Con las listas separadas la regla se lee sola: el cupo es el presupuesto de

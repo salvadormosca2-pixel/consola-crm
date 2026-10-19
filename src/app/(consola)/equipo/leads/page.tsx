@@ -4,16 +4,14 @@ import type { Metadata } from 'next'
 import { VISTAS, type Vista } from '@/lib/setters-vistas'
 import { requerirAdmin } from '@/server/session'
 import { listarVista, listarSettersActivos } from '@/server/setters/panel'
-import { revisarLeads } from '@/server/setters/revision'
 
-import { Revision } from './revision'
 import { VistaDeLeads } from './vista'
 
 export const metadata: Metadata = { title: 'Leads del equipo · 101leads' }
 export const dynamic = 'force-dynamic'
 
 function vistaValida(valor: string | undefined): Vista {
-  return VISTAS.includes(valor as Vista) ? (valor as Vista) : 'respondieron'
+  return VISTAS.includes(valor as Vista) ? (valor as Vista) : 'calificados'
 }
 
 /**
@@ -29,14 +27,13 @@ export default async function PaginaLeadsDelEquipo({
   const { ver, setter, desde, hasta } = await searchParams
   const vista = vistaValida(ver)
 
-  const [filas, setters, revision] = await Promise.all([
+  const [filas, setters] = await Promise.all([
     listarVista(vista, {
       setterId: setter || null,
       desde: desde || null,
       hasta: hasta || null,
     }),
     listarSettersActivos(),
-    revisarLeads(),
   ])
 
   return (
@@ -47,8 +44,6 @@ export default async function PaginaLeadsDelEquipo({
         </Link>
         <h1 className="mt-1 text-[20px]">Leads del equipo</h1>
       </div>
-
-      <Revision revision={revision} />
 
       <VistaDeLeads
         vista={vista}

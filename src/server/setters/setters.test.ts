@@ -16,8 +16,6 @@ import {
 import { asignarLeads, barrer, contarPozo, devolverPendientes } from './asignacion'
 import { leerPuertaDeEntrada } from './avisos'
 import { agregarLeadPropio } from './leads'
-import { conteosDeRespuestas } from './respuestas'
-import { repararLeadsParados, revisarLeads } from './revision'
 import { borrarSetter, vaciarElEquipo } from './borrar'
 import { deshacerEnvio, registrarEnvio } from './envios'
 import {
@@ -65,11 +63,23 @@ function marcar(
       cuentaId,
       paso,
       body: 'Hola! Vi tu perfil…',
-      templateId: null,
-      templateVariant: null,
       actorUserId: null,
     },
     db,
+  )
+}
+
+/**
+ * Calificar sin pasar por la acción, que pide sesión de admin o de setter.
+ * Es lo mismo que hace `calificarLead`: el lead entra al primer escalón.
+ */
+async function calificar(assignmentId: string, dias = 2): Promise<void> {
+  await pool.query(
+    `update lead_assignments
+        set estado = 'calificado', respondido_at = now(), calificado_at = now(),
+            proximo_paso = $2, proximo_seguimiento_at = now() + ($3 || ' days')::interval
+      where id = $1`,
+    [assignmentId, PISTA_META.seguimiento.pasos[0]!.paso, String(dias)],
   )
 }
 
@@ -195,58 +205,58 @@ describe('idempotencia de la marca', () => {
   })
 })
 
-describe('el segundo mensaje', () => {
-  it('queda programado al contactar y no antes', async () => {
+describe('calificar es lo único que abre el seguimiento', () => {
+  it('el primer mensaje no programa nada: el lead espera que lo califiquen', async () => {
     const setter = await crearSetter(pool, { cupos: [30] })
     const asignacion = await asignar(pool, await crearLeadScrapeado(pool, 1), setter.setterId)
 
-    const antes = await pool.query('select segundo_programado_at from lead_assignments')
-    expect(antes.rows[0].segundo_programado_at).toBeNull()
-
     await marcar(asignacion, setter.setterId, setter.cuentas[0]!)
 
+    /*
+     * Antes acá se programaba solo un reintento de apertura: un segundo
+     * mensaje a alguien que nunca abrió la boca, gastando cupo que le hacía
+     * falta a los leads nuevos. Ahora no sigue nada hasta que una persona
+     * decida que este lead vale la pena.
+     */
     const despues = await pool.query(
-      'select estado, segundo_programado_at from lead_assignments',
+      'select estado, proximo_paso, proximo_seguimiento_at from lead_assignments',
     )
     expect(despues.rows[0].estado).toBe('contactado')
-    expect(despues.rows[0].segundo_programado_at).not.toBeNull()
+    expect(despues.rows[0].proximo_paso).toBeNull()
+    expect(despues.rows[0].proximo_seguimiento_at).toBeNull()
   })
 
-  it('no se puede mandar a alguien que ya respondió', async () => {
+  it('calificado, le toca el primer escalón y recién a sus días', async () => {
+    const setter = await crearSetter(pool, { cupos: [30] })
+    const asignacion = await asignar(pool, await crearLeadScrapeado(pool, 1), setter.setterId)
+
+    await marcar(asignacion, setter.setterId, setter.cuentas[0]!)
+    await calificar(asignacion)
+
+    const r = await pool.query(
+      `select estado, proximo_paso, proximo_seguimiento_at > now() as en_el_futuro
+         from lead_assignments`,
+    )
+    expect(r.rows[0].estado).toBe('calificado')
+    expect(r.rows[0].proximo_paso).toBe(PISTA_META.seguimiento.pasos[0]!.paso)
+    expect(r.rows[0].en_el_futuro).toBe(true)
+  })
+
+  it('un escalón no se puede mandar sobre un lead que nadie calificó', async () => {
     const setter = await crearSetter(pool, { cupos: [30] })
     const asignacion = await asignar(pool, await crearLeadScrapeado(pool, 1), setter.setterId)
     await marcar(asignacion, setter.setterId, setter.cuentas[0]!)
 
-    // El lead contesta: sale de la cola y se cancela el segundo mensaje.
+    // Vuelve al pozo: ya no es suyo y no espera nada.
     await pool.query(
-      `update lead_assignments
-          set estado = 'respondido', respondido_at = now(), segundo_programado_at = null,
-              proximo_paso = null, proximo_seguimiento_at = null
-        where id = $1`,
+      `update lead_assignments set estado = 'devuelto', devuelto_at = now() where id = $1`,
       [asignacion],
     )
 
-    const r = await marcar(asignacion, setter.setterId, setter.cuentas[0]!, 2)
+    const paso = PISTA_META.seguimiento.pasos[0]!.paso
+    const r = await marcar(asignacion, setter.setterId, setter.cuentas[0]!, paso)
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.motivo).toBe('estado')
-  })
-
-  it('el segundo consume cupo igual que el primero', async () => {
-    const setter = await crearSetter(pool, { cupos: [30] })
-    const cuenta = setter.cuentas[0]!
-    const asignacion = await asignar(pool, await crearLeadScrapeado(pool, 1), setter.setterId)
-
-    await marcar(asignacion, setter.setterId, cuenta)
-    await pool.query(
-      `update lead_assignments
-          set segundo_programado_at = now() - interval '1 hour',
-              proximo_paso = 2, proximo_seguimiento_at = now() - interval '1 hour'
-        where id = $1`,
-      [asignacion],
-    )
-    await marcar(asignacion, setter.setterId, cuenta, 2)
-
-    expect(await contarCupoDeSetter(pool, cuenta)).toBe(2)
   })
 })
 
@@ -568,7 +578,7 @@ describe('el reparto automático del día', () => {
   })
 })
 
-describe('las pistas: por dónde sigue el que no contesta', () => {
+describe('la escalera del calificado', () => {
   /** Deja el seguimiento del lead vencido, para que aparezca en la cola. */
   async function adelantarReloj(assignmentId: string): Promise<void> {
     await pool.query(
@@ -586,7 +596,7 @@ describe('las pistas: por dónde sigue el que no contesta', () => {
     return r.rows[0]?.proximo_paso ?? null
   }
 
-  /** Manda una escalera entera y devuelve el paso en el que quedó. */
+  /** Manda la escalera entera y devuelve el paso en el que quedó. */
   async function bajarEscalera(
     a: string,
     setterId: string,
@@ -600,43 +610,30 @@ describe('las pistas: por dónde sigue el que no contesta', () => {
     return leerPaso(a)
   }
 
-  const REINTENTO = PISTA_META.sin_abrir.pasos.map((p) => p.paso)
-  const SILENCIO = PISTA_META.silencio.pasos.map((p) => p.paso)
+  const ESCALERA = PISTA_META.seguimiento.pasos.map((p) => p.paso)
 
-  it('el que nunca contestó la entrada no ve la oferta: va al reintento', async () => {
-    // Es el cambio de fondo. Antes la oferta salía igual a las horas, a alguien
-    // que jamás abrió el chat.
+  it('el que nadie califica no recibe nada más', async () => {
+    // Es el cambio de fondo. Antes salía un reintento de apertura a alguien
+    // que jamás abrió el chat, y lo pagaba el cupo del día.
     const setter = await crearSetter(pool, { cupos: [30] })
     const cuenta = setter.cuentas[0]!
     const a = await asignar(pool, await crearLeadScrapeado(pool, 1), setter.setterId)
 
     await marcar(a, setter.setterId, cuenta, 1)
-    expect(await leerPaso(a)).toBe(REINTENTO[0])
+    expect(await leerPaso(a)).toBeNull()
   })
 
-  it('el reintento son dos intentos y ahí se corta', async () => {
+  it('calificado, baja los cuatro escalones y ahí se corta', async () => {
     const setter = await crearSetter(pool, { cupos: [30] })
     const cuenta = setter.cuentas[0]!
     const a = await asignar(pool, await crearLeadScrapeado(pool, 1), setter.setterId)
 
     await marcar(a, setter.setterId, cuenta, 1)
-    // Después del segundo no se insiste más: cada intento de más es cupo
-    // gastado y riesgo para la cuenta.
-    expect(await bajarEscalera(a, setter.setterId, cuenta, REINTENTO)).toBeNull()
-  })
-
-  it('mandada la oferta sin respuesta, baja los cuatro escalones de silencio', async () => {
-    const setter = await crearSetter(pool, { cupos: [30] })
-    const cuenta = setter.cuentas[0]!
-    const a = await asignar(pool, await crearLeadScrapeado(pool, 1), setter.setterId)
-
-    await marcar(a, setter.setterId, cuenta, 1)
-    await adelantarReloj(a)
-    await marcar(a, setter.setterId, cuenta, 2)
-    expect(await leerPaso(a)).toBe(SILENCIO[0])
+    await calificar(a)
+    expect(await leerPaso(a)).toBe(ESCALERA[0])
 
     // Un seguimiento no es un mensaje: es una escalera, y se recorre entera.
-    expect(await bajarEscalera(a, setter.setterId, cuenta, SILENCIO)).toBeNull()
+    expect(await bajarEscalera(a, setter.setterId, cuenta, ESCALERA)).toBeNull()
   })
 
   it('cada mensaje entra una sola vez aunque se marque dos veces', async () => {
@@ -645,9 +642,10 @@ describe('las pistas: por dónde sigue el que no contesta', () => {
     const a = await asignar(pool, await crearLeadScrapeado(pool, 1), setter.setterId)
 
     await marcar(a, setter.setterId, cuenta, 1)
+    await calificar(a)
     await adelantarReloj(a)
-    await marcar(a, setter.setterId, cuenta, REINTENTO[0]!)
-    await marcar(a, setter.setterId, cuenta, REINTENTO[0]!)
+    await marcar(a, setter.setterId, cuenta, ESCALERA[0]!)
+    await marcar(a, setter.setterId, cuenta, ESCALERA[0]!)
 
     expect(await contarCupoDeSetter(pool, cuenta)).toBe(2)
   })
@@ -664,16 +662,14 @@ describe('las pistas: por dónde sigue el que no contesta', () => {
     const a = await asignar(pool, await crearLeadScrapeado(pool, 1), setter.setterId)
 
     await marcar(a, setter.setterId, cuenta, 1)
-    await adelantarReloj(a)
-    await marcar(a, setter.setterId, cuenta, 2)
-    await bajarEscalera(a, setter.setterId, cuenta, SILENCIO)
+    await calificar(a)
+    await bajarEscalera(a, setter.setterId, cuenta, ESCALERA)
 
-    // Seis envíos salieron por esa cuenta…
-    expect(await contarCupoDeSetter(pool, cuenta)).toBe(6)
+    // Cinco envíos salieron por esa cuenta…
+    expect(await contarCupoDeSetter(pool, cuenta)).toBe(5)
 
-    // …pero de cupo gastó uno solo: la entrada. La oferta tampoco cuenta —sale
-    // cuando el lead acaba de contestar, con el chat abierto—, así que de las
-    // tres aperturas del día todavía quedan dos.
+    // …pero de cupo gastó uno solo: el primer mensaje. De las tres aperturas
+    // del día todavía quedan dos.
     const otro = await asignar(pool, await crearLeadScrapeado(pool, 2), setter.setterId)
     expect((await marcar(otro, setter.setterId, cuenta, 1)).ok).toBe(true)
 
@@ -685,35 +681,22 @@ describe('las pistas: por dónde sigue el que no contesta', () => {
     expect((await marcar(cuarto, setter.setterId, cuenta, 1)).ok).toBe(false)
   })
 
-  it('el reintento sí gasta cupo, porque el chat nunca se abrió', async () => {
-    const setter = await crearSetter(pool, { cupos: [1] })
-    const cuenta = setter.cuentas[0]!
-    const a = await asignar(pool, await crearLeadScrapeado(pool, 1), setter.setterId)
-
-    await marcar(a, setter.setterId, cuenta, 1)
-    await adelantarReloj(a)
-
-    // La entrada ya consumió el único cupo del día.
-    expect((await marcar(a, setter.setterId, cuenta, REINTENTO[0]!)).ok).toBe(false)
-  })
-
   it('deshacer un escalón lo deja pendiente otra vez', async () => {
     const setter = await crearSetter(pool, { cupos: [30] })
     const cuenta = setter.cuentas[0]!
     const a = await asignar(pool, await crearLeadScrapeado(pool, 1), setter.setterId)
 
     await marcar(a, setter.setterId, cuenta, 1)
+    await calificar(a)
     await adelantarReloj(a)
-    await marcar(a, setter.setterId, cuenta, 2)
-    await adelantarReloj(a)
-    const envio = await marcar(a, setter.setterId, cuenta, SILENCIO[0]!)
+    const envio = await marcar(a, setter.setterId, cuenta, ESCALERA[0]!)
 
-    expect(await leerPaso(a)).toBe(SILENCIO[1])
+    expect(await leerPaso(a)).toBe(ESCALERA[1])
 
     await deshacerEnvio((envio as { sendId: string }).sendId, setter.setterId, null, db)
 
     // Si se marcó sin querer, el lead no puede perder ese escalón.
-    expect(await leerPaso(a)).toBe(SILENCIO[0])
+    expect(await leerPaso(a)).toBe(ESCALERA[0])
   })
 })
 
@@ -919,211 +902,15 @@ describe('el seguimiento sale de la cuenta que abrió la conversación', () => {
   })
 })
 
-describe('contestó la entrada: le toca la oferta', () => {
-  /**
-   * El camino bueno del módulo. El lead contesta el mensaje de entrada, y ahí
-   * recién se entera de a qué nos dedicamos: lo que sigue es la oferta, y va
-   * enseguida, no dentro de tres días. Estos tests fijan que la oferta se
-   * pueda mandar sobre un lead que ya respondió — antes el estado 'respondido'
-   * la bloqueaba y el lead se quedaba sin el mensaje que importa.
-   */
-  async function contestaLaEntrada(assignmentId: string): Promise<void> {
-    await pool.query(
-      `update lead_assignments
-          set estado = 'respondido', respondido_at = now(), segundo_programado_at = null,
-              respondio_a = 'primero', proximo_paso = 2, proximo_seguimiento_at = now()
-        where id = $1`,
-      [assignmentId],
-    )
-  }
-
-  async function leerLead(assignmentId: string) {
-    const r = await pool.query<{
-      estado: string
-      respondio_a: string | null
-      proximo_paso: number | null
-      proximo_seguimiento_at: Date | null
-    }>(
-      `select estado, respondio_a, proximo_paso, proximo_seguimiento_at
-         from lead_assignments where id = $1`,
-      [assignmentId],
-    )
-    return r.rows[0]!
-  }
-
-  it('la oferta sale sobre un lead que ya respondió', async () => {
-    const setter = await crearSetter(pool, { cupos: [30] })
-    const cuenta = setter.cuentas[0]!
-    const a = await asignar(pool, await crearLeadScrapeado(pool, 1), setter.setterId)
-
-    await marcar(a, setter.setterId, cuenta, 1)
-    await contestaLaEntrada(a)
-
-    const r = await marcar(a, setter.setterId, cuenta, 2)
-    expect(r.ok).toBe(true)
-
-    const lead = await leerLead(a)
-    expect(lead.estado).toBe('segundo_enviado')
-    // Contestó la entrada y eso no se pierde: sigue siendo lo que lo distingue
-    // de alguien que nunca dijo nada.
-    expect(lead.respondio_a).toBe('primero')
-    expect(await contarCupoDeSetter(pool, cuenta)).toBe(2)
-  })
-
-  it('haber contestado la entrada no lo salva de silencio si se calla en la oferta', async () => {
-    const setter = await crearSetter(pool, { cupos: [30] })
-    const cuenta = setter.cuentas[0]!
-    const a = await asignar(pool, await crearLeadScrapeado(pool, 1), setter.setterId)
-
-    await marcar(a, setter.setterId, cuenta, 1)
-    await contestaLaEntrada(a)
-    await marcar(a, setter.setterId, cuenta, 2)
-
-    /*
-     * Ya había hablado una vez, pero ante la oferta se calló igual, y el que se
-     * calla ante la oferta entra a silencio. Sin esto se caía del sistema: no
-     * entraba a ninguna pista y no volvía a recibir nada.
-     */
-    expect((await leerLead(a)).proximo_paso).toBe(PISTA_META.silencio.pasos[0]!.paso)
-  })
-
-  it('al que nunca contestó le sigue tocando el último intento', async () => {
-    const setter = await crearSetter(pool, { cupos: [30] })
-    const cuenta = setter.cuentas[0]!
-    const a = await asignar(pool, await crearLeadScrapeado(pool, 1), setter.setterId)
-
-    await marcar(a, setter.setterId, cuenta, 1)
-    await pool.query(
-      `update lead_assignments set proximo_seguimiento_at = now() - interval '1 hour'
-        where id = $1`,
-      [a],
-    )
-    await marcar(a, setter.setterId, cuenta, 2)
-
-    expect((await leerLead(a)).proximo_paso).toBe(3)
-  })
-
-  it('deshacer la oferta la deja pendiente ya mismo, no dentro de un día', async () => {
-    const setter = await crearSetter(pool, { cupos: [30] })
-    const cuenta = setter.cuentas[0]!
-    const a = await asignar(pool, await crearLeadScrapeado(pool, 1), setter.setterId)
-
-    await marcar(a, setter.setterId, cuenta, 1)
-    await contestaLaEntrada(a)
-    const envio = await marcar(a, setter.setterId, cuenta, 2)
-
-    await deshacerEnvio((envio as { sendId: string }).sendId, setter.setterId, null, db)
-
-    const lead = await leerLead(a)
-    // Vuelve a "respondió", no a "contactado": la respuesta pasó de verdad.
-    expect(lead.estado).toBe('respondido')
-    expect(lead.proximo_paso).toBe(2)
-    expect(lead.proximo_seguimiento_at!.getTime()).toBeLessThanOrEqual(Date.now())
-    expect(await contarCupoDeSetter(pool, cuenta)).toBe(1)
-  })
-})
-
-describe('las situaciones que marca el setter', () => {
-  /**
-   * Las cuatro que se agregaron después de las cinco originales. Antes, tres de
-   * ellas no mandaban nada: el "le interesa" esperaba a enfriarse cinco días
-   * para recién ahí escribirle, el "no me interesa" se cerraba en silencio y
-   * una reunión quedaba de palabra. Estos tests fijan que ahora cada marca del
-   * setter tenga su propio mensaje, y que ninguna rama insista de más.
-   */
-  async function dejarPendiente(assignmentId: string, paso: number): Promise<void> {
-    await pool.query(
-      `update lead_assignments
-          set proximo_paso = $2, proximo_seguimiento_at = now() - interval '1 hour'
-        where id = $1`,
-      [assignmentId, paso],
-    )
-  }
-
-  async function leerPaso(assignmentId: string): Promise<number | null> {
-    const r = await pool.query<{ proximo_paso: number | null }>(
-      'select proximo_paso from lead_assignments where id = $1',
-      [assignmentId],
-    )
-    return r.rows[0]?.proximo_paso ?? null
-  }
-
-  /** Un lead que contestó la entrada y ya recibió la oferta. */
-  async function hastaLaOferta(setterId: string, cuenta: string): Promise<string> {
-    const a = await asignar(pool, await crearLeadScrapeado(pool, 1), setterId)
-    await marcar(a, setterId, cuenta, 1)
-    await pool.query(
-      `update lead_assignments
-          set estado = 'respondido', respondido_at = now(), segundo_programado_at = null,
-              respondio_a = 'primero', proximo_paso = 2, proximo_seguimiento_at = now()
-        where id = $1`,
-      [a],
-    )
-    await marcar(a, setterId, cuenta, 2)
-    return a
-  }
-
-  it('la escalera de silencio se recorre entera y ahí se corta', async () => {
-    const setter = await crearSetter(pool, { cupos: [30] })
-    const cuenta = setter.cuentas[0]!
-    const a = await hastaLaOferta(setter.setterId, cuenta)
-
-    const escalones = PISTA_META.silencio.pasos.map((x) => x.paso)
-    expect(await leerPaso(a)).toBe(escalones[0])
-
-    for (const paso of escalones) {
-      await dejarPendiente(a, paso)
-      await marcar(a, setter.setterId, cuenta, paso)
-    }
-
-    // Se acabó: después del último no le sigue nada y queda para nurture.
-    expect(await leerPaso(a)).toBeNull()
-  })
-
-  it('mandado el "le interesa", la cadena no le engancha nada más', async () => {
-    const setter = await crearSetter(pool, { cupos: [30] })
-    const cuenta = setter.cuentas[0]!
-    const a = await hastaLaOferta(setter.setterId, cuenta)
-
-    await dejarPendiente(a, 6)
-    const r = await marcar(a, setter.setterId, cuenta, 6)
-    expect(r.ok).toBe(true)
-
-    /*
-     * Dijo que sí: lo que sigue es una reunión, no otro mensaje automático. Si
-     * después se enfría, quien lo mete en la pista de tibio es una persona
-     * desde la cola de clasificación — insistirle solo por reloj a alguien que
-     * ya dijo que sí es la forma de que deje de decir que sí.
-     */
-    expect(await leerPaso(a)).toBeNull()
-  })
-
-  it('un no se respeta: el cierre sale una vez y no encadena nada', async () => {
-    const setter = await crearSetter(pool, { cupos: [30] })
-    const cuenta = setter.cuentas[0]!
-    const a = await hastaLaOferta(setter.setterId, cuenta)
-
-    await dejarPendiente(a, 7)
-    await marcar(a, setter.setterId, cuenta, 7)
-    expect(await leerPaso(a)).toBeNull()
-  })
-
-  it('la confirmación de la reunión sale una vez y no encadena nada', async () => {
-    const setter = await crearSetter(pool, { cupos: [30] })
-    const cuenta = setter.cuentas[0]!
-    const a = await hastaLaOferta(setter.setterId, cuenta)
-
-    await dejarPendiente(a, 8)
-    await marcar(a, setter.setterId, cuenta, 8)
-    expect(await leerPaso(a)).toBeNull()
-  })
-
+describe('el cupo frena las aperturas y nada más', () => {
   it('con el cupo agotado el seguimiento sale igual, y la apertura no', async () => {
-    // Cupo de una sola apertura: la entrada lo agota. La oferta sale igual,
-    // porque no cuenta contra el cupo de abrir desconocidos.
+    // Cupo de una sola apertura: el primer mensaje lo agota.
     const setter = await crearSetter(pool, { cupos: [1] })
     const cuenta = setter.cuentas[0]!
-    const a = await hastaLaOferta(setter.setterId, cuenta)
+    const a = await asignar(pool, await crearLeadScrapeado(pool, 1), setter.setterId)
+
+    await marcar(a, setter.setterId, cuenta, 1)
+    await calificar(a)
 
     const otro = await asignar(pool, await crearLeadScrapeado(pool, 2), setter.setterId)
     expect((await marcar(otro, setter.setterId, cuenta, 1)).ok).toBe(false)
@@ -1134,8 +921,13 @@ describe('las situaciones que marca el setter', () => {
      * presupuesto de abrir desconocidos, que es justo al revés de lo que
      * conviene.
      */
-    const escalon = PISTA_META.silencio.pasos[0]!.paso
-    await dejarPendiente(a, escalon)
+    const escalon = PISTA_META.seguimiento.pasos[0]!.paso
+    await pool.query(
+      `update lead_assignments
+          set proximo_paso = $2, proximo_seguimiento_at = now() - interval '1 hour'
+        where id = $1`,
+      [a, escalon],
+    )
     expect((await marcar(a, setter.setterId, cuenta, escalon)).ok).toBe(true)
   })
 })
@@ -1281,27 +1073,30 @@ describe('vaciar el equipo', () => {
     }
   })
 
-  it('el que ya contestó no vuelve al pozo ni pierde su ficha', async () => {
+  it('el que ya había contestado también vuelve, y avisa cuántos son', async () => {
     const setter = await crearSetter(pool, { cupos: [30] })
     const contactId = await crearLeadScrapeado(pool, 1)
     const asignacion = await asignar(pool, contactId, setter.setterId)
     await marcar(asignacion, setter.setterId, setter.cuentas[0]!)
 
-    // Lo mismo que hace la app cuando el lead contesta.
-    await pool.query(
-      `update lead_assignments set estado = 'respondido', respondido_at = now() where id = $1`,
-      [asignacion],
-    )
-    await pool.query(`update contacts set stage = 'respondido' where id = $1`, [contactId])
+    // Lo mismo que hace la app al calificarlo.
+    await calificar(asignacion)
+    await pool.query(`update contacts set stage = 'interesado' where id = $1`, [contactId])
 
     const r = await vaciarElEquipo(null, db)
+    // Vuelve al pozo como todos, y se cuenta aparte para poder avisarlo antes.
+    expect(r.alPozo).toBe(1)
     expect(r.conRespuesta).toBe(1)
-    expect(r.alPozo).toBe(0)
 
-    // Sigue existiendo y sigue fuera del pozo: ya hay una conversación abierta.
-    expect(await contarPozo(db)).toBe(0)
-    const quedo = await pool.query('select stage from contacts where id = $1', [contactId])
-    expect(quedo.rows[0]).toMatchObject({ stage: 'respondido' })
+    expect(await contarPozo(db)).toBe(1)
+    const quedo = await pool.query('select stage, setter_id from contacts where id = $1', [
+      contactId,
+    ])
+    expect(quedo.rows[0]).toMatchObject({ stage: 'nuevo', setter_id: null })
+
+    // El historial no se pierde: el mensaje que salió sigue estando.
+    const mensajes = await pool.query('select 1 from messages where contact_id = $1', [contactId])
+    expect(mensajes.rows).toHaveLength(1)
   })
 
   it('no toca las cuentas de admin', async () => {
@@ -1557,143 +1352,3 @@ describe('saltear repone la cola', () => {
  * desde que el lead abre la boca y sigue siéndolo después de clasificarlo. El
  * admin veía trabajo pendiente que ya estaba hecho.
  */
-describe('la bandeja de respuestas dice dónde está cada uno', () => {
-  async function contestoLaEntrada(setterId: string, cuenta: string): Promise<string> {
-    const a = await asignar(pool, await crearLeadScrapeado(pool, 1), setterId)
-    await marcar(a, setterId, cuenta, 1)
-
-    // Lo que hace la app cuando el setter marca "respondió".
-    await pool.query(
-      `update lead_assignments
-          set estado = 'respondido', respondido_at = now(), respondio_a = 'primero',
-              proximo_paso = 2, proximo_seguimiento_at = now()
-        where id = $1`,
-      [a],
-    )
-    await pool.query(
-      `update contacts set stage = 'respondido', received_count = 1
-        where id = (select contact_id from lead_assignments where id = $1)`,
-      [a],
-    )
-    return a
-  }
-
-  it('antes de la oferta está en "les falta la oferta" y en ninguna otra', async () => {
-    const setter = await crearSetter(pool, { cupos: [30] })
-    await contestoLaEntrada(setter.setterId, setter.cuentas[0]!)
-
-    const c = await conteosDeRespuestas(undefined, db)
-    expect(c.sin_oferta).toBe(1)
-    expect(c.oferta_enviada).toBe(0)
-    // Todavía no hay nada que clasificar: eso pasa cuando contesta la oferta.
-    expect(c.sin_clasificar).toBe(0)
-  })
-
-  it('mandada la oferta sale de "les falta" y entra en "oferta enviada"', async () => {
-    const setter = await crearSetter(pool, { cupos: [30] })
-    const a = await contestoLaEntrada(setter.setterId, setter.cuentas[0]!)
-
-    await marcar(a, setter.setterId, setter.cuentas[0]!, 2)
-
-    const c = await conteosDeRespuestas(undefined, db)
-    expect(c.sin_oferta).toBe(0)
-    expect(c.oferta_enviada).toBe(1)
-    expect(c.sin_clasificar).toBe(0)
-  })
-
-  it('contestada la oferta queda sin clasificar, y clasificarlo lo saca', async () => {
-    const setter = await crearSetter(pool, { cupos: [30] })
-    const a = await contestoLaEntrada(setter.setterId, setter.cuentas[0]!)
-    await marcar(a, setter.setterId, setter.cuentas[0]!, 2)
-
-    await pool.query(
-      `update lead_assignments
-          set respondio_a = 'segundo', respondido_at = now(), interes = 'interesa'
-        where id = $1`,
-      [a],
-    )
-    expect((await conteosDeRespuestas(undefined, db)).sin_clasificar).toBe(1)
-
-    await pool.query(`update lead_assignments set clasificado_at = now() where id = $1`, [a])
-    expect((await conteosDeRespuestas(undefined, db)).sin_clasificar).toBe(0)
-  })
-})
-
-/**
- * El lead que no espera nada no aparece en ninguna pantalla.
- *
- * Ni en la cola del setter, ni en el pozo, ni en la de clasificación: está y no
- * existe. Es el peor estado posible porque no se nota — justamente porque
- * desaparece— y por eso hay una revisión que los busca.
- */
-describe('leads parados', () => {
-  it('encuentra al que recibió la oferta y quedó sin próximo paso', async () => {
-    const setter = await crearSetter(pool, { cupos: [30] })
-    const a = await asignar(pool, await crearLeadScrapeado(pool, 1), setter.setterId)
-    await marcar(a, setter.setterId, setter.cuentas[0]!, 1)
-
-    // Se cortó la cadena: mandó la oferta y no quedó programado nada.
-    await pool.query(
-      `update lead_assignments
-          set estado = 'segundo_enviado', segundo_mensaje_at = now() - interval '20 days',
-              proximo_paso = null, proximo_seguimiento_at = null, segundo_programado_at = null
-        where id = $1`,
-      [a],
-    )
-
-    expect((await revisarLeads(db)).parados).toBe(1)
-
-    expect(await repararLeadsParados(null, db)).toBe(1)
-    expect((await revisarLeads(db)).parados).toBe(0)
-
-    // Volvió al primer escalón de silencio, y contado desde su último mensaje:
-    // uno de hace veinte días tiene que salir ahora, no dentro de dos.
-    const fila = await pool.query<{ proximo_paso: number; vencido: boolean }>(
-      `select proximo_paso, proximo_seguimiento_at <= now() as vencido
-         from lead_assignments where id = $1`,
-      [a],
-    )
-    expect(fila.rows[0]?.proximo_paso).toBe(PISTA_META.silencio.pasos[0]!.paso)
-    expect(fila.rows[0]?.vencido).toBe(true)
-  })
-
-  it('no toca al que terminó su escalera: ese está bien donde está', async () => {
-    const setter = await crearSetter(pool, { cupos: [30] })
-    const a = await asignar(pool, await crearLeadScrapeado(pool, 1), setter.setterId)
-    await marcar(a, setter.setterId, setter.cuentas[0]!, 1)
-
-    // Recorrió la pista entera: el último escalón no encadena nada más, así que
-    // al mandarlo queda sin próximo paso **por haber terminado**.
-    //
-    // Los dos campos se escriben juntos siempre: la base exige que estén los
-    // dos o ninguno, para que no exista un paso sin fecha ni una fecha sin paso.
-    const ultimo = PISTA_META.silencio.pasos[PISTA_META.silencio.pasos.length - 1]!.paso
-    await pool.query(
-      `update lead_assignments
-          set estado = 'segundo_enviado', segundo_mensaje_at = now(),
-              proximo_paso = $2, proximo_seguimiento_at = now()
-        where id = $1`,
-      [a, ultimo],
-    )
-    await marcar(a, setter.setterId, setter.cuentas[0]!, ultimo)
-
-    expect((await revisarLeads(db)).parados).toBe(0)
-  })
-
-  it('no toca al que está esperando que lo clasifiquen', async () => {
-    const setter = await crearSetter(pool, { cupos: [30] })
-    const a = await asignar(pool, await crearLeadScrapeado(pool, 1), setter.setterId)
-    await marcar(a, setter.setterId, setter.cuentas[0]!, 1)
-    await pool.query(
-      `update lead_assignments
-          set estado = 'segundo_enviado', respondio_a = 'segundo', respondido_at = now(),
-              proximo_paso = null, proximo_seguimiento_at = null
-        where id = $1`,
-      [a],
-    )
-
-    const r = await revisarLeads(db)
-    expect(r.parados).toBe(0)
-    expect(r.sinClasificar).toBe(1)
-  })
-})

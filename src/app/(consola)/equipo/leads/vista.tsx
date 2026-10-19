@@ -9,7 +9,7 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Chip, Panel, PanelHeader } from '@/components/ui/panel'
 import { Input } from '@/components/ui/input'
-import { INTERES_META, LEAD_ESTADO_META, type UserStatus } from '@/db/enums'
+import { LEAD_ESTADO_META, type UserStatus } from '@/db/enums'
 import { formatCorto, haceCuanto } from '@/lib/tz'
 import { VISTA_META, VISTAS, type Vista } from '@/lib/setters-vistas'
 import { cn } from '@/lib/utils'
@@ -38,7 +38,7 @@ export function VistaDeLeads({
   const [pendiente, iniciar] = React.useTransition()
   const [elegidos, setElegidos] = React.useState<Set<string>>(new Set())
 
-  const recuperable = vista === 'sin_respuesta'
+  const recuperable = vista === 'sin_calificar'
 
   // Al cambiar de vista o de filtro, la selección deja de tener sentido.
   React.useEffect(() => setElegidos(new Set()), [vista, filas])
@@ -229,8 +229,8 @@ export function VistaDeLeads({
           <div className="flex flex-col items-center px-6 py-12 text-center">
             <Inbox className="mb-2 h-5 w-5 text-texto-2" aria-hidden />
             <p className="text-[13px] text-texto-2">
-              {vista === 'respondieron'
-                ? 'No hay nadie esperando que lo atiendas. Cuando un setter marque una respuesta, aparece acá.'
+              {vista === 'calificados'
+                ? 'Todavía no hay leads calificados. Cuando un setter califique a alguien, aparece acá.'
                 : 'No hay leads en esta vista con los filtros elegidos.'}
             </p>
           </div>
@@ -273,13 +273,9 @@ export function VistaDeLeads({
                   {DETALLE[vista](f)}
                 </span>
 
-                {f.interes ? (
-                  <Chip tono={INTERES_META[f.interes].tone}>{INTERES_META[f.interes].label}</Chip>
-                ) : (
-                  <Chip tono={LEAD_ESTADO_META[f.estado].tone}>
-                    {LEAD_ESTADO_META[f.estado].label}
-                  </Chip>
-                )}
+                <Chip tono={LEAD_ESTADO_META[f.estado].tone}>
+                  {LEAD_ESTADO_META[f.estado].label}
+                </Chip>
 
                 {vista === 'sin_contactar' ? (
                   <span className="flex shrink-0 items-center gap-1.5">
@@ -346,12 +342,10 @@ export function VistaDeLeads({
 
 /** Qué dato importa en cada vista. Mostrar todos sería no mostrar ninguno. */
 const DETALLE: Record<Vista, (f: FilaVista) => string> = {
-  respondieron: (f) => `esperando ${haceCuanto(f.respondidoAt).replace('hace ', '')}`,
-  oferta: (f) =>
-    `${f.interes ? INTERES_META[f.interes].label : 'contestó'} · ${haceCuanto(f.respondidoAt)}`,
+  calificados: (f) => `calificado ${haceCuanto(f.calificadoAt)}`,
   sin_contactar: (f) => (f.horas === 0 ? 'vence en menos de 1 h' : `vence en ${f.horas} h`),
-  sin_respuesta: (f) => `sin contestar desde ${haceCuanto(f.segundoMensajeAt)}`,
-  esperando_segundo: (f) =>
+  sin_calificar: (f) => `contactado ${haceCuanto(f.contactadoAt)}`,
+  seguimiento_atrasado: (f) =>
     f.dias === 0 ? 'le toca hoy' : `${f.dias} ${f.dias === 1 ? 'día' : 'días'} de atraso`,
   vencidos: (f) => `asignado ${formatCorto(f.asignadoAt)}`,
   inexistentes: (f) => `marcado ${formatCorto(f.asignadoAt)}`,

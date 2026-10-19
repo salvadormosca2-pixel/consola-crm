@@ -76,16 +76,6 @@ export const settersConfigSchema = z.object({
   /** Cupo por cuenta de Instagram que se propone al crear un setter. */
   cupoPorCuentaDefault: z.number().int().min(1).max(100).default(30),
 
-  /**
-   * Horas hábiles que puede pasar un lead esperando que alguien decida a qué
-   * pista va. Pasadas estas, se marca en rojo en la cola de clasificación.
-   *
-   * Es el cuello de botella más caro de la operación: son leads que ya hablaron
-   * y están esperando. Se cuenta en horas hábiles y no de reloj — uno que
-   * contestó a las once de la noche no está atrasado a las tres de la mañana.
-   */
-  horasParaClasificar: z.number().int().min(1).max(72).default(4),
-
   /** Días de atraso en los seguimientos a partir de los cuales me llega alerta. */
   diasAtrasoParaAlerta: z.number().int().min(1).max(30).default(3),
 
@@ -191,7 +181,7 @@ export function diasDeTodosLosPasos(cfg: SettersConfig): Record<string, number> 
  *
  * No desde que entró el lead ni desde que arrancó la secuencia: desde el último
  * evento real —último envío, última respuesta del lead, o último mensaje que
- * escribió el setter a mano—. Si la oferta salió el lunes y el lead contesta el
+ * escribió el setter a mano—. Si el primer mensaje salió el lunes y el lead contesta el
  * viernes, el escalón siguiente cuenta desde el viernes.
  *
  * Contarlo desde el arranque haría que un lead que contestó tarde reciba el
@@ -220,130 +210,45 @@ export function entrarAPista(
 }
 
 /**
- * A cuál de los dos mensajes contestó el lead, si contestó alguno.
+ * Calificar un lead: entra a la escalera de seguimiento.
  *
- * No alcanza con un sí o un no: contestar la entrada y contestar la oferta son
- * hechos distintos y mandan al lead a lugares distintos.
+ * Es la única puerta de entrada al seguimiento, y la abre una persona. El
+ * sistema no la puede abrir solo: que un lead haya contestado no dice si vale
+ * la pena seguirlo, y mandarle cuatro mensajes a alguien que contestó "no,
+ * gracias" es la forma más rápida de que te bloqueen.
+ *
+ * El primer escalón espera sus días desde la respuesta, igual que todos los
+ * demás: calificar no manda nada en el acto.
  */
-export type RespondioA = 'primero' | 'segundo' | null
+export function alCalificar(cfg: SettersConfig, desde: Date = new Date()): ProximoPaso {
+  return entrarAPista(cfg, 'seguimiento', desde)
+}
 
 /**
  * Qué le toca después del mensaje que se acaba de mandar.
  *
- * Devuelve null cuando la escalera se terminó: de ahí en más el lead queda para
- * nurture y vuelve a entrar a los 30-60 días. Ninguna rama sigue para siempre,
- * porque cada intento de más es cupo gastado y riesgo para la cuenta.
+ * Devuelve null en los dos extremos del recorrido:
  *
- * Las dos bifurcaciones están en el primer contacto, y cada una mira una
- * respuesta distinta:
+ *   · mandado **el primer mensaje**, no se encadena nada. Lo que sigue no
+ *     depende del reloj sino de que alguien lo califique; si nadie lo hace, el
+ *     lead vence y vuelve al pozo. Antes acá se programaba solo un reintento de
+ *     apertura: dos mensajes a alguien que nunca abrió la boca, gastando cupo
+ *     que le hacía falta a los leads nuevos.
+ *   · terminada **la escalera**, tampoco: cuatro toques y se corta. Ninguna
+ *     rama sigue para siempre.
  *
- *   · mandada **la entrada**, lo que importa es si contestó algo. Si no
- *     contestó nunca ve la oferta: se va al reintento de apertura, la única
- *     pista que gasta cupo porque el chat jamás se abrió. Si contestó, la
- *     oferta se la programó la acción que marcó la respuesta y salió en el
- *     acto, así que acá no hay nada que encadenar.
- *   · mandada **la oferta**, lo que importa es si contestó *la oferta*. Haber
- *     contestado la entrada no cuenta: ese lead ya habló una vez, pero ante la
- *     oferta se calló igual, y el que se calla ante la oferta entra a silencio.
- *     Solo si contestó la oferta se frena la cadena, porque ahí decide una
- *     persona en la cola de clasificación — es la que sabe si eso fue una
- *     objeción (tibio), ruido (silencio) o un sí (interesado).
- *
- * Dentro de una pista no hay bifurcación: se baja un escalón por vez.
+ * Dentro de la escalera no hay bifurcación: se baja un escalón por vez.
  */
 export function proximoSeguimiento(
   cfg: SettersConfig,
   paso: PasoDeSeguimiento,
   desde: Date = new Date(),
-  respondioA: RespondioA = null,
 ): ProximoPaso | null {
   if (!esPaso(paso)) return null
-
-  if (paso === 1) return respondioA !== null ? null : entrarAPista(cfg, 'sin_abrir', desde)
-  if (paso === 2) return respondioA === 'segundo' ? null : entrarAPista(cfg, 'silencio', desde)
 
   const siguiente = siguienteDeLaPista(paso)
   if (!siguiente) return null
   return { paso: siguiente.paso, cuando: cuandoSale(cfg, siguiente.paso, desde) }
-}
-
-/**
- * Contestó la entrada: le toca la oferta, y le toca **ahora**.
- *
- * Si contestó, está mirando el celular en ese momento. Hacerlo esperar hasta
- * mañana es perder la conversación que se acaba de ganar.
- */
-export function ofertaTrasLaRespuesta(desde: Date = new Date()): ProximoPaso {
-  return { paso: 2, cuando: desde }
-}
-
-/* ── Las pistas que elige una persona ─────────────────────────────────── */
-
-/**
- * Adónde va el lead que contestó la oferta. Lo decide alguien mirando el hilo,
- * no el sistema: la diferencia entre "cuánto sale" y "no me interesa" no se
- * puede deducir de un texto libre, y equivocarse manda el mensaje que no era.
- */
-export const DESTINOS_DE_CLASIFICACION = ['interesado', 'tibio', 'silencio', 'no_interesa'] as const
-export type DestinoDeClasificacion = (typeof DESTINOS_DE_CLASIFICACION)[number]
-
-export const DESTINO_META: Record<
-  DestinoDeClasificacion,
-  { label: string; detalle: string; pista: Pista | null }
-> = {
-  interesado: {
-    label: 'Interesado',
-    detalle: 'Dijo que sí. Sale el mensaje que lo lleva a una fecha concreta, en el acto.',
-    pista: null,
-  },
-  tibio: {
-    label: 'Tibio',
-    detalle: 'Contestó con una duda o una objeción: precio, momento, "después veo".',
-    pista: 'tibio',
-  },
-  silencio: {
-    label: 'Silencio',
-    detalle: 'Lo que contestó no dice nada. Se lo trata como si no hubiera contestado.',
-    pista: 'silencio',
-  },
-  no_interesa: {
-    label: 'No le interesa',
-    detalle: 'Dijo que no. Sale el cierre cordial y no se le insiste más.',
-    pista: null,
-  },
-}
-
-/** Qué sale después de clasificar. Las dos pistas esperan; las dos marcas no. */
-export function trasClasificar(
-  cfg: SettersConfig,
-  destino: DestinoDeClasificacion,
-  desde: Date = new Date(),
-): ProximoPaso {
-  const pista = DESTINO_META[destino].pista
-  if (pista) return entrarAPista(cfg, pista, desde)
-  return destino === 'no_interesa' ? mensajeDeRechazo(desde) : mensajeDeInteres(desde)
-}
-
-/* ── Los que salen apenas el setter marca ─────────────────────────────── */
-
-/**
- * Tres situaciones que no nacen de un silencio sino de una marca en la app, y
- * por eso ninguna espera: el lead está del otro lado, ahora.
- */
-
-/** Dijo que le interesa la oferta. Le toca el mensaje que lleva a la fecha. */
-export function mensajeDeInteres(desde: Date = new Date()): ProximoPaso {
-  return { paso: 6, cuando: desde }
-}
-
-/** Dijo que no. Le toca el cierre cordial, que deja la puerta abierta. */
-export function mensajeDeRechazo(desde: Date = new Date()): ProximoPaso {
-  return { paso: 7, cuando: desde }
-}
-
-/** Quedó agendada la reunión. Le toca la confirmación por escrito. */
-export function mensajeDeReunion(desde: Date = new Date()): ProximoPaso {
-  return { paso: 8, cuando: desde }
 }
 
 /** Cuántos escalones tiene cada pista. Para el panel y para los tests. */

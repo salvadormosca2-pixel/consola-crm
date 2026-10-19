@@ -2,10 +2,8 @@
 
 import {
   BookOpen,
-  ListChecks,
   CalendarDays,
   History,
-  Inbox,
   LogOut,
   MessageSquareText,
   Repeat,
@@ -30,20 +28,16 @@ import type { FilaNotificacion } from '@/server/setters/notificaciones'
  * cuando preguntan, y qué hizo cada uno. Todo lo que no responde una pregunta
  * que alguien se hace no está.
  *
- * Mensajes y Seguimientos van separadas porque son dos mensajes distintos.
- * Mensajes tiene los que salen sin esperar nada —la entrada, la oferta y los
- * que salen en el acto cuando el setter marca qué contestó—; Seguimientos tiene
- * los que vuelven solos por silencio, cada uno con su día y su texto juntos,
- * porque a los tres días y a los quince no se escribe igual.
+ * Textos y Seguimientos van separadas porque son dos cosas distintas. Textos
+ * es el mensaje de cada lead, escrito a mano, y se vacía todos los días;
+ * Seguimientos son los días de la escalera, que se tocan una vez cada tanto.
  */
 const SECCIONES = [
   { href: '/equipo', label: 'Equipo', icono: UserCog },
-  { href: '/clasificar', label: 'Clasificar', icono: ListChecks },
-  { href: '/respondieron', label: 'Respondieron', icono: Inbox },
   { href: '/reuniones', label: 'Reuniones', icono: CalendarDays },
   { href: '/contactos', label: 'Contactos', icono: Users },
   { href: '/importar', label: 'Importar', icono: Upload },
-  { href: '/mensajes', label: 'Mensajes', icono: MessageSquareText },
+  { href: '/textos', label: 'Textos', icono: MessageSquareText },
   { href: '/seguimientos', label: 'Seguimientos', icono: Repeat },
   { href: '/configuracion/referencias', label: 'Referencias', icono: BookOpen },
   { href: '/actividad', label: 'Actividad', icono: History },

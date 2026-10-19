@@ -3,7 +3,7 @@ import 'server-only'
 import { sql } from 'drizzle-orm'
 
 import { db } from '@/db'
-import type { LeadEstado, LeadInteres, SetterSendTipo, UserStatus } from '@/db/enums'
+import type { LeadEstado, UserStatus } from '@/db/enums'
 import { SETTERS_CONFIG_DEFAULT } from '@/lib/setters-config'
 import type { Vista } from '@/lib/setters-vistas'
 import { opsDate, OPS_TZ } from '@/lib/tz'
@@ -25,8 +25,8 @@ import { leerCuposDelEquipo, type CupoDeSetter } from '@/server/setters/cupo'
  *
  * Antes cada consulta lo contaba a su manera —el tablero miraba solo el segundo
  * mensaje— y el mismo setter aparecía con tres números distintos según la
- * pantalla. Un seguimiento es cualquier mensaje que no sea la entrada: la
- * oferta y los tres reenganches, y todos se programan igual.
+ * pantalla. Un seguimiento es cualquier mensaje que no sea el primero, y todos
+ * se programan igual.
  *
  * Es exactamente lo que hace aparecer al lead en la cola del setter, así que lo
  * que dice el panel es lo que hay en el celular de alguien.
@@ -244,12 +244,10 @@ export interface FilaVista {
   asignadoAt: Date
   contactadoAt: Date | null
   respondidoAt: Date | null
-  segundoProgramadoAt: Date | null
-  segundoMensajeAt: Date | null
+  calificadoAt: Date | null
+  proximoSeguimientoAt: Date | null
   venceAt: Date
   devueltoMotivo: string | null
-  respondioA: SetterSendTipo | null
-  interes: LeadInteres | null
   nota: string | null
   /** Horas hasta el vencimiento, o días de atraso, según la vista. */
   horas: number
@@ -263,28 +261,22 @@ export interface FiltrosDeVista {
 }
 
 const CONDICIONES: Record<Vista, ReturnType<typeof sql>> = {
-  // Contestaron el gancho: todavía no saben qué les ofrecemos.
-  respondieron: sql`la.estado = 'respondido'
-                    and coalesce(la.respondio_a, 'primero') = 'primero'
-                    and c.stage = 'respondido'`,
-  // Contestaron la oferta: ya dijeron que sí o que no.
-  oferta: sql`la.respondio_a = 'segundo'`,
+  // Contestaron y alguien decidió seguirlos. Son los que importan.
+  calificados: sql`la.calificado_at is not null`,
   sin_contactar: sql`la.estado in ('asignado', 'abierto', 'saltado')`,
-  sin_respuesta: sql`la.estado = 'segundo_enviado' and la.respondido_at is null`,
-  // Todo seguimiento vencido, no solo el segundo mensaje: los reenganches se
-  // atrasan igual y se pierden igual.
-  esperando_segundo: sql`${SEGUIMIENTO_PENDIENTE}`,
+  // Recibieron el primer mensaje y nadie los calificó: no reciben nada más.
+  sin_calificar: sql`la.estado in ('contactado', 'segundo_enviado', 'respondido')
+                     and la.calificado_at is null`,
+  seguimiento_atrasado: sql`${SEGUIMIENTO_PENDIENTE}`,
   vencidos: sql`la.estado in ('vencido', 'devuelto')`,
   inexistentes: sql`la.estado = 'cuenta_inexistente'`,
 }
 
 const ORDENES: Record<Vista, ReturnType<typeof sql>> = {
-  respondieron: sql`la.respondido_at asc`,
-  // Los que dijeron que sí, primero: son los que hay que atender hoy.
-  oferta: sql`(la.interes = 'interesa') desc, la.respondido_at asc`,
+  calificados: sql`la.calificado_at asc`,
   sin_contactar: sql`la.vence_at asc`,
-  sin_respuesta: sql`la.segundo_mensaje_at asc`,
-  esperando_segundo: sql`la.proximo_seguimiento_at asc`,
+  sin_calificar: sql`la.contactado_at asc`,
+  seguimiento_atrasado: sql`la.proximo_seguimiento_at asc`,
   vencidos: sql`la.devuelto_at desc`,
   inexistentes: sql`la.devuelto_at desc`,
 }
@@ -295,9 +287,8 @@ export async function listarVista(
 ): Promise<FilaVista[]> {
   const filas = await db.execute(sql`
     select la.id, la.contact_id, la.estado, la.asignado_at, la.contactado_at,
-           la.respondido_at, la.segundo_programado_at, la.segundo_mensaje_at, la.vence_at,
+           la.respondido_at, la.calificado_at, la.proximo_seguimiento_at, la.vence_at,
            la.devuelto_motivo, la.nota,
-           la.respondio_a, la.interes,
            la.setter_id, u.name as setter_nombre,
            c.business_name, c.ig_username, c.niche, c.city
       from lead_assignments la
@@ -329,12 +320,10 @@ export async function listarVista(
     asignado_at: Date
     contactado_at: Date | null
     respondido_at: Date | null
-    segundo_programado_at: Date | null
-    segundo_mensaje_at: Date | null
+    calificado_at: Date | null
+    proximo_seguimiento_at: Date | null
     vence_at: Date
     devuelto_motivo: string | null
-    respondio_a: SetterSendTipo | null
-    interes: LeadInteres | null
     nota: string | null
     setter_id: string | null
     setter_nombre: string | null
@@ -344,7 +333,7 @@ export async function listarVista(
     city: string | null
   }>).map((f) => {
     const vence = new Date(f.vence_at)
-    const programado = f.segundo_programado_at ? new Date(f.segundo_programado_at) : null
+    const programado = f.proximo_seguimiento_at ? new Date(f.proximo_seguimiento_at) : null
     return {
       assignmentId: f.id,
       contactId: f.contact_id,
@@ -358,12 +347,10 @@ export async function listarVista(
       asignadoAt: new Date(f.asignado_at),
       contactadoAt: f.contactado_at ? new Date(f.contactado_at) : null,
       respondidoAt: f.respondido_at ? new Date(f.respondido_at) : null,
-      segundoProgramadoAt: programado,
-      segundoMensajeAt: f.segundo_mensaje_at ? new Date(f.segundo_mensaje_at) : null,
+      calificadoAt: f.calificado_at ? new Date(f.calificado_at) : null,
+      proximoSeguimientoAt: programado,
       venceAt: vence,
       devueltoMotivo: f.devuelto_motivo,
-      respondioA: f.respondio_a,
-      interes: f.interes,
       nota: f.nota,
       horas: Math.max(Math.floor((vence.getTime() - ahora) / 3_600_000), 0),
       dias: programado ? Math.max(Math.floor((ahora - programado.getTime()) / 86_400_000), 0) : 0,
@@ -433,14 +420,14 @@ const NUMEROS = (desde: string) => sql`
       where la.setter_id = s.id
         and (la.asignado_at at time zone ${OPS_TZ})::date >= ${desde}::date) as asignados,
     (select count(*)::int from setter_sends ss
-      where ss.setter_id = s.id and ss.tipo = 'primero' and ss.undone_at is null
+      where ss.setter_id = s.id and ss.paso = 1 and ss.undone_at is null
         and ss.ops_date >= ${desde}::date) as contactados,
     (select count(*)::int from setter_sends ss
-      where ss.setter_id = s.id and ss.tipo = 'segundo' and ss.undone_at is null
+      where ss.setter_id = s.id and ss.paso <> 1 and ss.undone_at is null
         and ss.ops_date >= ${desde}::date) as segundos,
     (select count(*)::int from lead_assignments la
-      where la.setter_id = s.id and la.respondido_at is not null
-        and (la.respondido_at at time zone ${OPS_TZ})::date >= ${desde}::date) as respondieron,
+      where la.setter_id = s.id and la.calificado_at is not null
+        and (la.calificado_at at time zone ${OPS_TZ})::date >= ${desde}::date) as respondieron,
     (select count(*)::int from meetings m
       where m.setter_id = s.id
         and (m.created_at at time zone ${OPS_TZ})::date >= ${desde}::date) as reuniones,
@@ -633,7 +620,8 @@ export interface EventoDeSetter {
 export async function lineaDeTiempo(setterId: string, limite = 120): Promise<EventoDeSetter[]> {
   const filas = await db.execute(sql`
     select ss.id, ss.sent_at as cuando,
-           case ss.tipo when 'primero' then 'lead_contactado' else 'lead_segundo_enviado' end as tipo,
+           case when ss.paso = 1 then 'lead_contactado'
+                else 'lead_seguimiento_enviado' end as tipo,
            c.business_name as negocio, c.ig_username, sa.ig_username as cuenta,
            case when ss.undone_at is not null then 'Deshecho' else null end as detalle
       from setter_sends ss
@@ -643,11 +631,11 @@ export async function lineaDeTiempo(setterId: string, limite = 120): Promise<Eve
 
     union all
 
-    select la.id, la.respondido_at as cuando, 'lead_respondio' as tipo,
+    select la.id, la.calificado_at as cuando, 'lead_calificado' as tipo,
            c.business_name, c.ig_username, null as cuenta, la.nota as detalle
       from lead_assignments la
       join contacts c on c.id = la.contact_id
-     where la.setter_id = ${setterId}::uuid and la.respondido_at is not null
+     where la.setter_id = ${setterId}::uuid and la.calificado_at is not null
 
     union all
 
@@ -699,7 +687,7 @@ export async function historialDeRecordatorios(
   const filas = await db.execute(sql`
     select r.id, r.tipo, r.automatico, r.texto, r.created_at, r.visto_at,
            (select count(*)::int from setter_sends ss
-             where ss.setter_id = r.setter_id and ss.tipo = 'segundo' and ss.undone_at is null
+             where ss.setter_id = r.setter_id and ss.paso <> 1 and ss.undone_at is null
                and ss.sent_at between r.created_at and r.created_at + interval '24 hours')
              as hizo_despues
       from recordatorios r
@@ -776,8 +764,7 @@ export async function listarCerrados(setterId: string): Promise<LeadCerrado[]> {
 export const SECCIONES_FICHA = [
   'resumen',
   'enviados',
-  'primero',
-  'oferta',
+  'calificados',
   'reuniones',
 ] as const
 export type SeccionFicha = (typeof SECCIONES_FICHA)[number]
@@ -799,7 +786,7 @@ const CONSULTAS: Record<Exclude<SeccionFicha, 'resumen'>, (setterId: string) => 
   enviados: (setterId) => sql`
     select ss.id, c.business_name, c.ig_username, c.niche, ss.sent_at as cuando,
            '@' || sa.ig_username as detalle,
-           case ss.tipo when 'primero' then 'Mensaje de entrada' else 'Mensaje de la oferta' end as extra
+           case when ss.paso = 1 then 'Primer mensaje' else 'Seguimiento' end as extra
       from setter_sends ss
       join contacts c on c.id = ss.contact_id
       join setter_accounts sa on sa.id = ss.setter_account_id
@@ -807,29 +794,14 @@ const CONSULTAS: Record<Exclude<SeccionFicha, 'resumen'>, (setterId: string) => 
      order by ss.sent_at desc
      limit 300
   `,
-  // Contestaron el primer mensaje: abrieron conversación.
-  primero: (setterId) => sql`
-    select la.id, c.business_name, c.ig_username, c.niche, la.respondido_at as cuando,
+  // Los que contestaron y se decidió seguir.
+  calificados: (setterId) => sql`
+    select la.id, c.business_name, c.ig_username, c.niche, la.calificado_at as cuando,
            la.nota as detalle, null as extra
       from lead_assignments la
       join contacts c on c.id = la.contact_id
-     where la.setter_id = ${setterId}::uuid
-       and la.respondido_at is not null
-       and coalesce(la.respondio_a, 'primero') = 'primero'
-     order by la.respondido_at desc
-     limit 300
-  `,
-  // Contestaron la oferta: dijeron que sí o que no.
-  oferta: (setterId) => sql`
-    select la.id, c.business_name, c.ig_username, c.niche, la.respondido_at as cuando,
-           case la.interes when 'interesa' then 'Le interesa'
-                           when 'no_interesa' then 'No le interesa'
-                           else null end as detalle,
-           la.nota as extra
-      from lead_assignments la
-      join contacts c on c.id = la.contact_id
-     where la.setter_id = ${setterId}::uuid and la.respondio_a = 'segundo'
-     order by (la.interes = 'interesa') desc, la.respondido_at desc
+     where la.setter_id = ${setterId}::uuid and la.calificado_at is not null
+     order by la.calificado_at desc
      limit 300
   `,
   reuniones: (setterId) => sql`
@@ -880,22 +852,18 @@ export async function conteosDeFicha(
       (select count(*)::int from setter_sends ss
         where ss.setter_id = ${setterId}::uuid and ss.undone_at is null) as enviados,
       (select count(*)::int from lead_assignments la
-        where la.setter_id = ${setterId}::uuid and la.respondido_at is not null
-          and coalesce(la.respondio_a, 'primero') = 'primero') as primero,
-      (select count(*)::int from lead_assignments la
-        where la.setter_id = ${setterId}::uuid and la.respondio_a = 'segundo') as oferta,
+        where la.setter_id = ${setterId}::uuid and la.calificado_at is not null) as calificados,
       (select count(*)::int from meetings m
         where m.setter_id = ${setterId}::uuid) as reuniones
   `)
 
   const f = filas.rows[0] as
-    | { enviados: number; primero: number; oferta: number; reuniones: number }
+    | { enviados: number; calificados: number; reuniones: number }
     | undefined
 
   return {
     enviados: f?.enviados ?? 0,
-    primero: f?.primero ?? 0,
-    oferta: f?.oferta ?? 0,
+    calificados: f?.calificados ?? 0,
     reuniones: f?.reuniones ?? 0,
   }
 }

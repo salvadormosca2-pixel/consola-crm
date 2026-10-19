@@ -29,13 +29,9 @@ const SECCION_META: Record<SeccionFicha, { label: string; vacio: string }> = {
     label: 'Mensajes enviados',
     vacio: 'Todavía no mandó ningún mensaje.',
   },
-  primero: {
-    label: 'Respondieron 1er mensaje',
-    vacio: 'Nadie respondió todavía el primer mensaje.',
-  },
-  oferta: {
-    label: 'Respondieron 2do mensaje',
-    vacio: 'Todavía nadie respondió el segundo mensaje.',
+  calificados: {
+    label: 'Calificados',
+    vacio: 'Todavía no calificó a nadie.',
   },
   reuniones: {
     label: 'Reuniones',
@@ -51,8 +47,8 @@ function seccionValida(valor: string | undefined): SeccionFicha {
  * La ficha de un setter, partida en pestañas.
  *
  * Antes era una sola pantalla con todo encima y no se entendía nada. Ahora cada
- * pregunta tiene su lugar: cuánto mandó, a quién, quién contestó el primero,
- * quién contestó la oferta, y qué reuniones consiguió. Una lista por vez.
+ * pregunta tiene su lugar: cuánto mandó, a quién, a quién calificó y qué
+ * reuniones consiguió. Una lista por vez.
  */
 export default async function PaginaSetter({
   params,

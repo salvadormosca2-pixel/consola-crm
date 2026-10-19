@@ -36,13 +36,18 @@ export const EVENTO_META: Record<string, MetaDeEvento> = {
   /* Mensajes */
   lead_abierto: { label: 'Abrió el chat', grupo: 'mensajes', tono: 'neutral' },
   lead_contactado: { label: 'Mandó el 1er mensaje', grupo: 'mensajes', tono: 'positivo' },
-  lead_segundo_enviado: { label: 'Mandó un seguimiento', grupo: 'mensajes', tono: 'positivo' },
+  lead_seguimiento_enviado: { label: 'Mandó un seguimiento', grupo: 'mensajes', tono: 'positivo' },
+  /* Del modelo viejo: así se llamaba mandar la oferta. */
+  lead_segundo_enviado: { label: 'Mandó la oferta', grupo: 'mensajes', tono: 'positivo' },
   envio_setter_deshecho: { label: 'Deshizo un envío', grupo: 'mensajes', tono: 'negativo' },
   lead_salteado: { label: 'Salteó un lead', grupo: 'mensajes', tono: 'neutral' },
   cuenta_setter_cambiada: { label: 'Cambió de cuenta', grupo: 'mensajes', tono: 'activo' },
 
   /* Respuestas */
   lead_respondio: { label: 'Contestó', grupo: 'respuestas', tono: 'positivo' },
+  lead_calificado: { label: 'Calificó un lead', grupo: 'respuestas', tono: 'positivo' },
+  texto_escrito: { label: 'Escribió el mensaje de un lead', grupo: 'mensajes', tono: 'activo' },
+  /* Del modelo viejo: la cola de clasificación de la oferta. */
   lead_clasificado: { label: 'Clasificó una respuesta', grupo: 'respuestas', tono: 'activo' },
   reunion_agendada: { label: 'Agendó reunión', grupo: 'respuestas', tono: 'positivo' },
 

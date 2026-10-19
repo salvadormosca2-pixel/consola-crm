@@ -128,13 +128,13 @@ export type FrenoDeEnvio =
  *
  * Estaba escrita en tres lugares —la cola del celular, la acción del botón y el
  * registro del envío— y las tres divergieron. El resultado fue el peor de los
- * posibles: la pantalla dejaba abrir Instagram y mandar la oferta, y recién al
+ * posibles: la pantalla dejaba abrir Instagram y mandar el mensaje, y recién al
  * tocar "Enviado" saltaba "llegaste al límite". El mensaje ya estaba mandado y
  * el sistema no lo registraba, así que el lead se quedaba sin clasificar, sin
  * próximo paso y sin aparecer en ningún número.
  *
  * La regla, entera, en una línea: **el cupo frena las aperturas y nada más.**
- * La oferta y los seguimientos salen en un chat que ya existe; frenarlos deja
+ * Los seguimientos salen en un chat que ya existe; frenarlos deja
  * una conversación empezada sin respuesta, que es el peor lugar donde parar.
  */
 export function frenoDelEnvio(params: {

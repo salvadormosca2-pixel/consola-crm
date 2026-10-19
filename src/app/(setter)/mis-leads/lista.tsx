@@ -9,7 +9,6 @@ import { AbrirInstagram } from '@/components/setter/abrir-instagram'
 import { AccionDeLead, etapaDe } from '@/components/setter/acciones-lead'
 import { Input } from '@/components/ui/input'
 import { Chip, Panel, type Tono } from '@/components/ui/panel'
-import { INTERES_META } from '@/db/enums'
 import { copiarAlPortapapeles } from '@/lib/copiar'
 import { formatCorto, haceCuanto } from '@/lib/tz'
 import { PESTANA_META, PESTANAS, type Pestana } from '@/lib/setters-vistas'
@@ -88,8 +87,7 @@ export function Lista({
 
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 px-0.5">
         <Contador valor={datos.totales.contactados} rotulo="contactados" />
-        <Contador valor={datos.totales.respondieron} rotulo="respondieron" />
-        <Contador valor={datos.totales.interesados} rotulo="les interesa" />
+        <Contador valor={datos.totales.calificados} rotulo="calificados" />
         <Contador valor={datos.totales.reuniones} rotulo="reuniones" />
       </div>
 
@@ -134,21 +132,16 @@ export function Lista({
 
                   {/*
                     La etiqueta dice qué le pasó a este lead, sin tener que
-                    deducirlo del estado interno. Cuando ya contestó la oferta
-                    manda el sí o el no, que es lo único que importa ahí.
+                    deducirlo del estado interno.
                   */}
-                  {f.interes ? (
-                    <Chip tono={INTERES_META[f.interes].tone}>{INTERES_META[f.interes].label}</Chip>
-                  ) : (
-                    <Chip tono={tono}>{etiqueta}</Chip>
-                  )}
+                  <Chip tono={tono}>{etiqueta}</Chip>
                 </div>
 
                 <p className="mt-1 text-[12px] text-texto-2">
                   {f.reunionAt
                     ? `Reunión el ${formatCorto(f.reunionAt)}`
-                    : f.respondidoAt
-                      ? `Contestó ${haceCuanto(f.respondidoAt)}`
+                    : f.calificadoAt
+                      ? `Calificado ${haceCuanto(f.calificadoAt)}`
                       : f.contactadoAt
                         ? `Le escribiste ${haceCuanto(f.contactadoAt)}`
                         : `Te tocó ${haceCuanto(f.asignadoAt)}`}
@@ -168,7 +161,7 @@ export function Lista({
                 <AccionDeLead
                   assignmentId={f.assignmentId}
                   negocio={f.businessName}
-                  etapa={etapaDe({ estado: f.estado, respondioA: f.respondioA })}
+                  etapa={etapaDe({ estado: f.estado })}
                   onHecho={() => router.refresh()}
                   className="mt-2"
                 />
@@ -216,10 +209,8 @@ function AbrirChat({ lead }: { lead: MisLeads['filas'][number] }) {
 /** Cada etapa tiene su color: gris al principio, verde cuando contestaron. */
 const TONO_DE_PESTANA: Record<Pestana, Tono> = {
   por_contactar: 'neutral',
-  contactados: 'neutral',
-  respondio_primero: 'positivo',
-  oferta_enviada: 'activo',
-  respondio_oferta: 'positivo',
+  contactados: 'activo',
+  calificados: 'positivo',
   reuniones: 'positivo',
 }
 

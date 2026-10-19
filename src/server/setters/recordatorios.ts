@@ -37,23 +37,23 @@ export async function contarPendientes(setterId?: string): Promise<PendientesDeS
     select s.id as setter_id, u.id as user_id, u.name as nombre,
 
            (select count(*)::int from lead_assignments la
-             where la.setter_id = s.id and la.estado = 'contactado'
-               and la.segundo_programado_at is not null
-               and la.segundo_programado_at <= now()) as pendientes,
+             where la.setter_id = s.id and la.estado = 'calificado'
+               and la.proximo_seguimiento_at is not null
+               and la.proximo_seguimiento_at <= now()) as pendientes,
 
            (select count(*)::int from lead_assignments la
-             where la.setter_id = s.id and la.estado = 'contactado'
-               and la.segundo_programado_at is not null
-               and (la.segundo_programado_at at time zone ${OPS_TZ})::date < ${hoy}::date)
+             where la.setter_id = s.id and la.estado = 'calificado'
+               and la.proximo_seguimiento_at is not null
+               and (la.proximo_seguimiento_at at time zone ${OPS_TZ})::date < ${hoy}::date)
              as atrasados,
 
            coalesce((select max(
                        greatest(0, (now() at time zone ${OPS_TZ})::date
-                                   - (la.segundo_programado_at at time zone ${OPS_TZ})::date))::int
+                                   - (la.proximo_seguimiento_at at time zone ${OPS_TZ})::date))::int
                        from lead_assignments la
-                      where la.setter_id = s.id and la.estado = 'contactado'
-                        and la.segundo_programado_at is not null
-                        and la.segundo_programado_at <= now()), 0) as dias_atraso,
+                      where la.setter_id = s.id and la.estado = 'calificado'
+                        and la.proximo_seguimiento_at is not null
+                        and la.proximo_seguimiento_at <= now()), 0) as dias_atraso,
 
            (select count(*)::int from lead_assignments la
              where la.setter_id = s.id

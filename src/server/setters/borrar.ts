@@ -121,24 +121,30 @@ export interface ResumenDelVaciado {
   /** Leads que vuelven al pozo como si nadie los hubiera tocado. */
   alPozo: number
   /**
-   * Leads que contestaron o que tienen una reunión. No vuelven al pozo —no son
-   * leads fríos— pero pierden la asignación, que se va con el setter. Su ficha,
-   * sus mensajes y sus reuniones quedan.
+   * De esos, cuántos ya habían contestado o tienen una reunión cargada.
+   * Vuelven igual —es lo que se pidió: hablarlos de nuevo— pero conviene
+   * saberlo antes, porque a esos se les va a escribir de cero sabiendo que ya
+   * hubo una conversación. Su historial de mensajes y sus reuniones quedan.
    */
   conRespuesta: number
   /** Envíos registrados que se borran con ellos. */
   envios: number
 }
 
+/**
+ * Qué lead vuelve al pozo: **todos los que tocó el equipo**.
+ *
+ * Antes el que había contestado o tenía una reunión se quedaba afuera, con el
+ * argumento de que no es un lead frío y que escribirle de cero sería raro. La
+ * decisión ahora es la contraria y es deliberada: al cambiar de equipo y de
+ * guion, toda la lista se vuelve a trabajar desde el principio. Lo que no
+ * vuelve es lo que se sacó de circulación a propósito —descartados y perfiles
+ * inexistentes— y los clientes propios, que nunca fueron del pozo de setters.
+ */
 const CONTACTO_QUE_VUELVE = sql`
   c.origen = 'scrapeado'
   and c.discarded_at is null
   and exists (select 1 from lead_assignments la where la.contact_id = c.id)
-  and not exists (
-    select 1 from lead_assignments la
-     where la.contact_id = c.id and la.respondido_at is not null
-  )
-  and not exists (select 1 from meetings m where m.contact_id = c.id)
 `
 
 /** Lo que va a pasar, antes de que pase. Es lo que se muestra en pantalla. */
@@ -148,8 +154,10 @@ export async function contarParaVaciar(cliente: Ejecutor = db): Promise<ResumenD
       (select count(*)::int from users where role = 'setter') as setters,
       (select count(*)::int from contacts c where ${CONTACTO_QUE_VUELVE}) as al_pozo,
       (select count(*)::int from contacts c
-        where exists (select 1 from lead_assignments la where la.contact_id = c.id)
-          and not (${CONTACTO_QUE_VUELVE})) as con_respuesta,
+        where ${CONTACTO_QUE_VUELVE}
+          and (exists (select 1 from lead_assignments la
+                        where la.contact_id = c.id and la.respondido_at is not null)
+               or exists (select 1 from meetings m where m.contact_id = c.id))) as con_respuesta,
       (select count(*)::int from setter_sends where undone_at is null) as envios
   `)
   const f = filas.rows[0] as
@@ -172,13 +180,15 @@ export async function contarParaVaciar(cliente: Ejecutor = db): Promise<ResumenD
  * setter —los admins no, nunca— con sus fichas, sus cuentas de Instagram, sus
  * asignaciones y sus envíos.
  *
- * Los leads no se borran: se limpian. El que nadie contestó y no tiene reunión
- * vuelve a estar como recién importado —sin dueño, sin contador de envíos, en
- * estado nuevo— y por lo tanto vuelve al pozo para el próximo reparto. El que
- * contestó o consiguió una reunión NO vuelve: no es un lead frío, y ponerlo de
- * nuevo en la ruleta sería mandarle un primer mensaje a alguien con quien ya
- * hay una conversación abierta. Ese conserva su ficha, sus mensajes y sus
- * reuniones; lo único que pierde es la asignación, que se va con el setter.
+ * Los leads no se borran: se limpian. **Todos** los que el equipo tocó vuelven
+ * a estar como recién importados —sin dueño, sin contador de envíos, en estado
+ * nuevo— y entran en el próximo reparto, incluidos los que habían contestado y
+ * los que tienen una reunión cargada. El historial no se pierde: sus mensajes,
+ * sus reuniones y la bitácora quedan donde estaban; lo que se reinicia es su
+ * lugar en el recorrido.
+ *
+ * Los únicos que no vuelven son los que se sacaron de circulación a propósito
+ * —descartados y perfiles inexistentes— y los clientes propios.
  */
 export async function vaciarElEquipo(
   actorUserId: string | null,

@@ -144,7 +144,7 @@ export async function contarPorEtapa(): Promise<Record<string, number>> {
  * Cuántos contestaron y todavía no clasifiqué.
  *
  * Es el número del globito en la navegación. La bandeja en sí vive en
- * `@/server/setters/respuestas`, que la abre por setter y por clasificación.
+ * el control de seguimientos del panel, que la abre por setter.
  */
 export async function contarSinClasificar(): Promise<number> {
   const [row] = await db

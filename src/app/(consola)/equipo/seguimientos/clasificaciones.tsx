@@ -6,7 +6,7 @@ import * as React from 'react'
 
 import { AbrirInstagram } from '@/components/setter/abrir-instagram'
 import { Chip, Panel, PanelHeader } from '@/components/ui/panel'
-import { PASO_META } from '@/lib/mensajes-config'
+import { PASO_META } from '@/lib/pistas'
 import {
   CLASIFICACIONES,
   CLASIFICACION_META,
@@ -194,13 +194,7 @@ function ListaDeLeads({
               <div className="min-w-[170px] flex-1">
                 <div className="flex flex-wrap items-center gap-1.5">
                   <span className="text-[13.5px] text-texto">{l.negocio}</span>
-                  {l.interes === 'interesa' ? (
-                    <Chip tono="positivo">le interesa</Chip>
-                  ) : l.interes === 'no_interesa' ? (
-                    <Chip tono="negativo">no le interesa</Chip>
-                  ) : l.respondioA === 'primero' ? (
-                    <Chip tono="activo">le falta la oferta</Chip>
-                  ) : null}
+                  {l.calificadoAt ? <Chip tono="positivo">calificado</Chip> : null}
                 </div>
                 <p className="dato mt-0.5 text-[11.5px] text-texto-2">
                   @{l.igUsername}
@@ -256,8 +250,8 @@ function Cuando({
     )
   }
 
-  if (clasificacion === 'contestaron' || clasificacion === 'listos') {
-    return <>contestó {lead.respondidoAt ? haceCuanto(lead.respondidoAt) : 'hace rato'}</>
+  if (clasificacion === 'calificados') {
+    return <>calificado {lead.calificadoAt ? haceCuanto(lead.calificadoAt) : 'hace rato'}</>
   }
 
   if (clasificacion === 'contactados' || clasificacion === 'seguimiento_hecho') {

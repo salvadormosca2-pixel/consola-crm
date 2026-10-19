@@ -99,17 +99,17 @@ async function alertarAtrasos(hoy: string, dias: number): Promise<number> {
   const filas = await db.execute(sql`
     select s.id, u.name,
            max(greatest(0, (now() at time zone ${OPS_TZ})::date
-                           - (la.segundo_programado_at at time zone ${OPS_TZ})::date))::int as atraso
+                           - (la.proximo_seguimiento_at at time zone ${OPS_TZ})::date))::int as atraso
       from lead_assignments la
       join setters s on s.id = la.setter_id
       join users u on u.id = s.user_id
-     where la.estado = 'contactado'
-       and la.segundo_programado_at is not null
-       and la.segundo_programado_at <= now()
+     where la.estado = 'calificado'
+       and la.proximo_seguimiento_at is not null
+       and la.proximo_seguimiento_at <= now()
        and u.status = 'activo'
      group by s.id, u.name
     having max(greatest(0, (now() at time zone ${OPS_TZ})::date
-                           - (la.segundo_programado_at at time zone ${OPS_TZ})::date)) >= ${dias}
+                           - (la.proximo_seguimiento_at at time zone ${OPS_TZ})::date)) >= ${dias}
   `)
 
   let n = 0

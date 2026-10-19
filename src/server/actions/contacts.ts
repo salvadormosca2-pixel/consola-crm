@@ -73,7 +73,6 @@ export async function clasificar(
   }
 
   revalidatePath('/contactos')
-  revalidatePath('/respondieron')
   return { ok: true, error: null }
 }
 
@@ -163,7 +162,6 @@ export async function marcarQueContesto(
   }
 
   revalidatePath('/contactos')
-  revalidatePath('/respondieron')
   revalidatePath('/despachador')
   return { ok: true, error: null }
 }

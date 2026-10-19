@@ -3,17 +3,12 @@ import 'server-only'
 import { sql } from 'drizzle-orm'
 
 import { db, type Db } from '@/db'
-import type { LeadEstado, LeadInteres, SetterSendTipo } from '@/db/enums'
+import type { LeadEstado } from '@/db/enums'
 import { normalizarInstagram } from '@/lib/equipo-lote'
 import { calcularVencimiento, type PasoDeSeguimiento } from '@/lib/setters-config'
 import type { Pestana } from '@/lib/setters-vistas'
 import { leerConfigSetters } from '@/server/setters/config'
-import {
-  armarMensaje,
-  elegirPlantilla,
-  leerPlantillasDeSetter,
-  leerVozOperativa,
-} from '@/server/setters/plantillas'
+import { elegirTexto, leerTextos } from '@/server/setters/textos'
 
 /**
  * "Mis leads": todo lo que el setter tiene, no solo la cola de hoy.
@@ -37,8 +32,8 @@ export interface FilaLead {
   estado: LeadEstado
   asignadoAt: Date
   contactadoAt: Date | null
-  segundoProgramadoAt: Date | null
   respondidoAt: Date | null
+  calificadoAt: Date | null
   venceAt: Date
   /** Horas hasta que vuelve al pozo. Solo importa si está sin contactar. */
   horasRestantes: number
@@ -46,10 +41,6 @@ export interface FilaLead {
   porVencer: boolean
   reunionAt: Date | null
   linkDirecto: string
-  /** Ya recibió el segundo mensaje: su respuesta es un sí o un no a la oferta. */
-  yaVioLaOferta: boolean
-  respondioA: SetterSendTipo | null
-  interes: LeadInteres | null
   /**
    * El mensaje que le toca, ya armado, o null si no le toca ninguno.
    *
@@ -64,8 +55,7 @@ export interface MisLeads {
   filas: FilaLead[]
   totales: {
     contactados: number
-    respondieron: number
-    interesados: number
+    calificados: number
     reuniones: number
   }
   conteos: Record<Pestana, number>
@@ -75,19 +65,13 @@ export interface MisLeads {
  * Una etapa por pestaña, y el lead está en una sola a la vez. Es lo que hace
  * que cada fila tenga una única acción posible en vez de todos los botones.
  *
- * Las condiciones se leen del final del recorrido hacia atrás, igual que
- * `etapaDe` en el cliente: el que contestó la entrada y **ya recibió la
- * oferta** está en "Le mandé la oferta", no en "Respondió el 1er mensaje". Las
- * dos puntas tienen que decir lo mismo o la pestaña muestra una fila con el
- * botón de otra etapa.
+ * Las condiciones y `etapaDe` en el cliente tienen que decir lo mismo, o la
+ * pestaña muestra una fila con el botón de otra etapa.
  */
 const FILTROS: Record<Pestana, ReturnType<typeof sql>> = {
   por_contactar: sql`la.estado in ('asignado', 'abierto', 'saltado')`,
-  contactados: sql`la.estado = 'contactado'`,
-  respondio_primero: sql`la.respondio_a = 'primero'
-                     and la.estado <> 'segundo_enviado' and m.id is null`,
-  oferta_enviada: sql`la.estado = 'segundo_enviado' and m.id is null`,
-  respondio_oferta: sql`la.respondio_a = 'segundo' and m.id is null`,
+  contactados: sql`la.estado in ('contactado', 'segundo_enviado', 'respondido')`,
+  calificados: sql`la.estado = 'calificado' and m.id is null`,
   reuniones: sql`m.id is not null`,
 }
 
@@ -111,8 +95,8 @@ export async function listarMisLeads(
 
   const filas = await db.execute(sql`
     select la.id, la.contact_id, la.estado, la.asignado_at, la.contactado_at,
-           la.segundo_programado_at, la.respondido_at, la.vence_at,
-           la.respondio_a, la.interes, la.proximo_paso, la.proximo_seguimiento_at,
+           la.respondido_at, la.calificado_at, la.vence_at,
+           la.proximo_paso, la.proximo_seguimiento_at,
            c.business_name, c.ig_username, c.niche, c.city, c.contact_name, c.bought,
            m.scheduled_at as reunion_at
       from lead_assignments la
@@ -141,14 +125,10 @@ export async function listarMisLeads(
   const conteos = await db.execute(sql`
     select
       count(*) filter (where la.estado in ('asignado', 'abierto', 'saltado'))::int as por_contactar,
-      count(*) filter (where la.estado = 'contactado')::int as contactados,
-      count(*) filter (where la.respondio_a = 'primero'
-                         and la.estado <> 'segundo_enviado' and ${SIN_REUNION})::int as respondio_primero,
-      count(*) filter (where la.estado = 'segundo_enviado' and ${SIN_REUNION})::int as oferta_enviada,
-      count(*) filter (where la.respondio_a = 'segundo' and ${SIN_REUNION})::int as respondio_oferta,
-      count(*) filter (where la.estado = 'respondido')::int as respondieron,
+      count(*) filter (where la.estado in ('contactado', 'segundo_enviado', 'respondido'))::int as contactados,
+      count(*) filter (where la.estado = 'calificado' and ${SIN_REUNION})::int as calificados_sin_reunion,
+      count(*) filter (where la.calificado_at is not null)::int as calificados,
       count(*) filter (where la.contactado_at is not null)::int as total_contactados,
-      count(*) filter (where la.interes = 'interesa')::int as interesados,
       count(*) filter (where not (${SIN_REUNION}))::int as con_reunion
       from lead_assignments la
      where la.setter_id = ${setterId}::uuid
@@ -160,22 +140,21 @@ export async function listarMisLeads(
   `)
 
   /*
-   * Las plantillas se leen una vez para todas las filas: son las mismas para
-   * todos los leads y volver a buscarlas por fila sería una consulta por lead.
+   * Los textos de todas las filas, de un viaje: uno por lead, y pedirlos de a
+   * uno sería una consulta por fila.
    */
-  const [plantillas, voz] = await Promise.all([leerPlantillasDeSetter(), leerVozOperativa()])
+  const textos = await leerTextos(
+    (filas.rows as Array<{ id: string }>).map((f) => f.id),
+  )
 
   const ahora = Date.now()
   const c = conteos.rows[0] as
     | {
         por_contactar: number
         contactados: number
-        respondio_primero: number
-        oferta_enviada: number
-        respondio_oferta: number
-        respondieron: number
+        calificados_sin_reunion: number
+        calificados: number
         total_contactados: number
-        interesados: number
         con_reunion: number
       }
     | undefined
@@ -188,16 +167,14 @@ export async function listarMisLeads(
       estado: LeadEstado
       asignado_at: Date
       contactado_at: Date | null
-      segundo_programado_at: Date | null
       respondido_at: Date | null
+      calificado_at: Date | null
       vence_at: Date
       business_name: string
       ig_username: string
       niche: string | null
       city: string | null
       reunion_at: Date | null
-      respondio_a: SetterSendTipo | null
-      interes: LeadInteres | null
       proximo_paso: number | null
       proximo_seguimiento_at: Date | null
       contact_name: string | null
@@ -210,9 +187,9 @@ export async function listarMisLeads(
       /*
        * Qué mensaje le toca. Es la misma regla que en la cola del día: si
        * tiene un seguimiento vencido le toca ese paso, y si nunca recibió nada
-       * le toca la entrada. Al que ya recibió todo no le toca ninguno, y
-       * entonces 'Abrir chat' abre la conversación sin copiar nada — que es lo
-       * correcto: no hay guion para esa charla.
+       * le toca el primero. Al que no le toca ninguno, 'Abrir chat' abre la
+       * conversación sin copiar nada — que es lo correcto: no hay nada escrito
+       * para esa charla.
        */
       const leToca =
         f.proximo_seguimiento_at !== null &&
@@ -223,21 +200,7 @@ export async function listarMisLeads(
           ? 1
           : null
 
-      const armado =
-        paso === null
-          ? null
-          : armarMensaje(
-              elegirPlantilla(plantillas, paso, f.niche),
-              {
-                businessName: f.business_name,
-                contactName: f.contact_name,
-                niche: f.niche,
-                bought: f.bought,
-                city: f.city,
-              },
-              voz,
-              paso,
-            )
+      const armado = paso === null ? null : elegirTexto(textos.get(f.id), paso)
 
       return {
         assignmentId: f.id,
@@ -249,33 +212,27 @@ export async function listarMisLeads(
         estado: f.estado,
         asignadoAt: new Date(f.asignado_at),
         contactadoAt: f.contactado_at ? new Date(f.contactado_at) : null,
-        segundoProgramadoAt: f.segundo_programado_at ? new Date(f.segundo_programado_at) : null,
         respondidoAt: f.respondido_at ? new Date(f.respondido_at) : null,
+        calificadoAt: f.calificado_at ? new Date(f.calificado_at) : null,
         venceAt: vence,
         horasRestantes: horas,
         porVencer: sinTrabajar && horas <= 12,
         reunionAt: f.reunion_at ? new Date(f.reunion_at) : null,
         linkDirecto: `https://ig.me/m/${f.ig_username}`,
-        yaVioLaOferta: f.estado === 'segundo_enviado',
-        respondioA: f.respondio_a,
-        interes: f.interes,
         mensaje: armado?.ok ? armado.texto : null,
       }
     }),
     totales: {
       contactados: c?.total_contactados ?? 0,
-      respondieron: c?.respondieron ?? 0,
-      interesados: c?.interesados ?? 0,
+      calificados: c?.calificados ?? 0,
       reuniones: nReuniones,
     },
     conteos: {
       por_contactar: c?.por_contactar ?? 0,
       contactados: c?.contactados ?? 0,
-      respondio_primero: c?.respondio_primero ?? 0,
-      oferta_enviada: c?.oferta_enviada ?? 0,
+      calificados: c?.calificados_sin_reunion ?? 0,
       // El número de la pestaña tiene que dar lo mismo que las filas que trae.
       reuniones: c?.con_reunion ?? 0,
-      respondio_oferta: c?.respondio_oferta ?? 0,
     },
   }
 }

@@ -64,7 +64,7 @@ export function Vaciar({ resumen }: { resumen: ResumenDelVaciado }) {
     <Panel className="border-rojo/40">
       <PanelHeader
         titulo="Vaciar el equipo"
-        descripcion="Para arrancar de cero: se borran todas las cuentas de setter y los leads que nadie contestó vuelven al pozo. No se puede deshacer."
+        descripcion="Para arrancar de cero: se borran todas las cuentas de setter y todos los leads que tocaron vuelven al pozo para hablarlos de nuevo. No se puede deshacer."
       />
 
       <div className="space-y-3 px-4 py-3">
@@ -81,11 +81,10 @@ export function Vaciar({ resumen }: { resumen: ResumenDelVaciado }) {
           </li>
           {resumen.conRespuesta > 0 ? (
             <li className="text-ambar">
-              <span className="dato">{resumen.conRespuesta}</span> leads no vuelven al pozo:
-              contestaron, tienen una reunión o están descartados, así que no son leads fríos y
-              volver a mandarles un primer mensaje sería empezar de nuevo una conversación que ya
-              existe. Conservan su ficha, sus mensajes y sus reuniones; lo único que pierden es la
-              asignación, que se va con el setter.
+              De esos, <span className="dato">{resumen.conRespuesta}</span> ya habían contestado o
+              tienen una reunión cargada. Vuelven igual, así que les va a tocar un primer mensaje
+              nuevo: su historial de mensajes y sus reuniones quedan guardados, pero del lado de
+              ellos la conversación arranca de cero.
             </li>
           ) : null}
         </ul>

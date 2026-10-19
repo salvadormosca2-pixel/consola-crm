@@ -1,63 +1,34 @@
 'use client'
 
-import {
-  CalendarPlus,
-  Check,
-  ExternalLink,
-  MessageSquareReply,
-  Send,
-  HelpCircle,
-  ThumbsDown,
-  ThumbsUp,
-  X,
-} from 'lucide-react'
+import { CalendarPlus, Star, Trash2, X } from 'lucide-react'
 import * as React from 'react'
 import { toast } from 'sonner'
 
-import { AbrirInstagram } from '@/components/setter/abrir-instagram'
 import { Button } from '@/components/ui/button'
 import { Field, Input } from '@/components/ui/input'
-import {
-  abrirChat,
-  agendarReunion,
-  marcarEnviado,
-  marcarRespondio,
-  verMensajePreparado,
-  type MensajeListo,
-} from '@/server/actions/setter'
-import { copiarAlPortapapeles } from '@/lib/copiar'
+import { agendarReunion, calificarLead, descartarLead } from '@/server/actions/setter'
 import { cn } from '@/lib/utils'
 
 /**
  * **Un solo botón por lead**, el que corresponde a su etapa.
  *
- * Antes cada fila mostraba "Respondió" y "Agendó reunión" a la vez, en todas
- * las pestañas, y no se entendía cuál tocar. Ahora el botón dice exactamente
- * qué pasó —"Contestó el 1er mensaje", "Contestó la oferta", "Agendó
- * reunión"— y al tocarlo el lead se mueve a la pestaña siguiente.
+ * Son dos y nada más: calificar al que contestó, y agendarle la reunión al que
+ * ya está calificado. Antes eran cuatro —contestó el primero, mandar la
+ * oferta, contestó la oferta con un sí/tibio/no, agendó— y servían para elegir
+ * cuál de las plantillas salía. Sin plantillas no hay nada que elegir: el
+ * texto lo escribe el admin mirando el lead, y lo único que el sistema
+ * necesita saber es si el lead sigue en juego.
  */
 
-export type EtapaDelLead =
-  | 'sin_contactar'
-  | 'contactado'
-  | 'respondio_primero'
-  | 'oferta_enviada'
-  | 'respondio_oferta'
+export type EtapaDelLead = 'sin_contactar' | 'contactado' | 'calificado'
 
 export interface AccionDisponible {
-  tipo: 'respondio' | 'oferta' | 'reunion'
+  tipo: 'calificar' | 'reunion'
   label: string
-  /** El lead ya vio la oferta: la respuesta es un sí o un no. */
-  conInteres: boolean
 }
 
 /**
  * Qué se puede hacer con un lead según dónde está.
- *
- * Es una acción por etapa y siempre la misma: la que de verdad sigue. El que
- * contestó la entrada todavía no sabe a qué nos dedicamos, así que lo que
- * sigue es **mandarle la oferta**, no agendarle nada. Recién cuando contesta
- * la oferta tiene sentido el botón de reunión.
  *
  * Los que están sin contactar no tienen acción acá: se trabajan en la cola del
  * día, que es donde arranca todo.
@@ -65,13 +36,9 @@ export interface AccionDisponible {
 export function accionDe(etapa: EtapaDelLead): AccionDisponible | null {
   switch (etapa) {
     case 'contactado':
-      return { tipo: 'respondio', label: 'Contestó el 1er mensaje', conInteres: false }
-    case 'respondio_primero':
-      return { tipo: 'oferta', label: 'Enviar la oferta', conInteres: false }
-    case 'oferta_enviada':
-      return { tipo: 'respondio', label: 'Contestó la oferta', conInteres: true }
-    case 'respondio_oferta':
-      return { tipo: 'reunion', label: 'Agendó reunión', conInteres: false }
+      return { tipo: 'calificar', label: 'Calificar: contestó y sirve' }
+    case 'calificado':
+      return { tipo: 'reunion', label: 'Agendó reunión' }
     default:
       return null
   }
@@ -80,19 +47,13 @@ export function accionDe(etapa: EtapaDelLead): AccionDisponible | null {
 /**
  * Dónde está el lead, mirando su estado.
  *
- * El orden importa y es el del recorrido, del final hacia atrás: alguien que
- * contestó la entrada y **ya recibió la oferta** está en "Le mandé la oferta",
- * no en "Respondió el 1er mensaje". Si no, quedaría con el botón de mandar una
- * oferta que ya salió.
+ * Los dos estados del modelo viejo —"respondió" y "segundo enviado"— caen en
+ * contactado: son leads que contestaron algo y a los que todavía nadie
+ * calificó, que es exactamente lo que hay que decidir sobre ellos.
  */
-export function etapaDe(f: {
-  estado: string
-  respondioA: string | null
-}): EtapaDelLead {
-  if (f.respondioA === 'segundo') return 'respondio_oferta'
-  if (f.estado === 'segundo_enviado') return 'oferta_enviada'
-  if (f.respondioA === 'primero') return 'respondio_primero'
-  if (f.estado === 'contactado') return 'contactado'
+export function etapaDe(f: { estado: string }): EtapaDelLead {
+  if (f.estado === 'calificado') return 'calificado'
+  if (['contactado', 'segundo_enviado', 'respondido'].includes(f.estado)) return 'contactado'
   return 'sin_contactar'
 }
 
@@ -140,126 +101,6 @@ function Hoja({
   )
 }
 
-/* ── Mandar la oferta sin pasar por la cola ───────────────────────────── */
-
-/**
- * El lead acaba de contestar y hay que contestarle ya. Esto es la cola del día
- * en chico: el mensaje que escribió el admin para su rubro, copiar, abrir el
- * chat, y confirmar que salió.
- *
- * El botón de confirmar no se habilita hasta haber abierto el chat, igual que
- * en la cola: es lo que evita el marcado accidental y lo que hace que el cupo
- * se consuma solo cuando el mensaje realmente salió.
- */
-function HojaDeOferta({
-  assignmentId,
-  negocio,
-  onCerrar,
-  onHecho,
-}: {
-  assignmentId: string
-  negocio: string
-  onCerrar: () => void
-  onHecho?: () => void
-}) {
-  const [mensaje, setMensaje] = React.useState<MensajeListo | null>(null)
-  const [abierto, setAbierto] = React.useState(false)
-  const [pendiente, iniciar] = React.useTransition()
-
-  React.useEffect(() => {
-    let vigente = true
-    void verMensajePreparado(assignmentId).then((r) => {
-      if (vigente) setMensaje(r)
-    })
-    return () => {
-      vigente = false
-    }
-  }, [assignmentId])
-
-  /*
-   * Corre dentro del toque sobre el enlace, sin cancelarlo: la navegación a
-   * Instagram la maneja el `<a>`, que es lo único que el celular reconoce para
-   * entregarle el link a la app.
-   *
-   * Y el copiado va acá porque tiene que pasar antes de que la pantalla cambie
-   * de app: después ya no se puede escribir en el portapapeles.
-   */
-  function alAbrirInstagram(): void {
-    if (mensaje?.texto) {
-      void copiarAlPortapapeles(mensaje.texto).then((ok) => {
-        if (ok) toast.success('Mensaje copiado — pegá con mantener presionado')
-        else toast.error('No se pudo copiar. Copiá el texto a mano.')
-      })
-    }
-    setAbierto(true)
-    void abrirChat(assignmentId)
-  }
-
-  function confirmar(): void {
-    iniciar(async () => {
-      const r = await marcarEnviado(assignmentId)
-      if (r.ok) {
-        if (!r.duplicado) toast.success(`Oferta enviada · ${r.usadoHoy}/${r.cupo} con esta cuenta`)
-        onCerrar()
-        onHecho?.()
-      } else {
-        toast.error(r.error ?? 'No se pudo registrar el envío.')
-      }
-    })
-  }
-
-  return (
-    <Hoja titulo={`La oferta para ${negocio}`} onCerrar={onCerrar}>
-      {mensaje === null ? (
-        <p className="py-6 text-center text-[13px] text-texto-2">Armando el mensaje…</p>
-      ) : !mensaje.ok ? (
-        <div className="rounded-[6px] border border-rojo/35 bg-rojo-tenue px-3 py-2.5">
-          <p className="text-[13px] font-medium text-rojo">No se puede armar el mensaje</p>
-          <p className="mt-0.5 text-[12.5px] leading-relaxed text-texto-2">
-            {mensaje.error} Avisale al administrador.
-          </p>
-        </div>
-      ) : (
-        <>
-          <div className="rounded-[6px] border border-borde bg-fondo px-2.5 py-2">
-            <p className="whitespace-pre-wrap text-[14px] leading-relaxed text-texto">
-              {mensaje.texto}
-            </p>
-          </div>
-
-          {mensaje.linkDirecto ? (
-            <AbrirInstagram
-              link={mensaje.linkDirecto}
-              onAbrir={alAbrirInstagram}
-              variant={abierto ? 'secundaria' : 'primaria'}
-              className="mt-3 h-12 w-full text-[14px]"
-            >
-              <ExternalLink aria-hidden />
-              Abrir Instagram
-            </AbrirInstagram>
-          ) : null}
-
-          <Button
-            variant="positiva"
-            className="mt-2 h-12 w-full text-[14px]"
-            onClick={confirmar}
-            disabled={pendiente || !abierto}
-          >
-            <Check aria-hidden />
-            {pendiente ? 'Guardando…' : 'Enviado'}
-          </Button>
-
-          {!abierto ? (
-            <p className="mt-2 text-center text-[11.5px] text-texto-2">
-              Se habilita cuando abrís el chat.
-            </p>
-          ) : null}
-        </>
-      )}
-    </Hoja>
-  )
-}
-
 /** Fecha de hoy en el celular, para precargar el formulario de reunión. */
 function hoyLocal(): string {
   const d = new Date()
@@ -292,25 +133,29 @@ export function AccionDeLead({
 
   if (!accion) return null
 
-  function enviarRespondio(interes?: 'interesa' | 'no_interesa' | 'tibio'): void {
+  function descartar(): void {
     iniciar(async () => {
-      const r = await marcarRespondio(assignmentId, {
-        nota: nota.trim() || undefined,
-        interes,
-      })
+      const r = await descartarLead(assignmentId)
       if (r.ok) {
-        toast.success(
-          interes === 'no_interesa'
-            ? `${negocio}: anotado que no le interesa`
-            : interes === 'tibio'
-              ? `${negocio} entró a seguimiento de tibios`
-              : `${negocio} pasó a la etapa siguiente`,
-        )
+        toast.success(`${negocio} queda afuera: no se le escribe más`)
+        setAbierta(false)
+        onHecho?.()
+      } else {
+        toast.error(r.error ?? 'No se pudo descartar.')
+      }
+    })
+  }
+
+  function enviarCalificado(): void {
+    iniciar(async () => {
+      const r = await calificarLead(assignmentId, { nota: nota.trim() || undefined })
+      if (r.ok) {
+        toast.success(`${negocio} quedó calificado: entra al seguimiento`)
         setAbierta(false)
         setNota('')
         onHecho?.()
       } else {
-        toast.error(r.error ?? 'No se pudo marcar.')
+        toast.error(r.error ?? 'No se pudo calificar.')
       }
     })
   }
@@ -337,123 +182,60 @@ export function AccionDeLead({
   return (
     <>
       <Button
-        variant={
-          accion.tipo === 'oferta' ? 'primaria' : accion.tipo === 'reunion' ? 'secundaria' : 'positiva'
-        }
+        variant={accion.tipo === 'reunion' ? 'secundaria' : 'positiva'}
         className={cn('h-11 w-full text-[14px]', className)}
         onClick={() => setAbierta(true)}
       >
-        {accion.tipo === 'oferta' ? (
-          <Send aria-hidden />
-        ) : accion.tipo === 'reunion' ? (
-          <CalendarPlus aria-hidden />
-        ) : (
-          <MessageSquareReply aria-hidden />
-        )}
+        {accion.tipo === 'reunion' ? <CalendarPlus aria-hidden /> : <Star aria-hidden />}
         {accion.label}
       </Button>
 
-      {abierta && accion.tipo === 'oferta' ? (
-        <HojaDeOferta
-          assignmentId={assignmentId}
-          negocio={negocio}
-          onCerrar={() => setAbierta(false)}
-          onHecho={onHecho}
-        />
-      ) : null}
+      {abierta && accion.tipo === 'calificar' ? (
+        <Hoja titulo={`¿Qué dijo ${negocio}?`} onCerrar={() => setAbierta(false)}>
+          {/*
+            Calificar es decir "este sigue". Lo que anotes acá es lo que se lee
+            después para escribirle el seguimiento, así que conviene que diga
+            qué contestó y no "interesado".
+          */}
+          <p className="text-[13px] leading-relaxed text-texto-2">
+            Al calificarlo entra al seguimiento y le va a tocar el próximo mensaje a los días que
+            estén configurados. Si no contestó o no sirve, no lo califiques: dejalo o descartalo.
+          </p>
 
-      {abierta && accion.tipo === 'respondio' ? (
-        <Hoja
-          titulo={accion.conInteres ? `¿Qué dijo ${negocio}?` : `${negocio} contestó`}
-          onCerrar={() => setAbierta(false)}
-        >
-          {accion.conInteres ? (
-            /*
-             * Acá sí se escribe, y es obligatorio. Ya vio la oferta: lo que
-             * dijo es lo que decide cómo sigue —si se le insiste, si se le
-             * baja el precio, si se cierra— y es lo único que queda de esa
-             * conversación cuando la retoma el equipo.
-             */
-            <>
-              <p className="text-[13px] leading-relaxed text-texto-2">
-                Ya recibió la oferta, así que su respuesta es un sí o un no. Anotá qué dijo: sin
-                eso no se puede seguir la conversación.
-              </p>
+          <Field label="Qué dijo (opcional, pero ayuda)" className="mt-4">
+            <textarea
+              value={nota}
+              onChange={(e) => setNota(e.target.value)}
+              rows={3}
+              autoFocus
+              placeholder="Ej: preguntó cuánto sale y si trabajamos con locales chicos"
+              className="w-full resize-y rounded-[6px] border border-borde bg-fondo px-2.5 py-2 text-[16px] leading-relaxed text-texto focus:border-acento focus:outline-none"
+            />
+          </Field>
 
-              <Field label="Qué dijo" className="mt-4">
-                <textarea
-                  value={nota}
-                  onChange={(e) => setNota(e.target.value)}
-                  rows={3}
-                  autoFocus
-                  placeholder="Ej: le interesa pero quiere arrancar el mes que viene"
-                  className="w-full resize-y rounded-[6px] border border-borde bg-fondo px-2.5 py-2 text-[16px] leading-relaxed text-texto focus:border-acento focus:outline-none"
-                />
-              </Field>
+          <Button
+            variant="positiva"
+            className="mt-4 h-12 w-full text-[14px]"
+            onClick={enviarCalificado}
+            disabled={pendiente}
+          >
+            <Star aria-hidden />
+            {pendiente ? 'Guardando…' : 'Calificar'}
+          </Button>
 
-              <div className="mt-4 space-y-2">
-                <Button
-                  variant="positiva"
-                  className="h-12 w-full text-[14px]"
-                  onClick={() => enviarRespondio('interesa')}
-                  disabled={pendiente || nota.trim().length === 0}
-                >
-                  <ThumbsUp aria-hidden />
-                  Le interesa
-                </Button>
-                {/*
-                  El del medio es el que más se pierde. Sin este botón, un
-                  "cuánto sale" o un "después veo" hay que empujarlo a sí o a
-                  no, y el que lo empuja a no cierra un lead que estaba vivo.
-                */}
-                <Button
-                  variant="secundaria"
-                  className="h-12 w-full text-[14px]"
-                  onClick={() => enviarRespondio('tibio')}
-                  disabled={pendiente || nota.trim().length === 0}
-                >
-                  <HelpCircle aria-hidden />
-                  Tibio: dudó o puso un pero
-                </Button>
-                <Button
-                  variant="destructiva"
-                  className="h-12 w-full text-[14px]"
-                  onClick={() => enviarRespondio('no_interesa')}
-                  disabled={pendiente || nota.trim().length === 0}
-                >
-                  <ThumbsDown aria-hidden />
-                  No le interesa
-                </Button>
-                {nota.trim().length === 0 ? (
-                  <p className="text-center text-[11.5px] text-texto-2">
-                    Se habilitan cuando escribís qué dijo.
-                  </p>
-                ) : null}
-              </div>
-            </>
-          ) : (
-            /*
-             * Acá no se escribe nada. Contestó la entrada: todavía no sabe a
-             * qué nos dedicamos, así que lo que dijo es un "hola" y anotarlo no
-             * le sirve a nadie. Un toque y pasa a la oferta.
-             */
-            <>
-              <p className="text-[13px] leading-relaxed text-texto-2">
-                Todavía no sabe a qué nos dedicamos. Al confirmar pasa a{' '}
-                <span className="text-texto">Respondió 1er mensaje</span> y te queda el botón para
-                mandarle la oferta.
-              </p>
-
-              <Button
-                variant="primaria"
-                className="mt-4 h-12 w-full"
-                onClick={() => enviarRespondio()}
-                disabled={pendiente}
-              >
-                {pendiente ? 'Guardando…' : 'Confirmar'}
-              </Button>
-            </>
-          )}
+          {/*
+            La otra mitad de la decisión. Sin esto, el que contestó "no" se
+            queda contactado para siempre y nadie lo saca de la lista.
+          */}
+          <Button
+            variant="destructiva"
+            className="mt-2 h-12 w-full text-[14px]"
+            onClick={descartar}
+            disabled={pendiente}
+          >
+            <Trash2 aria-hidden />
+            Descartar: no sirve
+          </Button>
         </Hoja>
       ) : null}
 

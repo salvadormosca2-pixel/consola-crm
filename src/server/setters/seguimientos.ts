@@ -3,7 +3,7 @@ import 'server-only'
 import { sql } from 'drizzle-orm'
 
 import { db } from '@/db'
-import type { Paso } from '@/lib/mensajes-config'
+import type { Paso } from '@/lib/pistas'
 import { CLASIFICACIONES, type Clasificacion } from '@/lib/seguimientos-vistas'
 import { opsDate, OPS_TZ } from '@/lib/tz'
 import { barrer } from '@/server/setters/asignacion'
@@ -16,7 +16,7 @@ import { barrer } from '@/server/setters/asignacion'
  *   · **General** — los números de todo el equipo, y abajo los nombres.
  *   · **Un setter** — los mismos números, pero solo suyos.
  *
- * Las dos usan exactamente las mismas siete clasificaciones y las mismas
+ * Las dos usan exactamente las mismas seis clasificaciones y las mismas
  * consultas, con o sin filtro de setter. Es lo que hace que los números se
  * puedan comparar: lo que ves en la general es la suma de lo que ves adentro.
  *
@@ -52,8 +52,7 @@ const FILTROS: Record<Clasificacion, ReturnType<typeof sql>> = {
   seguimiento_hecho: sql`${CON_SEGUIMIENTO} and ${VIVO}`,
   falta_seguimiento: sql`${PENDIENTE}`,
   atrasados: sql`${PENDIENTE} and ${DIAS_DE_ATRASO} > 0`,
-  contestaron: sql`la.respondido_at is not null and ${VIVO}`,
-  listos: sql`la.interes = 'interesa' and ${VIVO}`,
+  calificados: sql`la.calificado_at is not null and ${VIVO}`,
 }
 
 export type Conteos = Record<Clasificacion, number>
@@ -63,10 +62,10 @@ function conteosVacios(): Conteos {
 }
 
 /**
- * Los siete números, del equipo entero o de una persona.
+ * Los seis números, del equipo entero o de una persona.
  *
- * Van en una sola consulta con `filter`: siete recorridas de la tabla para
- * mostrar siete números en la misma pantalla no tiene sentido.
+ * Van en una sola consulta con `filter`: seis recorridas de la tabla para
+ * mostrar seis números en la misma pantalla no tiene sentido.
  */
 export async function conteosDeSeguimientos(setterId?: string): Promise<Conteos> {
   const filas = await db.execute(sql`
@@ -76,8 +75,7 @@ export async function conteosDeSeguimientos(setterId?: string): Promise<Conteos>
       count(*) filter (where ${FILTROS.seguimiento_hecho})::int as seguimiento_hecho,
       count(*) filter (where ${FILTROS.falta_seguimiento})::int as falta_seguimiento,
       count(*) filter (where ${FILTROS.atrasados})::int as atrasados,
-      count(*) filter (where ${FILTROS.contestaron})::int as contestaron,
-      count(*) filter (where ${FILTROS.listos})::int as listos
+      count(*) filter (where ${FILTROS.calificados})::int as calificados
       from lead_assignments la
      ${setterId ? sql`where la.setter_id = ${setterId}::uuid` : sql``}
   `)
@@ -134,8 +132,7 @@ export async function generalDeSeguimientos(): Promise<GeneralDeSeguimientos> {
            count(la.id) filter (where ${FILTROS.seguimiento_hecho})::int as seguimiento_hecho,
            count(la.id) filter (where ${FILTROS.falta_seguimiento})::int as falta_seguimiento,
            count(la.id) filter (where ${FILTROS.atrasados})::int as atrasados,
-           count(la.id) filter (where ${FILTROS.contestaron})::int as contestaron,
-           count(la.id) filter (where ${FILTROS.listos})::int as listos,
+           count(la.id) filter (where ${FILTROS.calificados})::int as calificados,
            coalesce(max(case when ${PENDIENTE} then ${DIAS_DE_ATRASO} end), 0)::int as dias_atraso,
            (select count(*)::int from setter_sends ss
              where ss.setter_id = s.id and ss.undone_at is null
@@ -183,8 +180,7 @@ export async function generalDeSeguimientos(): Promise<GeneralDeSeguimientos> {
         seguimiento_hecho: f.seguimiento_hecho,
         falta_seguimiento: f.falta_seguimiento,
         atrasados: f.atrasados,
-        contestaron: f.contestaron,
-        listos: f.listos,
+        calificados: f.calificados,
       },
     })),
   }
@@ -266,8 +262,7 @@ export interface LeadClasificado {
   horasParaVencer: number
   contactadoAt: Date | null
   respondidoAt: Date | null
-  respondioA: string | null
-  interes: string | null
+  calificadoAt: Date | null
   nota: string | null
 }
 
@@ -284,7 +279,7 @@ export async function leadsDeClasificacion(
 ): Promise<LeadClasificado[]> {
   const filas = await db.execute(sql`
     select la.id, la.proximo_paso as paso, la.proximo_seguimiento_at,
-           la.contactado_at, la.respondido_at, la.respondio_a, la.interes, la.nota,
+           la.contactado_at, la.respondido_at, la.calificado_at, la.nota,
            ${DIAS_DE_ATRASO}::int as dias_atraso,
            greatest(0, floor(extract(epoch from (la.vence_at - now())) / 3600))::int as horas,
            c.business_name, c.ig_username, c.niche,
@@ -302,8 +297,8 @@ export async function leadsDeClasificacion(
        ${
          clasificacion === 'por_contactar'
            ? sql`la.vence_at asc`
-           : clasificacion === 'contestaron' || clasificacion === 'listos'
-             ? sql`la.respondido_at asc`
+           : clasificacion === 'calificados'
+             ? sql`la.calificado_at asc`
              : clasificacion === 'contactados' || clasificacion === 'seguimiento_hecho'
                ? sql`la.contactado_at desc`
                : sql`dias_atraso desc, la.proximo_seguimiento_at asc`
@@ -317,8 +312,7 @@ export async function leadsDeClasificacion(
     proximo_seguimiento_at: Date | null
     contactado_at: Date | null
     respondido_at: Date | null
-    respondio_a: string | null
-    interes: string | null
+    calificado_at: Date | null
     nota: string | null
     dias_atraso: number
     horas: number
@@ -340,8 +334,7 @@ export async function leadsDeClasificacion(
     horasParaVencer: f.horas,
     contactadoAt: f.contactado_at ? new Date(f.contactado_at) : null,
     respondidoAt: f.respondido_at ? new Date(f.respondido_at) : null,
-    respondioA: f.respondio_a,
-    interes: f.interes,
+    calificadoAt: f.calificado_at ? new Date(f.calificado_at) : null,
     nota: f.nota,
   }))
 }

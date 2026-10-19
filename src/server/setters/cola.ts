@@ -10,13 +10,7 @@ import { seccionDePaso, type Seccion } from '@/lib/pistas'
 import { barrer } from '@/server/setters/asignacion'
 import { motivoSinLeads, repartoAutomaticoDelDia } from '@/server/setters/reparto'
 import { leerCupoDeSetter, PASOS_CON_CUPO, type CupoDeSetter } from '@/server/setters/cupo'
-import {
-  armarMensaje,
-  leerPlantillasDeSetter,
-  elegirPlantilla,
-  leerVozOperativa,
-  linksDeInstagram,
-} from '@/server/setters/plantillas'
+import { elegirTexto, leerTextos, linksDeInstagram } from '@/server/setters/textos'
 
 /**
  * El trabajo del día del setter, **en dos listas separadas**.
@@ -24,7 +18,7 @@ import {
  * Son dos oficios distintos y venían en una sola cola: abrirle el chat a un
  * desconocido y seguir una conversación que ya existe. Mezclados, el setter no
  * sabía cuál de los dos estaba haciendo —la pantalla llamaba "seguimiento" a
- * todo lo que no fuera la entrada, oferta y reintentos de apertura incluidos— y
+ * todo lo que no fuera el primer mensaje— y
  * eso importa: uno gasta cupo y puede costar la cuenta, el otro no gasta nada.
  *
  * La línea la pone `esApertura`, que es la misma que decide el cupo. Acá no se
@@ -76,11 +70,10 @@ export interface ItemDeCola {
   horasRestantes: number
   /** Días de atraso del segundo mensaje. 0 si le toca hoy. */
   diasAtraso: number
+  /** El texto que escribió el admin para este lead y este paso. */
   mensaje: string | null
-  /** Por qué no se puede armar el mensaje. Si está, no se puede mandar. */
+  /** Por qué no se puede mandar. Casi siempre: todavía no está escrito. */
   motivoBloqueo: string | null
-  templateId: string | null
-  templateVariant: number | null
   linkDirecto: string
   linkRespaldo: string
 }
@@ -116,15 +109,11 @@ export interface ResumenDelDia {
 }
 
 export interface ColaDelSetter {
-  /**
-   * Los leads a los que hay que **abrirles el chat**: la entrada, y los dos
-   * reintentos del que nunca contestó. Gastan cupo.
-   */
+  /** Los leads a los que hay que **abrirles el chat**. Gastan cupo. */
   aperturas: ItemDeCola[]
   /**
-   * Las conversaciones **ya abiertas** que esperan el mensaje que sigue: la
-   * oferta, los dos que salen apenas el setter marca qué contestó, y los
-   * escalones de silencio y tibio. No gastan cupo.
+   * Las conversaciones **ya abiertas** que esperan el escalón que sigue. Son
+   * leads calificados, y no gastan cupo.
    */
   seguimientos: ItemDeCola[]
   cupo: CupoDeSetter
@@ -171,11 +160,7 @@ export async function armarColaDelSetter(setterId: string): Promise<ColaDelSette
   await barrer()
   await repartoAutomaticoDelDia()
 
-  const [cupo, plantillas, voz] = await Promise.all([
-    leerCupoDeSetter(setterId),
-    leerPlantillasDeSetter(),
-    leerVozOperativa(),
-  ])
+  const cupo = await leerCupoDeSetter(setterId)
 
   const filas = await db.execute(sql`
     select la.id, la.contact_id, la.estado, la.vence_at, la.abierto_at,
@@ -188,10 +173,9 @@ export async function armarColaDelSetter(setterId: string): Promise<ColaDelSette
       join setters s on s.id = la.setter_id
      where la.setter_id = ${setterId}::uuid
        and (
-         -- Le toca un seguimiento: cualquiera de los que siguen a la entrada,
-         -- según en qué silencio quedó o qué marcó el setter.
+         -- Le toca un escalón del seguimiento, porque está calificado.
          (la.proximo_seguimiento_at is not null and la.proximo_seguimiento_at <= now())
-         -- O nunca recibió nada y le toca la entrada.
+         -- O nunca recibió nada y le toca el primer mensaje.
          or la.estado in ('asignado', 'abierto', 'saltado')
        )
      order by
@@ -203,8 +187,7 @@ export async function armarColaDelSetter(setterId: string): Promise<ColaDelSette
               or la.setter_account_id = s.cuenta_activa_id then 0 else 1 end,
        -- Dentro de una cuenta, lo programado antes que lo que nunca se tocó.
        -- Las dos listas se separan después, en JS, y cada una hereda este
-       -- orden: entre seguimientos deja arriba al más atrasado, y entre
-       -- aperturas al reintento, que tiene fecha, antes que la entrada.
+       -- orden: entre seguimientos deja arriba al más atrasado.
        case when la.proximo_seguimiento_at is not null
              and la.proximo_seguimiento_at <= now() then 0 else 1 end,
        -- Entre seguimientos, el más atrasado arriba.
@@ -226,26 +209,22 @@ export async function armarColaDelSetter(setterId: string): Promise<ColaDelSette
   const ahora = Date.now()
   const items: ItemDeCola[] = []
 
+  /*
+   * Los textos de toda la cola, de un viaje. Son los que escribió el admin
+   * lead por lead: sin el suyo, el lead viaja bloqueado y el celular muestra
+   * el motivo en vez de un botón que no va a funcionar.
+   */
+  const textos = await leerTextos((filas.rows as unknown as FilaCola[]).map((f) => f.id))
+
   for (const f of filas.rows as unknown as FilaCola[]) {
     const programado = f.proximo_seguimiento_at ? new Date(f.proximo_seguimiento_at) : null
     const leToca = programado !== null && programado.getTime() <= ahora
 
     // Si tiene seguimiento vencido, le toca ese paso. Si no, es un lead sin
-    // tocar y le toca la entrada.
+    // tocar y le toca el primer mensaje.
     const paso: PasoDeSeguimiento = leToca ? ((f.proximo_paso ?? 1) as PasoDeSeguimiento) : 1
 
-    const armado = armarMensaje(
-      elegirPlantilla(plantillas, paso, f.niche),
-      {
-        businessName: f.business_name,
-        contactName: f.contact_name,
-        niche: f.niche,
-        bought: f.bought,
-        city: f.city,
-      },
-      voz,
-      paso,
-    )
+    const armado = elegirTexto(textos.get(f.id), paso)
 
     const vence = new Date(f.vence_at)
 
@@ -271,17 +250,13 @@ export async function armarColaDelSetter(setterId: string): Promise<ColaDelSette
         : 0,
       mensaje: armado.ok ? armado.texto : null,
       motivoBloqueo: armado.ok ? null : armado.motivo,
-      templateId: armado.ok ? armado.templateId : null,
-      templateVariant: armado.ok ? armado.variante : null,
       ...linksDeInstagram(f.ig_username),
     })
   }
 
   /*
-   * El corte. Un mensaje va a una lista o a la otra según abra el chat o no, y
-   * eso no depende de en qué número de paso esté: la oferta es el paso 2 y no
-   * abre nada, el reintento es el 17 y abre. Contarlo por `paso > 1` era lo que
-   * ponía aperturas adentro de la lista de seguimientos.
+   * El corte. Un mensaje va a una lista o a la otra según abra el chat o no:
+   * el primer mensaje abre, los cuatro escalones del seguimiento no.
    */
   const aperturas = items.filter((i) => i.seccion === 'apertura')
   const seguimientos = items.filter((i) => i.seccion === 'seguimiento')
@@ -289,9 +264,8 @@ export async function armarColaDelSetter(setterId: string): Promise<ColaDelSette
   /*
    * Cuánto le falta en cada cuenta. Los seguimientos se cuentan sobre la cuenta
    * que abrió esa conversación, no sobre la activa: es la única desde la que se
-   * pueden mandar. Las aperturas de leads sin tocar todavía no tienen cuenta
-   * —salen de la activa—, así que solo se cuentan acá los reintentos, que sí la
-   * tienen y sí le descuentan del cupo.
+   * pueden mandar. Las aperturas todavía no tienen cuenta —salen de la activa—,
+   * así que no se cuentan por cuenta.
    */
   const porCuenta: PendienteDeCuenta[] = cupo.cuentas.map((c) => ({
     cuentaId: c.id,

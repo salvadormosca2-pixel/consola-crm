@@ -131,8 +131,8 @@ async function main(): Promise<void> {
     '/equipo/seguimientos',
     `/equipo/seguimientos/${setter.id}`,
     `/equipo/${setter.id}`,
-    '/respondieron',
-    `/respondieron/${setter.id}`,
+    '/textos',
+    '/seguimientos',
     '/reuniones',
     '/contactos',
     '/importar',
@@ -143,14 +143,15 @@ async function main(): Promise<void> {
     await abrir(admin, ruta)
   }
 
-  // Las clasificaciones que se abren al tocar un número.
+  // Las listas que se abren al tocar un número.
   console.log('\n  Listas que se abren al tocar un número')
-  for (const v of ['por_contactar', 'contactados', 'seguimiento_hecho', 'falta_seguimiento',
-                   'atrasados', 'contestaron', 'listos']) {
+  for (const v of ['por_contactar', 'contactados', 'calificados', 'seguimiento_hecho',
+                   'falta_seguimiento', 'atrasados']) {
     await abrir(admin, `/equipo/seguimientos?ver=${v}`)
   }
-  for (const v of ['sin_clasificar', 'sin_oferta', 'oferta', 'interesados', 'no_interesa']) {
-    await abrir(admin, `/respondieron?ver=${v}`)
+  for (const v of ['calificados', 'sin_contactar', 'sin_calificar', 'seguimiento_atrasado',
+                   'vencidos', 'inexistentes']) {
+    await abrir(admin, `/equipo/leads?ver=${v}`)
   }
   for (const g of ['mensajes', 'respuestas', 'leads', 'equipo']) {
     await abrir(admin, `/actividad?grupo=${g}`)
@@ -162,8 +163,7 @@ async function main(): Promise<void> {
   for (const ruta of ['/hoy', '/mis-leads', '/referencias', '/avisos']) {
     await abrir(diego, ruta)
   }
-  for (const p of ['contactados', 'respondio_primero', 'oferta_enviada', 'respondio_oferta',
-                   'reuniones']) {
+  for (const p of ['contactados', 'calificados', 'reuniones']) {
     await abrir(diego, `/mis-leads?ver=${p}`)
   }
 
@@ -204,8 +204,8 @@ async function main(): Promise<void> {
  * Las acciones, disparadas como las dispara la pantalla y comprobadas contra
  * la base.
  *
- * Se recorre el camino entero de un lead —abrir, mandar, contestar, ofertar,
- * contestar la oferta, agendar— y después de cada paso se mira la fila. Lo que
+ * Se recorre el camino entero de un lead —abrir, mandar, calificar, escribirle
+ * el seguimiento, agendar— y después de cada paso se mira la fila. Lo que
  * se prueba no es que la acción devuelva `ok`, sino que el dato esté guardado:
  * son dos cosas distintas y solo la segunda importa.
  *
@@ -268,89 +268,60 @@ async function verificarEscrituras(
          from lead_assignments la where la.id = $1`,
       [id],
     )
-    if (enviado?.estado === 'contactado' && enviado.envios === 1 && enviado.paso === 2) {
-      bien('marcar enviado', '→ contactado, 1 envío, le toca la oferta')
+    if (enviado?.estado === 'contactado' && enviado.envios === 1 && enviado.paso === null) {
+      bien('marcar enviado', '→ contactado, 1 envío, esperando que lo califiquen')
     } else {
       mal('marcar enviado', `quedó ${JSON.stringify(enviado)}`)
     }
 
-    /* Contestó la entrada: sin nota, y la oferta queda lista ya. */
-    await accion(await idDeAccion('marcarRespondio'), [id, {}])
-    const contesto = await uno<{ estado: string; a: string | null; paso: number | null }>(
-      `select estado, respondio_a as a, proximo_paso as paso
-         from lead_assignments where id = $1`,
+    /* Lo califica: es lo único que abre el seguimiento. */
+    await accion(await idDeAccion('calificarLead'), [id, { nota: 'Quiere la web con turnos.' }])
+    const calificado = await uno<{ estado: string; nota: string | null; paso: number | null }>(
+      `select estado, nota, proximo_paso as paso from lead_assignments where id = $1`,
       [id],
     )
-    if (contesto?.estado === 'respondido' && contesto.a === 'primero' && contesto.paso === 2) {
-      bien('contestó el 1er mensaje', '→ le toca la oferta, ya mismo')
+    if (calificado?.estado === 'calificado' && calificado.nota && calificado.paso !== null) {
+      bien('calificar el lead', `→ "${calificado.nota}", le toca el paso ${calificado.paso}`)
     } else {
-      mal('contestó el 1er mensaje', `quedó ${JSON.stringify(contesto)}`)
-    }
-
-    /* La oferta sale sobre un lead que ya respondió. */
-    await accion(await idDeAccion('marcarEnviado'), [id])
-    const oferta = await uno<{ estado: string; paso: number | null; envios: number }>(
-      `select la.estado, la.proximo_paso as paso,
-              (select count(*)::int from setter_sends ss
-                where ss.assignment_id = la.id and ss.undone_at is null) as envios
-         from lead_assignments la where la.id = $1`,
-      [id],
-    )
-    if (oferta?.estado === 'segundo_enviado' && oferta.envios === 2 && oferta.paso === 4) {
-      bien('enviar la oferta', '→ 2 envíos, después le toca el reenganche')
-    } else {
-      mal('enviar la oferta', `quedó ${JSON.stringify(oferta)}`)
-    }
-
-    /* Contestar la oferta SIN nota tiene que ser rechazado. */
-    await accion(await idDeAccion('marcarRespondio'), [id, { interes: 'interesa' }])
-    const sinNota = await uno<{ interes: string | null }>(
-      `select interes from lead_assignments where id = $1`,
-      [id],
-    )
-    if (!sinNota?.interes) bien('contestar la oferta sin nota', '→ rechazado, como debe ser')
-    else mal('contestar la oferta sin nota', 'se guardó igual, la nota tenía que ser obligatoria')
-
-    /* Con nota, sí. */
-    await accion(await idDeAccion('marcarRespondio'), [
-      id,
-      { interes: 'interesa', nota: 'Quiere la web con turnos.' },
-    ])
-    const conNota = await uno<{ interes: string | null; nota: string | null; a: string | null }>(
-      `select interes, nota, respondio_a as a from lead_assignments where id = $1`,
-      [id],
-    )
-    if (conNota?.interes === 'interesa' && conNota.nota && conNota.a === 'segundo') {
-      bien('contestar la oferta con nota', `→ "${conNota.nota}"`)
-    } else {
-      mal('contestar la oferta con nota', `quedó ${JSON.stringify(conNota)}`)
+      mal('calificar el lead', `quedó ${JSON.stringify(calificado)}`)
     }
 
     /*
      * Y ahora lo que de verdad importa: que eso aparezca en el panel.
      *
      * Que la fila esté en la base no alcanza. La pregunta es si el admin lo ve
-     * —en la bandeja correcta, con la etiqueta correcta y con lo que anotó el
+     * —en la pantalla correcta, con la etiqueta correcta y con lo que anotó el
      * setter— porque si no lo ve, para él no pasó.
      */
     await enElPanel(
       cookiesAdmin,
-      '/respondieron?ver=interesados',
-      ['Verificaci', 'Quiere la web con turnos'],
-      'la respuesta llega a Respondieron',
+      '/equipo/leads?ver=calificados',
+      ['Verificaci'],
+      'el calificado llega a Leads del equipo',
     )
     await enElPanel(
       cookiesAdmin,
       '/actividad?q=verificacion',
-      ['Verificaci', 'Contest'],
-      'la respuesta llega a Actividad',
+      ['Verificaci', 'Calific'],
+      'la calificación llega a Actividad',
     )
     await enElPanel(
       cookiesAdmin,
-      '/equipo/seguimientos?ver=contestaron',
+      '/equipo/seguimientos?ver=calificados',
       ['Verificaci'],
-      'la respuesta llega a Seguimientos',
+      'el calificado llega a Seguimientos',
     )
+
+    /* El texto del seguimiento lo escribe el admin, lead por lead. */
+    await accion(await idDeAccion('guardarTexto'), [
+      { assignmentId: id, paso: calificado?.paso ?? 3, body: 'Che, ¿lo pudiste ver?' },
+    ])
+    const texto = await uno<{ body: string }>(
+      `select body from lead_textos where assignment_id = $1`,
+      [id],
+    )
+    if (texto?.body) bien('escribir el texto del lead', `→ "${texto.body}"`)
+    else mal('escribir el texto del lead', 'no se guardó en lead_textos')
 
     /* Agendar una reunión. */
     const manana = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10)
@@ -466,7 +437,7 @@ async function verificarEscrituras(
     await pool.query(`update contacts set stage = 'respondido', received_count = 1 where id = $1`, [
       cuarto.contacto,
     ])
-    await fetch(`${BASE}/respondieron`, {
+    await fetch(`${BASE}/contactos`, {
       method: 'POST',
       headers: {
         cookie: cookiesAdmin,

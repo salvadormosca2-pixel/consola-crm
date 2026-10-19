@@ -14,22 +14,18 @@
  * Las pestañas son el recorrido del lead, en orden, y cada una tiene **una
  * sola acción**: la que de verdad sigue en esa etapa.
  *
- *   Por contactar  →  Contactados  →  Respondió 1er mensaje
- *        (cola)        "contestó"      "enviar la oferta"
- *                                            ↓
- *   Reuniones  ←  Respondió la oferta  ←  Le mandé la oferta
- *                    "agendó"              "contestó"
+ *   Por contactar  →  Contactados  →  Calificados  →  Reuniones
+ *       (cola)         "calificar"      "agendó"
  *
- * Antes cada fila mostraba todos los botones a la vez y no se entendía cuál
- * tocar. Ahora el botón dice exactamente qué hacer, y al tocarlo el lead se
- * mueve a la pestaña siguiente.
+ * Eran seis y ahora son cuatro: las dos que sobraban —"respondió el 1er
+ * mensaje" y "le mandé la oferta"— eran escalones del modelo de dos mensajes.
+ * Con un solo mensaje de entrada, lo único que hay que decidir sobre un lead
+ * contactado es si se lo califica.
  */
 export const PESTANAS = [
   'por_contactar',
   'contactados',
-  'respondio_primero',
-  'oferta_enviada',
-  'respondio_oferta',
+  'calificados',
   'reuniones',
 ] as const
 export type Pestana = (typeof PESTANAS)[number]
@@ -52,20 +48,10 @@ export const PESTANA_META: Record<Pestana, MetaDePestana> = {
     etiqueta: 'Le mandé el 1er mensaje',
     vacio: 'Todavía no contactaste a nadie.',
   },
-  respondio_primero: {
-    label: 'Respondió 1er mensaje',
-    etiqueta: 'Contestó · falta la oferta',
-    vacio: 'Todavía nadie contestó el primer mensaje.',
-  },
-  oferta_enviada: {
-    label: 'Le mandé la oferta',
-    etiqueta: 'Le mandé la oferta',
-    vacio: 'Todavía no mandaste ninguna oferta.',
-  },
-  respondio_oferta: {
-    label: 'Respondió la oferta',
-    etiqueta: 'Contestó la oferta',
-    vacio: 'Todavía nadie contestó la oferta.',
+  calificados: {
+    label: 'Calificados',
+    etiqueta: 'Calificado',
+    vacio: 'Todavía no calificaste a nadie. Los que contesten y sirvan van acá.',
   },
   reuniones: {
     label: 'Reuniones',
@@ -77,41 +63,35 @@ export const PESTANA_META: Record<Pestana, MetaDePestana> = {
 /* ── Las vistas obligatorias del panel ────────────────────────────────── */
 
 export const VISTAS = [
-  'respondieron',
-  'oferta',
+  'calificados',
   'sin_contactar',
-  'sin_respuesta',
-  'esperando_segundo',
+  'sin_calificar',
+  'seguimiento_atrasado',
   'vencidos',
   'inexistentes',
 ] as const
 export type Vista = (typeof VISTAS)[number]
 
 export const VISTA_META: Record<Vista, { label: string; explicacion: string }> = {
-  respondieron: {
-    label: 'Respondieron 1er mensaje',
+  calificados: {
+    label: 'Calificados',
     explicacion:
-      'Abrieron conversación y todavía no saben a qué nos dedicamos. Acá entramos nosotros a contarles. Ordenados por el que hace más que espera: es mi cola de trabajo.',
-  },
-  oferta: {
-    label: 'Respondieron 2do mensaje',
-    explicacion:
-      'Ya recibieron el segundo mensaje, así que saben qué les ofrecemos y dijeron que sí o que no. Los que dijeron que sí son los mejores leads que hay.',
+      'Contestaron y alguien decidió que valen la pena. Son los únicos que reciben seguimiento, y los mejores leads que hay: ordenados por el que hace más que espera.',
   },
   sin_contactar: {
     label: 'Sin contactar',
     explicacion:
       'Leads asignados que nadie tocó, con las horas que les quedan antes de vencer. Es donde veo si alguien no está trabajando.',
   },
-  sin_respuesta: {
-    label: 'Nunca contestaron',
+  sin_calificar: {
+    label: 'Contactados sin calificar',
     explicacion:
-      'Recibieron los dos mensajes y nunca dijeron nada. No son un "no": se les pasó. Elegilos y devolvelos al pozo para volver a intentar más adelante.',
+      'Recibieron el primer mensaje y nadie los calificó: o no contestaron, o lo que contestaron no alcanzó. No reciben nada más. Elegilos y devolvelos al pozo para volver a intentar más adelante.',
   },
-  esperando_segundo: {
+  seguimiento_atrasado: {
     label: 'Seguimiento atrasado',
     explicacion:
-      'Les toca un mensaje que todavía no salió: la oferta o alguno de los reenganches, con los días de atraso. Es la misma cuenta que el control de seguimientos.',
+      'Calificados a los que les toca un escalón que todavía no salió, con los días de atraso. Es la misma cuenta que el control de seguimientos.',
   },
   vencidos: {
     label: 'Vencidos y devueltos',

@@ -261,7 +261,11 @@ function Detalle({ tipo, datos }: { tipo: string; datos: Record<string, unknown>
     return typeof v === 'number' ? v : null
   }
 
-  if (tipo === 'lead_contactado' || tipo === 'lead_segundo_enviado') {
+  if (
+    tipo === 'lead_contactado' ||
+    tipo === 'lead_seguimiento_enviado' ||
+    tipo === 'lead_segundo_enviado'
+  ) {
     const cuenta = texto('cuenta')
     const usado = numero('usadoHoy')
     const cupo = numero('cupo')
@@ -269,11 +273,7 @@ function Detalle({ tipo, datos }: { tipo: string; datos: Record<string, unknown>
     if (usado !== null && cupo !== null) partes.push(`${usado}/${cupo} del día`)
   }
 
-  if (tipo === 'lead_respondio') {
-    const a = texto('respondioA')
-    if (a) partes.push(a === 'segundo' ? 'a la oferta' : 'al 1er mensaje')
-    const interes = texto('interes')
-    if (interes) partes.push(interes === 'interesa' ? 'le interesa' : 'no le interesa')
+  if (tipo === 'lead_respondio' || tipo === 'lead_calificado') {
     const nota = texto('nota')
     if (nota) partes.push(`"${nota}"`)
     if (datos.porElAdmin === true) partes.push('marcado por el admin')

@@ -80,9 +80,9 @@ async function leerCapacidades(cliente: Ejecutor = db): Promise<CapacidadDeSette
                and la.estado in ('asignado', 'abierto', 'saltado')) as pendientes,
 
            (select count(*)::int from lead_assignments la
-             where la.setter_id = s.id and la.estado = 'contactado'
-               and la.segundo_programado_at is not null
-               and la.segundo_programado_at <= now()) as seguimientos
+             where la.setter_id = s.id and la.estado = 'calificado'
+               and la.proximo_seguimiento_at is not null
+               and la.proximo_seguimiento_at <= now()) as seguimientos
 
       from setters s
       join users u on u.id = s.user_id
