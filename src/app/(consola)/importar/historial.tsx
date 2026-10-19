@@ -162,6 +162,20 @@ export function Historial({ lotes }: { lotes: LoteResumen[] }) {
                 <td className="max-w-[240px] truncate px-2.5 py-1.5" title={l.filename}>
                   {l.filename}
                   {l.undoneAt ? <Chip className="ml-1.5">deshecha</Chip> : null}
+                  {/*
+                    El error que no daba ningún error: entraron como cliente
+                    propio y el pozo solo reparte leads scrapeados, así que no
+                    le aparecen a ningún setter. Se dice acá porque es el único
+                    lugar donde se mira después de importar.
+                  */}
+                  {!l.undoneAt && l.sinSetter > 0 ? (
+                    <span
+                      className="ml-1.5 text-[11px] text-ambar"
+                      title="Entraron como cliente propio: están en la base pero el reparto no los toca. Deshacé el lote y volvé a importarlo como lead scrapeado."
+                    >
+                      {l.sinSetter} sin setter
+                    </span>
+                  ) : null}
                 </td>
                 <td className="px-2.5 py-1.5 text-texto-2" title={formatLargo(l.createdAt)}>
                   {haceCuanto(l.createdAt)}

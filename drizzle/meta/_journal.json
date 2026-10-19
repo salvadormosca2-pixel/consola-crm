@@ -127,6 +127,13 @@
       "when": 1787700009000,
       "tag": "0017_sin_seguimientos_viejos",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1787700010000,
+      "tag": "0018_revisar_de_verdad",
+      "breakpoints": true
     }
   ]
 }

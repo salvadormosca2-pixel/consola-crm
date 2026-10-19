@@ -18,6 +18,7 @@ import { leerPuertaDeEntrada } from './avisos'
 import { agregarLeadPropio } from './leads'
 import { borrarSetter, vaciarElEquipo } from './borrar'
 import { deshacerEnvio, registrarEnvio } from './envios'
+import { contarParaRevisar } from '../imports'
 import { cuantosSinTexto } from './textos'
 import {
   repartirAEsteSetter,
@@ -968,6 +969,45 @@ describe('los pasos que salieron del modelo no le piden nada a nadie', () => {
       [a, ESCALON],
     )
     expect(await cuantosSinTexto(db)).toBe(1)
+  })
+})
+
+describe('la pestaña Revisar pregunta ahora, no el día de la importación', () => {
+  /** Un lote con una fila etiquetada como la etiquetaba la regla vieja. */
+  async function loteConFila(contactId: string | null, action: string): Promise<void> {
+    const lote = await pool.query<{ id: string }>(
+      `insert into import_batches (filename, row_count) values ('lista.xlsx', 1) returning id`,
+    )
+    await pool.query(
+      `insert into import_batch_items (batch_id, row_number, action, contact_id, reason, raw_jsonb)
+       values ($1, 2, $2, $3, 'Teléfono: no pude leer el número.', '{}'::jsonb)`,
+      [lote.rows[0]!.id, action, contactId],
+    )
+  }
+
+  it('un lead con Instagram deja de pedir revisión aunque quedara etiquetado', async () => {
+    /*
+     * Es el arreglo. La regla vieja mandaba a revisar cualquier fila con un
+     * aviso, y toda lista scrapeada trae el aviso del teléfono roto: entraban
+     * cientos de leads perfectos a la pestaña. Arreglada la regla, la etiqueta
+     * seguía escrita en la base y la pantalla seguía mostrando lo de ayer.
+     */
+    await loteConFila(await crearLeadScrapeado(pool, 1), 'revisar')
+    expect(await contarParaRevisar(db)).toBe(0)
+  })
+
+  it('sin Instagram sí sigue pidiendo revisión: no lo puede trabajar nadie', async () => {
+    const r = await pool.query<{ id: string }>(
+      `insert into contacts (business_name, phone_e164, has_whatsapp, origen, dedupe_key)
+       values ('Solo teléfono', '5493834111111', true, 'scrapeado', 'tel-1') returning id`,
+    )
+    await loteConFila(r.rows[0]!.id, 'revisar')
+    expect(await contarParaRevisar(db)).toBe(1)
+  })
+
+  it('la fila que no se pudo importar queda siempre: no hay nada resuelto', async () => {
+    await loteConFila(null, 'error')
+    expect(await contarParaRevisar(db)).toBe(1)
   })
 })
 

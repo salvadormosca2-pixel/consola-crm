@@ -2,9 +2,41 @@ import 'server-only'
 
 import { and, desc, eq, inArray, sql } from 'drizzle-orm'
 
-import { db } from '@/db'
+import { db, type Db } from '@/db'
 import { contacts, importBatchItems, importBatches, messages } from '@/db/schema'
 import type { Mapeo } from '@/lib/import/columns'
+
+/**
+ * Si una fila **todavía** necesita que la mire una persona.
+ *
+ * Se pregunta ahora, contra el contacto, en vez de creerle a la etiqueta que
+ * quedó guardada el día de la importación. Es lo que hace que la pestaña se
+ * vacíe sola: un lead que ya está trabajable deja de pedir atención sin que
+ * nadie toque un botón.
+ *
+ * Hacía falta por dos motivos. El primero: la regla vieja mandaba a revisar
+ * cualquier fila con un aviso, y una lista scrapeada entera se llevaba el aviso
+ * del teléfono roto aunque el `@usuario` estuviera impecable. Arreglada la
+ * regla, esas filas seguían ahí —la etiqueta ya estaba escrita en la base— y la
+ * pantalla seguía mostrando el problema de ayer. El segundo: si alguien
+ * completa a mano el dato que faltaba, la fila tiene que desaparecer de la cola
+ * por el solo hecho de estar resuelta.
+ *
+ * Las filas sin contacto (`contact_id` nulo) son las que no se pudieron
+ * importar: esas quedan siempre, porque no hay nada que haya podido arreglarse.
+ */
+const SIGUE_PARA_REVISAR = sql`(
+  ${importBatchItems.contactId} is null
+  or exists (
+    select 1 from contacts c
+     where c.id = ${importBatchItems.contactId}
+       and c.discarded_at is null
+       and case when c.origen = 'scrapeado'
+                then c.ig_username is null
+                else c.phone_e164 is null
+           end
+  )
+)`
 
 export interface LoteResumen {
   id: string
@@ -20,6 +52,13 @@ export interface LoteResumen {
   /** Se puede deshacer solo si todavía no se le mandó nada a esos contactos. */
   sePuedeDeshacer: boolean
   conMensajes: number
+  /**
+   * Contactos del lote que **no le van a aparecer a ningún setter**: entraron
+   * como cliente propio, y el pozo solo mira los leads scrapeados. Es el error
+   * que no daba ningún error — la lista entraba a la base y no se podía
+   * trabajar— así que el historial lo dice en voz alta.
+   */
+  sinSetter: number
 }
 
 export async function listarImportaciones(limite = 20): Promise<LoteResumen[]> {
@@ -44,6 +83,38 @@ export async function listarImportaciones(limite = 20): Promise<LoteResumen[]> {
 
   const porLote = new Map(conMensajes.map((c) => [c.batchId, c.n]))
 
+  /*
+   * Los que todavía piden revisión, contados ahora. El contador guardado en el
+   * lote dice cuántos lo pedían el día de la importación, que no es lo mismo.
+   */
+  const pendientes = await db
+    .select({ batchId: importBatchItems.batchId, n: sql<number>`count(*)::int` })
+    .from(importBatchItems)
+    .where(
+      and(
+        inArray(importBatchItems.action, ['revisar', 'error']),
+        inArray(importBatchItems.batchId, lotes.map((l) => l.id)),
+        SIGUE_PARA_REVISAR,
+      ),
+    )
+    .groupBy(importBatchItems.batchId)
+
+  const revisarPorLote = new Map(pendientes.map((p) => [p.batchId, p.n]))
+
+  const inertes = await db
+    .select({ batchId: contacts.importBatchId, n: sql<number>`count(*)::int` })
+    .from(contacts)
+    .where(
+      and(
+        inArray(contacts.importBatchId, lotes.map((l) => l.id)),
+        eq(contacts.origen, 'cliente'),
+        sql`${contacts.discardedAt} is null`,
+      ),
+    )
+    .groupBy(contacts.importBatchId)
+
+  const sinSetterPorLote = new Map(inertes.map((i) => [i.batchId, i.n]))
+
   return lotes.map((l) => {
     const n = porLote.get(l.id) ?? 0
     return {
@@ -53,11 +124,12 @@ export async function listarImportaciones(limite = 20): Promise<LoteResumen[]> {
       imported: l.imported,
       updatedRows: l.updatedRows,
       duplicates: l.duplicates,
-      needsReview: l.needsReview,
+      needsReview: revisarPorLote.get(l.id) ?? 0,
       errors: l.errors,
       undoneAt: l.undoneAt,
       createdAt: l.createdAt,
       conMensajes: n,
+      sinSetter: sinSetterPorLote.get(l.id) ?? 0,
       sePuedeDeshacer: l.undoneAt === null && n === 0,
     }
   })
@@ -100,6 +172,7 @@ export async function listarParaRevisar(limite = 500): Promise<FilaParaRevisar[]
       and(
         inArray(importBatchItems.action, ['revisar', 'error']),
         sql`${importBatches.undoneAt} is null`,
+        SIGUE_PARA_REVISAR,
       ),
     )
     .orderBy(desc(importBatchItems.createdAt), importBatchItems.rowNumber)
@@ -118,8 +191,8 @@ export async function listarParaRevisar(limite = 500): Promise<FilaParaRevisar[]
   }))
 }
 
-export async function contarParaRevisar(): Promise<number> {
-  const [row] = await db
+export async function contarParaRevisar(cliente: Db = db): Promise<number> {
+  const [row] = await cliente
     .select({ n: sql<number>`count(*)::int` })
     .from(importBatchItems)
     .innerJoin(importBatches, eq(importBatchItems.batchId, importBatches.id))
@@ -127,6 +200,7 @@ export async function contarParaRevisar(): Promise<number> {
       and(
         inArray(importBatchItems.action, ['revisar', 'error']),
         sql`${importBatches.undoneAt} is null`,
+        SIGUE_PARA_REVISAR,
       ),
     )
   return row?.n ?? 0

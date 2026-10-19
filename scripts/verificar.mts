@@ -140,6 +140,10 @@ async function main(): Promise<void> {
     '/reuniones',
     '/contactos',
     '/importar',
+    // Las dos pestañas del importador: cada una tiene su propia consulta, y la
+    // de revisar es la que mostraba el problema de ayer.
+    '/importar?pestana=revisar',
+    '/importar?pestana=historial',
     '/configuracion/referencias',
     '/actividad',
   ]) {
