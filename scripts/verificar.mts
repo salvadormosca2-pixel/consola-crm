@@ -1,6 +1,10 @@
 import './load-env'
 
 import { Pool } from 'pg'
+import * as XLSX from 'xlsx'
+
+import { adivinarMapeo } from '../src/lib/import/columns'
+import { prepararTodo } from '../src/lib/import/hoja'
 
 /**
  * Verificación de punta a punta contra el servidor de desarrollo.
@@ -470,6 +474,82 @@ async function verificarEscrituras(
       mal('deshacer un envío', 'no se pudo registrar el envío previo')
     }
     await pool.query(`delete from contacts where id = $1`, [tercero.contacto])
+
+    /* ── Importar: una lista de Instagram no va a revisión ──────────────
+       Era el bug: el Excel scrapeado trae una columna de teléfono con
+       cualquier cosa, cada fila se llevaba su aviso y la lista entera
+       aparecía en "Para revisar" aunque el `@usuario` estuviera impecable.  */
+    const ENCABEZADOS = ['negocio', 'contacto', 'telefono', 'instagram', 'rubro', 'ciudad']
+    const marca = `Verificar-${Date.now()}`
+    const hoja = XLSX.utils.aoa_to_sheet([
+      ENCABEZADOS,
+      [`${marca} con IG`, 'Sol', 'no tengo', '@verificaconig', 'peluquería', 'Catamarca'],
+      [`${marca} sin IG`, 'Ana', '3834111111', '', 'kiosco', 'Catamarca'],
+    ])
+    const libro = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(libro, hoja, 'Hoja1')
+    const excel = XLSX.write(libro, { type: 'buffer', bookType: 'xlsx' }) as Buffer
+
+    const mapeo = adivinarMapeo(ENCABEZADOS, [])
+    const { filas: preparadas } = prepararTodo(excel, mapeo)
+
+    const apertura = await accionDeAdmin(await idDeAccion('abrirImportacion'), [
+      'verificar.xlsx',
+      preparadas.length,
+      mapeo,
+    ])
+    const lote = await uno<{ id: string }>(
+      `select id from import_batches where filename = 'verificar.xlsx'
+        order by created_at desc limit 1`,
+    )
+    if (!lote) {
+      mal('abrir la importación', `no quedó el lote: ${apertura.slice(0, 120)}`)
+    } else {
+      bien('abrir la importación', '→ lote creado')
+      await accionDeAdmin(await idDeAccion('importarLote'), [
+        lote.id,
+        preparadas,
+        true,
+        'scrapeado',
+      ])
+
+      const conIg = await uno<{ accion: string; origen: string }>(
+        `select i.action as accion, c.origen
+           from import_batch_items i join contacts c on c.id = i.contact_id
+          where i.batch_id = $1 and c.business_name like $2`,
+        [lote.id, `${marca} con IG%`],
+      )
+      if (conIg?.accion === 'insertado' && conIg.origen === 'scrapeado') {
+        bien('el lead con Instagram entra derecho', '→ insertado, sin pasar por revisión')
+      } else {
+        mal('el lead con Instagram entra derecho', `quedó ${JSON.stringify(conIg)}`)
+      }
+
+      const sinIg = await uno<{ accion: string }>(
+        `select i.action as accion
+           from import_batch_items i join contacts c on c.id = i.contact_id
+          where i.batch_id = $1 and c.business_name like $2`,
+        [lote.id, `${marca} sin IG%`],
+      )
+      if (sinIg?.accion === 'revisar') {
+        bien('el lead sin Instagram sí va a revisión', '→ no lo puede trabajar nadie')
+      } else {
+        mal('el lead sin Instagram sí va a revisión', `quedó ${JSON.stringify(sinIg)}`)
+      }
+
+      /* Y lo que importa de verdad: que le pueda llegar a un setter. */
+      const enElPozo = await uno<{ n: number }>(
+        `select count(*)::int as n from contacts c
+          where c.business_name like $1 and c.origen = 'scrapeado'
+            and c.ig_username is not null and c.stage in ('nuevo', 'encolado')`,
+        [`${marca}%`],
+      )
+      if (enElPozo?.n === 1) bien('el lead importado queda en el pozo', '→ listo para repartir')
+      else mal('el lead importado queda en el pozo', `hay ${enElPozo?.n} en el pozo`)
+
+      await pool.query(`delete from contacts where business_name like $1`, [`${marca}%`])
+      await pool.query(`delete from import_batches where id = $1`, [lote.id])
+    }
 
     /* Clasificar desde el panel: es el botón que más se toca en el día. */
     const cuarto = await leadDePrueba(setterId, 'Clasificar')

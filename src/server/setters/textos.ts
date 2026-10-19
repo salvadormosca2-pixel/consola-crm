@@ -2,8 +2,9 @@ import 'server-only'
 
 import { sql } from 'drizzle-orm'
 
-import { db } from '@/db'
+import { db, type Ejecutor } from '@/db'
 import { esPaso, PASO_META, type Paso } from '@/lib/pistas'
+import { PASOS_VIGENTES } from '@/server/setters/pasos'
 
 /**
  * El texto que el setter copia y pega.
@@ -225,8 +226,8 @@ export interface ColaDeTextos {
  * Los que ya tienen texto escrito también aparecen, abajo de los que no: el
  * texto se puede corregir hasta que sale.
  */
-export async function colaDeTextos(): Promise<ColaDeTextos> {
-  const filas = await db.execute(sql`
+export async function colaDeTextos(cliente: Ejecutor = db): Promise<ColaDeTextos> {
+  const filas = await cliente.execute(sql`
     select la.id, la.contact_id, la.estado, la.nota, la.vence_at,
            la.proximo_seguimiento_at, p.paso,
            c.business_name, c.ig_username, c.niche, c.city, c.contact_name,
@@ -259,6 +260,8 @@ export async function colaDeTextos(): Promise<ColaDeTextos> {
       ) h on true
      where la.estado in ('asignado', 'abierto', 'saltado', 'calificado')
        and (la.estado in ('asignado', 'abierto', 'saltado') or la.proximo_paso is not null)
+       -- Un paso retirado no se puede escribir: esta pantalla no lo ofrece.
+       and p.paso in (${PASOS_VIGENTES})
      order by t.body is not null asc,
               coalesce(la.proximo_seguimiento_at, la.vence_at) asc
      limit 300
@@ -318,8 +321,8 @@ export async function colaDeTextos(): Promise<ColaDeTextos> {
 }
 
 /** Cuántos leads están esperando texto. Para la campana y el tablero. */
-export async function cuantosSinTexto(): Promise<number> {
-  const filas = await db.execute(sql`
+export async function cuantosSinTexto(cliente: Ejecutor = db): Promise<number> {
+  const filas = await cliente.execute(sql`
     select count(*)::int as n
       from lead_assignments la
       cross join lateral (
@@ -328,6 +331,7 @@ export async function cuantosSinTexto(): Promise<number> {
       ) p
      where la.estado in ('asignado', 'abierto', 'saltado', 'calificado')
        and (la.estado in ('asignado', 'abierto', 'saltado') or la.proximo_paso is not null)
+       and p.paso in (${PASOS_VIGENTES})
        and not exists (
          select 1 from lead_textos lt
           where lt.assignment_id = la.id and lt.paso = p.paso

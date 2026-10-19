@@ -18,6 +18,7 @@ import { leerPuertaDeEntrada } from './avisos'
 import { agregarLeadPropio } from './leads'
 import { borrarSetter, vaciarElEquipo } from './borrar'
 import { deshacerEnvio, registrarEnvio } from './envios'
+import { cuantosSinTexto } from './textos'
 import {
   repartirAEsteSetter,
   repartirAhora,
@@ -935,6 +936,38 @@ describe('el cupo frena las aperturas y nada más', () => {
       [a, escalon],
     )
     expect((await marcar(a, setter.setterId, cuenta, escalon)).ok).toBe(true)
+  })
+})
+
+describe('los pasos que salieron del modelo no le piden nada a nadie', () => {
+  /*
+   * Hay leads guardados con un paso que ya no existe: la oferta, la escalera
+   * del tibio, los reintentos de apertura. Nadie puede escribirles el texto
+   * —la pantalla de Textos no ofrece esos pasos— así que si la cola los
+   * contara, el setter los vería bloqueados para siempre y el admin tendría un
+   * número que no se puede bajar.
+   */
+  it('un lead parado en un paso retirado no cuenta como texto pendiente', async () => {
+    const setter = await crearSetter(pool, { cupos: [30] })
+    const a = await asignar(pool, await crearLeadScrapeado(pool, 1), setter.setterId)
+    await marcar(a, setter.setterId, setter.cuentas[0]!, 1)
+
+    // Paso 2: la oferta del modelo viejo. Es lo que dejaban las migraciones.
+    await pool.query(
+      `update lead_assignments
+          set estado = 'calificado', calificado_at = now(), respondido_at = now(),
+              proximo_paso = 2, proximo_seguimiento_at = now() - interval '1 day'
+        where id = $1`,
+      [a],
+    )
+    expect(await cuantosSinTexto(db)).toBe(0)
+
+    // Con un escalón que sí existe, el mismo lead pide su texto.
+    await pool.query(
+      `update lead_assignments set proximo_paso = $2 where id = $1`,
+      [a, ESCALON],
+    )
+    expect(await cuantosSinTexto(db)).toBe(1)
   })
 })
 

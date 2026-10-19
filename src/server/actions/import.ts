@@ -9,7 +9,7 @@ import type { ContactOrigen } from '@/db/enums'
 import { contacts, events, importBatchItems, importBatches, messages } from '@/db/schema'
 import type { EstadoAccion } from '@/lib/form-state'
 import type { FilaPreparada } from '@/lib/import/rows'
-import { canalPreferido } from '@/lib/import/rows'
+import { canalPreferido, necesitaRevision } from '@/lib/import/rows'
 
 /**
  * Persistencia del importador.
@@ -81,7 +81,7 @@ export async function importarLote(
   batchId: string,
   filas: FilaPreparada[],
   completarVacios: boolean,
-  origen: ContactOrigen = 'cliente',
+  origen: ContactOrigen = 'scrapeado',
 ): Promise<ResultadoLote> {
   if (filas.length === 0) return { ok: true, resumen: LOTE_VACIO }
 
@@ -142,6 +142,7 @@ export async function importarLote(
       // ── 4. Insertar las nuevas ─────────────────────────────────────────
       for (const fila of nuevas) {
         const avisos = [...fila.avisos]
+        const revisar = necesitaRevision(fila, origen)
 
         const [creado] = await tx
           .insert(contacts)
@@ -165,13 +166,15 @@ export async function importarLote(
           .returning({ id: contacts.id })
 
         resumen.insertados++
-        if (avisos.length > 0) resumen.paraRevisar++
+        if (revisar) resumen.paraRevisar++
 
         await tx.insert(importBatchItems).values({
           batchId,
           rowNumber: fila.rowNumber,
-          action: avisos.length > 0 ? 'revisar' : 'insertado',
+          action: revisar ? 'revisar' : 'insertado',
           contactId: creado?.id ?? null,
+          /* La nota queda igual aunque no haya nada que revisar: "el teléfono
+             no es argentino" es un dato del lead, no una tarea. */
           reason: avisos.length > 0 ? avisos.join(' · ') : null,
           raw: fila.raw,
         })

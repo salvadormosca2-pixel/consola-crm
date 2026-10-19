@@ -46,7 +46,14 @@ export function Importador({ mapeoPrevio }: { mapeoPrevio: Mapeo | null }) {
   const [totalFilas, setTotalFilas] = React.useState(0)
   const [mapeo, setMapeo] = React.useState<Mapeo>({})
   const [completarVacios, setCompletarVacios] = React.useState(true)
-  const [origen, setOrigen] = React.useState<ContactOrigen>('cliente')
+  /*
+   * Arranca en "lead scrapeado" porque es lo que se importa siempre: listas
+   * frías para que las trabaje el equipo por Instagram. Arrancaba en "cliente
+   * propio", y equivocarse no daba ningún error — los contactos entraban a la
+   * base y no le aparecían a ningún setter, que es exactamente lo que parecía
+   * un lead perdido.
+   */
+  const [origen, setOrigen] = React.useState<ContactOrigen>('scrapeado')
   const [progreso, setProgreso] = React.useState({ etapa: '', hechas: 0, total: 0 })
   const [resumen, setResumen] = React.useState<Resumen | null>(null)
   const [error, setError] = React.useState<string | null>(null)
@@ -483,7 +490,7 @@ export function Importador({ mapeoPrevio }: { mapeoPrevio: Mapeo | null }) {
               >
                 <span className="text-[12.5px] font-medium">{ORIGEN_META[o].label}</span>
                 <span className="text-[11px] font-normal opacity-80">
-                  {o === 'scrapeado' ? 'va a la cola de los setters' : 'la trabaja el Despachador'}
+                  {o === 'scrapeado' ? 'va a la cola de los setters' : 'no le aparece a ningún setter'}
                 </span>
               </button>
             ))}

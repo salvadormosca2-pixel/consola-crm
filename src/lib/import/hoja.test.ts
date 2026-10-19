@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 
 import { adivinarMapeo, mapeoCompleto } from './columns'
 import { leerLaHoja, prepararTodo, vistazo } from './hoja'
+import { necesitaRevision } from './rows'
 
 /**
  * El camino que decide si se importa algo o no se importa nada.
@@ -125,6 +126,49 @@ describe('preparar todo', () => {
     expect(filas).toHaveLength(1)
     expect(filas[0]?.descartada).toBe(true)
     expect(filas[0]?.avisos.join(' ')).toMatch(/canal/i)
+  })
+
+  it('un lead de Instagram con el teléfono roto NO va a revisión', () => {
+    /*
+     * Es el caso que llenaba la pestaña Revisar con leads perfectos: la lista
+     * scrapeada trae una columna de teléfono con cualquier cosa adentro, cada
+     * fila se lleva su aviso y entraba entera a "Para revisar" aunque el
+     * `@usuario` —lo único que el equipo usa— estuviera impecable.
+     */
+    const buffer = conFilas(['Rueda Libre', '', 'no tengo', '@ruedalibre', 'concesionaria', 'Cat'])
+    const { filas } = prepararTodo(buffer, adivinarMapeo(ENCABEZADOS, []))
+    const f = filas[0]!
+
+    // El aviso queda escrito: es un dato del lead, no una tarea.
+    expect(f.avisos.join(' ')).toMatch(/tel/i)
+    expect(f.descartada).toBe(false)
+    expect(necesitaRevision(f, 'scrapeado')).toBe(false)
+
+    // La misma fila sí hay que mirarla si la lista es para el Despachador:
+    // ahí el canal es el teléfono y no lo tiene.
+    expect(necesitaRevision(f, 'cliente')).toBe(true)
+  })
+
+  it('sin Instagram, un lead scrapeado sí va a revisión', () => {
+    const buffer = conFilas(['Solo Tel', 'Ana', '3834111111', '', 'concesionaria', 'Catamarca'])
+    const { filas } = prepararTodo(buffer, adivinarMapeo(ENCABEZADOS, []))
+    const f = filas[0]!
+
+    // No hay nada que avisar —el teléfono está bien— pero por Instagram no se
+    // lo puede trabajar, así que alguien tiene que mirarlo.
+    expect(f.avisos).toHaveLength(0)
+    expect(necesitaRevision(f, 'scrapeado')).toBe(true)
+    expect(necesitaRevision(f, 'cliente')).toBe(false)
+  })
+
+  it('la fila descartada va a revisión con cualquier origen', () => {
+    const buffer = conFilas(['Sin Nada', 'Carlos', 'no tengo', '', 'concesionaria', 'Catamarca'])
+    const { filas } = prepararTodo(buffer, adivinarMapeo(ENCABEZADOS, []))
+    const f = filas[0]!
+
+    expect(f.descartada).toBe(true)
+    expect(necesitaRevision(f, 'scrapeado')).toBe(true)
+    expect(necesitaRevision(f, 'cliente')).toBe(true)
   })
 
   it('fusiona las filas repetidas del archivo en vez de duplicarlas', () => {

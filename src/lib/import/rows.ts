@@ -56,6 +56,34 @@ function leer(fila: string[], mapeo: Mapeo, campo: Campo): string | null {
 }
 
 /**
+ * Si una fila necesita que la mire una persona.
+ *
+ * **No alcanza con que haya un aviso.** Antes era así, y el resultado era que
+ * una lista perfecta de Instagram entraba entera a "Para revisar": basta con
+ * que el Excel traiga una columna de teléfono con cualquier cosa adentro —o un
+ * número que no sea argentino— para que cada fila se lleve su aviso, aunque el
+ * `@usuario` esté impecable y sea lo único que el equipo va a usar.
+ *
+ * Lo que de verdad hay que revisar es la fila que **no se puede trabajar**: la
+ * que no tiene el canal por el que se la va a contactar, y eso depende de para
+ * quién es la lista.
+ *
+ *   · lead scrapeado → lo trabaja un setter por Instagram: sin `@usuario` no
+ *     entra al pozo y no le aparece a nadie.
+ *   · cliente propio → se lo contacta por teléfono: sin número válido, igual.
+ *
+ * Todo lo demás es una nota: queda escrita en el detalle de la fila y no le
+ * pide nada a nadie.
+ */
+export function necesitaRevision(
+  fila: Pick<FilaPreparada, 'igUsername' | 'phoneE164' | 'descartada'>,
+  origen: 'scrapeado' | 'cliente',
+): boolean {
+  if (fila.descartada) return true
+  return origen === 'scrapeado' ? fila.igUsername === null : fila.phoneE164 === null
+}
+
+/**
  * Prepara una fila. `rowNumber` es 1-based contando el encabezado, así que la
  * primera fila de datos es la 2, igual que en Excel.
  */

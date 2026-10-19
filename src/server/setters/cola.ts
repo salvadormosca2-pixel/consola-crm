@@ -10,6 +10,7 @@ import { seccionDePaso, type Seccion } from '@/lib/pistas'
 import { barrer } from '@/server/setters/asignacion'
 import { motivoSinLeads, repartoAutomaticoDelDia } from '@/server/setters/reparto'
 import { leerCupoDeSetter, PASOS_CON_CUPO, type CupoDeSetter } from '@/server/setters/cupo'
+import { PASOS_VIGENTES } from '@/server/setters/pasos'
 import { elegirTexto, leerTextos, linksDeInstagram } from '@/server/setters/textos'
 
 /**
@@ -178,6 +179,9 @@ export async function armarColaDelSetter(setterId: string): Promise<ColaDelSette
          -- O nunca recibió nada y le toca el primer mensaje.
          or la.estado in ('asignado', 'abierto', 'saltado')
        )
+       -- Nunca un paso que ya salió del modelo: no tiene texto posible y el
+       -- lead quedaría bloqueado en la pantalla para siempre.
+       and coalesce(la.proximo_paso, 1) in (${PASOS_VIGENTES})
      order by
        -- **Primero, todo lo de la cuenta con la que está trabajando.**
        -- Cambiar de cuenta en Instagram desde el celular es lento; si la cola
