@@ -261,7 +261,10 @@ export interface ColaDeTextos {
  * texto se puede corregir hasta que sale.
  */
 export async function colaDeTextos(cliente: Ejecutor = db): Promise<ColaDeTextos> {
-  const cfg = await leerConfigSetters()
+  /* La configuración se lee con el mismo cliente que las filas: en los tests la
+     base de datos es otra, y pedirla con el global apunta a una que no tiene
+     ni el esquema aplicado. */
+  const cfg = await leerConfigSetters(cliente)
   const filas = await cliente.execute(sql`
     select la.id, la.contact_id, la.estado, la.nota, la.vence_at,
            la.proximo_seguimiento_at, p.paso,
@@ -369,7 +372,7 @@ export async function colaDeTextos(cliente: Ejecutor = db): Promise<ColaDeTextos
  * que tienen general salen igual.
  */
 export async function cuantosSinTexto(cliente: Ejecutor = db): Promise<number> {
-  const cfg = await leerConfigSetters()
+  const cfg = await leerConfigSetters(cliente)
 
   /* Los pasos que ya tienen un texto general no bloquean a nadie. Si todos lo
      tienen, no hace falta ni mirar la tabla. */
