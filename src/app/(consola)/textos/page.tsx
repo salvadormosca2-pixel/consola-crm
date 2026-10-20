@@ -17,10 +17,14 @@ export const dynamic = 'force-dynamic'
  * formulario de configuración sino una cola de trabajo que se vacía todos los
  * días.
  *
- * Lo que la ordena es la urgencia: arriba los que no tienen nada escrito, y
- * entre esos, el que está más cerca de vencer o el que tiene el seguimiento
- * más atrasado. Un lead sin texto es un lead parado: el setter lo ve en el
- * celular bloqueado y no puede hacer nada hasta que alguien lo escriba.
+ * Arriba están los mensajes **generales**, uno por paso: son los que salen
+ * cuando el lead no tiene uno propio, y son los que hacen que el equipo pueda
+ * trabajar desde el minuto cero. Abajo, la cola de los leads, ordenada por
+ * urgencia: el que está más cerca de vencer y el que tiene el seguimiento más
+ * atrasado van primero.
+ *
+ * Un lead sin texto propio **y** sin general es el único que está parado: el
+ * setter lo ve bloqueado en el celular y no puede hacer nada.
  */
 export default async function PaginaTextos() {
   await requerirAdmin()

@@ -6,8 +6,10 @@ import { z } from 'zod'
 
 import { db } from '@/db'
 import type { EstadoAccion } from '@/lib/form-state'
-import { PASOS } from '@/lib/pistas'
+import { PASOS, PASOS_DE_PISTA } from '@/lib/pistas'
+import { SETTERS_CONFIG_KEY } from '@/lib/setters-config'
 import { ErrorDePermiso, exigirAdmin } from '@/server/session'
+import { leerConfigSetters } from '@/server/setters/config'
 
 /**
  * Escribir el mensaje de un lead.
@@ -79,5 +81,65 @@ export async function guardarTexto(datos: unknown): Promise<EstadoAccion> {
     if (err instanceof ErrorDePermiso) return { ok: false, error: err.message }
     console.error('No se pudo guardar el texto del lead.', err)
     return { ok: false, error: 'No se pudo guardar el texto.' }
+  }
+}
+
+/* ── El texto general de un paso ─────────────────────────────────────────── */
+
+const generalSchema = z.object({
+  paso: z
+    .number()
+    .int()
+    .refine((n) => (PASOS_DE_PISTA as readonly number[]).includes(n), 'Ese paso no existe.'),
+  /** Vacío borra el general: a partir de ahí el paso vuelve a exigir uno propio. */
+  body: z.string().trim().max(2000),
+})
+
+/**
+ * El mensaje que sale cuando el lead no tiene uno escrito para él.
+ *
+ * Es el que destraba la cola. Con el texto obligatoriamente propio, cuarenta
+ * leads nuevos son cuarenta mensajes que alguien tiene que escribir antes de
+ * que el equipo pueda mandar el primero, y mientras eso no pasa la app del
+ * setter está bloqueada entera.
+ *
+ * Guardarlo vacío lo borra, y ese paso vuelve a pedir un texto propio lead por
+ * lead. Es a propósito: es la forma de volver al modo anterior sin tocar nada.
+ */
+export async function guardarTextoGeneral(datos: unknown): Promise<EstadoAccion> {
+  try {
+    const sesion = await exigirAdmin()
+    const parsed = generalSchema.safeParse(datos)
+    if (!parsed.success) {
+      return { ok: false, error: parsed.error.issues[0]?.message ?? 'Revisá los datos.' }
+    }
+    const { paso, body } = parsed.data
+
+    const actual = await leerConfigSetters()
+    const textoPorPaso = { ...actual.textoPorPaso }
+    if (body.length > 0) textoPorPaso[String(paso)] = body
+    else delete textoPorPaso[String(paso)]
+
+    await db.execute(sql`
+      insert into settings (key, value_jsonb, updated_at)
+      values (${SETTERS_CONFIG_KEY}, ${JSON.stringify({ ...actual, textoPorPaso })}::jsonb, now())
+      on conflict (key) do update
+        set value_jsonb = excluded.value_jsonb, updated_at = now()
+    `)
+
+    await db.execute(sql`
+      insert into events (type, actor_user_id, payload_jsonb)
+      values ('texto_escrito', ${sesion.userId}::uuid,
+              ${JSON.stringify({ paso, general: true, borrado: body.length === 0 })}::jsonb)
+    `)
+
+    revalidatePath('/textos')
+    revalidatePath('/seguimientos')
+    revalidatePath('/hoy')
+    return { ok: true, error: null }
+  } catch (err) {
+    if (err instanceof ErrorDePermiso) return { ok: false, error: err.message }
+    console.error('No se pudo guardar el texto general.', err)
+    return { ok: false, error: 'No se pudo guardar el texto general.' }
   }
 }

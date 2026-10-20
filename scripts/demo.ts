@@ -532,6 +532,27 @@ async function cargarSetters(): Promise<void> {
   // la corrida anterior, la pantalla de Actividad contaría el doble.
   await pool.query(`delete from events where actor_user_id is null and contact_id is null`)
 
+  /* ── El mensaje general de entrada ───────────────────────────────────
+     Es el que sale cuando el lead no tiene uno propio. Sin esto la demo
+     abre con la cola del setter bloqueada entera, que no es lo que hay que
+     mostrar: lo normal es tener el general escrito y el texto propio solo
+     en los leads que valen la pena.                                      */
+
+  await pool.query(
+    `insert into settings (key, value_jsonb, updated_at)
+     values ('setters', $1::jsonb, now())
+     on conflict (key) do update
+       set value_jsonb = jsonb_set(coalesce(settings.value_jsonb, '{}'::jsonb),
+                                   '{textoPorPaso}', $2::jsonb, true),
+           updated_at = now()`,
+    [
+      JSON.stringify({
+        textoPorPaso: { '1': 'Hola! Vi tu perfil y quería hacerte una consulta. ¿Estás?' },
+      }),
+      JSON.stringify({ '1': 'Hola! Vi tu perfil y quería hacerte una consulta. ¿Estás?' }),
+    ],
+  )
+
   /* ── Los textos de cada lead ────────────────────────────────────────────
      Ya no hay plantillas: el mensaje lo escribe el admin lead por lead, en la
      pantalla de Textos. Acá se escriben solos al final de la carga —ver

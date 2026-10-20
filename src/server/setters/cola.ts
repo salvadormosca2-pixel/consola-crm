@@ -8,6 +8,7 @@ import type { PasoDeSeguimiento } from '@/lib/setters-config'
 import { opsDate, OPS_TZ } from '@/lib/tz'
 import { seccionDePaso, type Seccion } from '@/lib/pistas'
 import { barrer } from '@/server/setters/asignacion'
+import { leerConfigSetters } from '@/server/setters/config'
 import { motivoSinLeads, repartoAutomaticoDelDia } from '@/server/setters/reparto'
 import { leerCupoDeSetter, PASOS_CON_CUPO, type CupoDeSetter } from '@/server/setters/cupo'
 import { PASOS_VIGENTES } from '@/server/setters/pasos'
@@ -161,7 +162,7 @@ export async function armarColaDelSetter(setterId: string): Promise<ColaDelSette
   await barrer()
   await repartoAutomaticoDelDia()
 
-  const cupo = await leerCupoDeSetter(setterId)
+  const [cupo, cfg] = await Promise.all([leerCupoDeSetter(setterId), leerConfigSetters()])
 
   const filas = await db.execute(sql`
     select la.id, la.contact_id, la.estado, la.vence_at, la.abierto_at,
@@ -228,7 +229,7 @@ export async function armarColaDelSetter(setterId: string): Promise<ColaDelSette
     // tocar y le toca el primer mensaje.
     const paso: PasoDeSeguimiento = leToca ? ((f.proximo_paso ?? 1) as PasoDeSeguimiento) : 1
 
-    const armado = elegirTexto(textos.get(f.id), paso)
+    const armado = elegirTexto(textos.get(f.id), paso, cfg)
 
     const vence = new Date(f.vence_at)
 

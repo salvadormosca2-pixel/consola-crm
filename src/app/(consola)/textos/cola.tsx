@@ -10,7 +10,7 @@ import { EmptyState } from '@/components/ui/empty-state'
 import { Chip, Panel, PanelHeader } from '@/components/ui/panel'
 import { formatCorto } from '@/lib/tz'
 import { cn } from '@/lib/utils'
-import { guardarTexto } from '@/server/actions/textos'
+import { guardarTexto, guardarTextoGeneral } from '@/server/actions/textos'
 import type { ColaDeTextos, LeadEsperandoTexto } from '@/server/setters/textos'
 
 /**
@@ -29,20 +29,24 @@ export function Cola({ cola }: { cola: ColaDeTextos }) {
       <div>
         <h1 className="text-[22px]">Textos</h1>
         <p className="mt-1 max-w-[760px] text-[13px] leading-relaxed text-texto-2">
-          El mensaje de cada lead, escrito a mano. No hay plantillas: lo que escribas acá es
-          exactamente lo que el setter copia y pega. Mientras un lead no tenga su texto, en el
-          celular aparece bloqueado y no se puede mandar nada.
+          Hay dos niveles y el de arriba gana: el mensaje que escribís para{' '}
+          <strong className="font-medium text-texto">ese</strong> lead, y si no tiene, el{' '}
+          <strong className="font-medium text-texto">general</strong> del paso. Lo que salga es
+          exactamente lo que el setter copia y pega.
         </p>
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        {cola.sinEscribir > 0 ? (
-          <Chip tono="negativo">{cola.sinEscribir} sin escribir</Chip>
+        {cola.bloqueados > 0 ? (
+          <Chip tono="negativo">{cola.bloqueados} bloqueados</Chip>
         ) : (
-          <Chip tono="positivo">No falta ninguno</Chip>
+          <Chip tono="positivo">Ninguno bloqueado</Chip>
         )}
+        <Chip>{cola.sinEscribir} sin texto propio</Chip>
         <Chip>{total} en total</Chip>
       </div>
+
+      <Generales generales={cola.generales} />
 
       <Seccion
         titulo="Primer mensaje"
@@ -57,6 +61,88 @@ export function Cola({ cola }: { cola: ColaDeTextos }) {
         leads={cola.seguimiento}
         vacio="No hay seguimientos para escribir."
       />
+    </div>
+  )
+}
+
+/**
+ * Los mensajes generales, uno por paso.
+ *
+ * Es lo primero de la pantalla porque es lo que destraba todo: con el de
+ * entrada escrito, el equipo puede mandar desde el minuto cero y los textos
+ * propios pasan a ser lo que son — una mejora para el lead que vale la pena,
+ * no un peaje para los mil que entraron hoy.
+ *
+ * Son texto plano, sin variables. El mismo para todos: el que quiera nombrar
+ * al negocio se escribe lead por lead, abajo.
+ */
+function Generales({ generales }: { generales: ColaDeTextos['generales'] }) {
+  return (
+    <Panel>
+      <PanelHeader
+        titulo="Mensajes generales"
+        descripcion="El que sale cuando el lead no tiene uno propio. Si lo dejás vacío, ese paso exige escribirle a cada lead."
+      />
+      <div className="divide-y divide-borde">
+        {generales.map((g) => (
+          <General key={g.paso} general={g} />
+        ))}
+      </div>
+    </Panel>
+  )
+}
+
+function General({ general }: { general: ColaDeTextos['generales'][number] }) {
+  const router = useRouter()
+  const [texto, setTexto] = React.useState(general.body ?? '')
+  const [pendiente, iniciar] = React.useTransition()
+
+  const cambiado = texto.trim() !== (general.body ?? '').trim()
+
+  function guardar(): void {
+    iniciar(async () => {
+      const r = await guardarTextoGeneral({ paso: general.paso, body: texto })
+      if (r.ok) {
+        toast.success(
+          texto.trim().length > 0
+            ? `Listo: "${general.label}" ya tiene su mensaje general.`
+            : `"${general.label}" vuelve a exigir un texto por lead.`,
+        )
+        router.refresh()
+      } else toast.error(r.error ?? 'No se pudo guardar.')
+    })
+  }
+
+  return (
+    <div className="px-4 py-3">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <span className="text-[13.5px] text-texto">{general.label}</span>
+        {general.body ? (
+          <Chip tono="positivo">escrito</Chip>
+        ) : (
+          <Chip tono="negativo">sin escribir</Chip>
+        )}
+      </div>
+      <p className="mt-0.5 text-[12px] leading-relaxed text-texto-2">{general.cuando}</p>
+
+      <textarea
+        value={texto}
+        onChange={(e) => setTexto(e.target.value)}
+        rows={3}
+        maxLength={2000}
+        placeholder={
+          general.paso === 1
+            ? 'Ej: Hola! Vi tu perfil, quería hacerte una consulta. ¿Estás?'
+            : 'Dejalo vacío si este paso lo querés escribir lead por lead.'
+        }
+        className="mt-2 w-full resize-y rounded-[6px] border border-borde bg-fondo px-3 py-2 text-[13px] leading-relaxed text-texto outline-none placeholder:text-texto-2 focus:border-acento"
+      />
+      <div className="mt-1.5 flex items-center justify-between gap-2">
+        <span className="dato text-[11.5px] text-texto-2">{texto.trim().length} caracteres</span>
+        <Button size="sm" disabled={pendiente || !cambiado} onClick={guardar}>
+          Guardar
+        </Button>
+      </div>
     </div>
   )
 }
@@ -96,6 +182,7 @@ function Ficha({ lead }: { lead: LeadEsperandoTexto }) {
   const [pendiente, iniciar] = React.useTransition()
 
   const sinEscribir = lead.body === null
+  const bloqueado = sinEscribir && lead.general === null
   const cambiado = texto.trim() !== (lead.body ?? '').trim()
 
   function guardar(): void {
@@ -113,7 +200,7 @@ function Ficha({ lead }: { lead: LeadEsperandoTexto }) {
   }
 
   return (
-    <Panel className={sinEscribir ? 'border-rojo/40' : undefined}>
+    <Panel className={bloqueado ? 'border-rojo/40' : undefined}>
       <PanelHeader
         titulo={
           <span className="flex flex-wrap items-center gap-2">
@@ -127,7 +214,13 @@ function Ficha({ lead }: { lead: LeadEsperandoTexto }) {
           lead.cuando ? ` · ${formatCorto(lead.cuando)}` : ''
         }`}
         acciones={
-          sinEscribir ? <Chip tono="negativo">Falta</Chip> : <Chip tono="positivo">Escrito</Chip>
+          bloqueado ? (
+            <Chip tono="negativo">Bloqueado</Chip>
+          ) : sinEscribir ? (
+            <Chip>Sale el general</Chip>
+          ) : (
+            <Chip tono="positivo">Propio</Chip>
+          )
         }
       />
 
@@ -170,6 +263,16 @@ function Ficha({ lead }: { lead: LeadEsperandoTexto }) {
           }
           className="w-full resize-y rounded-[6px] border border-borde bg-fondo px-3 py-2 text-[13px] leading-relaxed text-texto outline-none placeholder:text-texto-2 focus:border-acento"
         />
+        {/* Qué va a pasar si se deja vacío. Sin esto no se sabe si el campo en
+            blanco significa "no sale nada" o "sale el de siempre". */}
+        {sinEscribir ? (
+          <p className="text-[11.5px] leading-relaxed text-texto-2">
+            {lead.general === null
+              ? 'Sin texto propio y sin general: este lead está bloqueado en el celular.'
+              : `Si lo dejás vacío sale el general: "${lead.general}"`}
+          </p>
+        ) : null}
+
         <div className="flex items-center justify-between gap-2">
           <span className="dato text-[11.5px] text-texto-2">{texto.trim().length} caracteres</span>
           <Button
@@ -177,7 +280,7 @@ function Ficha({ lead }: { lead: LeadEsperandoTexto }) {
             disabled={pendiente || !cambiado || texto.trim().length === 0}
             onClick={guardar}
           >
-            {sinEscribir ? 'Guardar' : 'Guardar cambios'}
+            {sinEscribir ? 'Escribirle uno propio' : 'Guardar cambios'}
           </Button>
         </div>
       </div>

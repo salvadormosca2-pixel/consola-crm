@@ -3,7 +3,9 @@ import 'server-only'
 import { sql } from 'drizzle-orm'
 
 import { db, type Ejecutor } from '@/db'
-import { esPaso, PASO_META, type Paso } from '@/lib/pistas'
+import { esPaso, PASO_META, PASOS_DE_PISTA, type Paso } from '@/lib/pistas'
+import { textoPorDefecto, type SettersConfig } from '@/lib/setters-config'
+import { leerConfigSetters } from '@/server/setters/config'
 import { PASOS_VIGENTES } from '@/server/setters/pasos'
 
 /**
@@ -19,11 +21,15 @@ import { PASOS_VIGENTES } from '@/server/setters/pasos'
  * conteste. Escribirlos uno por uno cuesta tiempo del admin, y ese es el precio
  * que se decidió pagar.
  *
- * **Sin texto no sale nada.** El lead aparece en la cola del setter bloqueado,
- * con el motivo a la vista, y del otro lado aparece en la pantalla de Textos
- * esperando que alguien lo escriba. Nunca se completa ni se sugiere nada: un
- * mensaje a medias mandado desde la cuenta personal de alguien no se puede
- * deshacer.
+ * **Dos niveles, y el de arriba gana:** el texto escrito para ese lead, y si no
+ * tiene, el general de su paso (en la configuración). Con los dos vacíos el
+ * lead aparece bloqueado en la cola del setter, con el motivo a la vista.
+ *
+ * El general existe porque sin él nadie podía mandar nada hasta que el admin
+ * escribiera un mensaje por cada lead: con cuarenta leads nuevos por día, eso
+ * es la operación entera parada. Lo que no vuelve son las plantillas con
+ * `{{negocio}}`: el general es texto plano, igual para todos, y lo que diga
+ * algo de ese negocio se escribe lead por lead.
  */
 
 export interface TextoDeLead {
@@ -77,11 +83,15 @@ export async function leerTextos(
 }
 
 export type MensajeArmado =
-  | { ok: true; texto: string }
+  | { ok: true; texto: string; propio: boolean }
   | { ok: false; motivo: string }
 
 /**
  * El texto de un lead en un paso, o por qué no se puede mandar.
+ *
+ * **Dos niveles, y el de arriba gana:** el que se escribió para ese lead, y si
+ * no tiene, el de por defecto de su paso. Sin ninguno de los dos el lead queda
+ * bloqueado, porque nunca sale un mensaje que nadie escribió.
  *
  * El motivo se escribe pensando en el setter, que es quien lo lee en el
  * celular y no puede resolverlo: lo único que puede hacer es saltear el lead y
@@ -90,15 +100,18 @@ export type MensajeArmado =
 export function elegirTexto(
   textos: Map<number, TextoDeLead> | undefined,
   paso: Paso,
+  cfg: SettersConfig,
 ): MensajeArmado {
-  const texto = textos?.get(paso)
-  if (!texto) {
-    return {
-      ok: false,
-      motivo: `Falta el texto de "${PASO_META[paso].label}" para este lead. Lo está escribiendo el admin.`,
-    }
+  const propio = textos?.get(paso)
+  if (propio) return { ok: true, texto: propio.body, propio: true }
+
+  const general = textoPorDefecto(cfg, paso)
+  if (general) return { ok: true, texto: general, propio: false }
+
+  return {
+    ok: false,
+    motivo: `Todavía no hay texto para "${PASO_META[paso].label}": ni el de este lead ni el general.`,
   }
-  return { ok: true, texto: texto.body }
 }
 
 /**
@@ -109,7 +122,7 @@ export function elegirTexto(
  * después de que el admin lo reescribió.
  */
 export type MensajeDeAsignacion =
-  | { ok: true; texto: string; contactId: string; paso: Paso }
+  | { ok: true; texto: string; contactId: string; paso: Paso; propio: boolean }
   | { ok: false; motivo: string }
 
 export async function mensajeDeAsignacion(
@@ -154,14 +167,22 @@ export async function mensajeDeAsignacion(
   const crudo = leToca ? (f.proximo_paso ?? 1) : 1
   const paso: Paso = esPaso(crudo) ? crudo : 1
 
-  if (f.body === null) {
-    return {
-      ok: false,
-      motivo: `Falta el texto de "${PASO_META[paso].label}" para este lead. Lo está escribiendo el admin.`,
-    }
+  if (f.body !== null) {
+    return { ok: true, texto: f.body, contactId: f.contact_id, paso, propio: true }
   }
 
-  return { ok: true, texto: f.body, contactId: f.contact_id, paso }
+  /* Sin texto propio sale el general del paso, que es lo que destraba la cola
+     cuando hay cuarenta leads nuevos y nadie llegó a escribirles uno a uno. */
+  const cfg = await leerConfigSetters()
+  const general = textoPorDefecto(cfg, paso)
+  if (general) {
+    return { ok: true, texto: general, contactId: f.contact_id, paso, propio: false }
+  }
+
+  return {
+    ok: false,
+    motivo: `Todavía no hay texto para "${PASO_META[paso].label}": ni el de este lead ni el general.`,
+  }
 }
 
 /**
@@ -196,6 +217,12 @@ export interface LeadEsperandoTexto {
   pasoLabel: string
   /** El texto que ya está escrito, si lo hay. Se abre para editarlo. */
   body: string | null
+  /**
+   * El general de ese paso, que es lo que va a salir si no se le escribe uno
+   * propio. Se muestra debajo del campo: sin eso, el admin no sabe si dejar la
+   * fila vacía significa "no sale nada" o "sale el de siempre".
+   */
+  general: string | null
   /** Lo que anotó el setter al calificarlo. Es con lo que se escribe. */
   nota: string | null
   /** Cuándo le toca salir. En el primer mensaje, cuándo vence el lead. */
@@ -209,8 +236,15 @@ export interface ColaDeTextos {
   primerMensaje: LeadEsperandoTexto[]
   /** Leads calificados a los que les toca un escalón del seguimiento. */
   seguimiento: LeadEsperandoTexto[]
-  /** Cuántos de los de arriba no tienen una sola letra escrita. */
+  /** Cuántos no tienen un texto propio. Les va a salir el general. */
   sinEscribir: number
+  /**
+   * Cuántos están **bloqueados**: sin texto propio y sin general. Son los
+   * únicos que el setter no puede mandar, así que son los que importan.
+   */
+  bloqueados: number
+  /** Los textos generales de cada paso, para poder escribirlos en la pantalla. */
+  generales: Array<{ paso: Paso; label: string; body: string | null; cuando: string }>
 }
 
 /**
@@ -227,6 +261,7 @@ export interface ColaDeTextos {
  * texto se puede corregir hasta que sale.
  */
 export async function colaDeTextos(cliente: Ejecutor = db): Promise<ColaDeTextos> {
+  const cfg = await leerConfigSetters()
   const filas = await cliente.execute(sql`
     select la.id, la.contact_id, la.estado, la.nota, la.vence_at,
            la.proximo_seguimiento_at, p.paso,
@@ -298,6 +333,7 @@ export async function colaDeTextos(cliente: Ejecutor = db): Promise<ColaDeTextos
       paso,
       pasoLabel: PASO_META[paso].label,
       body: f.body,
+      general: textoPorDefecto(cfg, paso),
       nota: f.nota,
       cuando: f.proximo_seguimiento_at
         ? new Date(f.proximo_seguimiento_at)
@@ -317,11 +353,34 @@ export async function colaDeTextos(cliente: Ejecutor = db): Promise<ColaDeTextos
     primerMensaje: leads.filter((l) => l.esPrimero),
     seguimiento: leads.filter((l) => !l.esPrimero),
     sinEscribir: leads.filter((l) => l.body === null).length,
+    bloqueados: leads.filter((l) => l.body === null && l.general === null).length,
+    generales: PASOS_DE_PISTA.map((paso) => ({
+      paso,
+      label: PASO_META[paso].label,
+      cuando: PASO_META[paso].cuando,
+      body: textoPorDefecto(cfg, paso),
+    })),
   }
 }
 
-/** Cuántos leads están esperando texto. Para la campana y el tablero. */
+/**
+ * Cuántos leads están **bloqueados**: sin texto propio y sin uno general para
+ * su paso. Es el número del tablero, y es el único que exige una acción: los
+ * que tienen general salen igual.
+ */
 export async function cuantosSinTexto(cliente: Ejecutor = db): Promise<number> {
+  const cfg = await leerConfigSetters()
+
+  /* Los pasos que ya tienen un texto general no bloquean a nadie. Si todos lo
+     tienen, no hace falta ni mirar la tabla. */
+  const conGeneral = PASOS_DE_PISTA.filter((p) => textoPorDefecto(cfg, p) !== null)
+  if (conGeneral.length === PASOS_DE_PISTA.length) return 0
+
+  const lista = sql.join(
+    conGeneral.map((p) => sql`${p}`),
+    sql`, `,
+  )
+
   const filas = await cliente.execute(sql`
     select count(*)::int as n
       from lead_assignments la
@@ -332,6 +391,7 @@ export async function cuantosSinTexto(cliente: Ejecutor = db): Promise<number> {
      where la.estado in ('asignado', 'abierto', 'saltado', 'calificado')
        and (la.estado in ('asignado', 'abierto', 'saltado') or la.proximo_paso is not null)
        and p.paso in (${PASOS_VIGENTES})
+       ${conGeneral.length > 0 ? sql`and p.paso not in (${lista})` : sql``}
        and not exists (
          select 1 from lead_textos lt
           where lt.assignment_id = la.id and lt.paso = p.paso

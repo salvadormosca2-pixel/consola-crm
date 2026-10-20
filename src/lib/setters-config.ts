@@ -46,6 +46,27 @@ export const settersConfigSchema = z.object({
    */
   diasPorPaso: z.record(z.string(), z.number().int().min(0).max(120)).default({}),
 
+  /**
+   * El texto que sale cuando ese lead no tiene uno escrito para él, por paso.
+   *
+   * Es la vuelta de atrás a una decisión que en la práctica no se podía
+   * sostener: con el texto obligatoriamente propio, nadie podía mandar nada
+   * hasta que el admin escribiera un mensaje por cada lead, uno por uno. Con
+   * cuarenta leads nuevos por día eso es el cuello de botella de toda la
+   * operación, y el equipo entero mira la cola bloqueada.
+   *
+   * Así que hay dos niveles y el de arriba gana:
+   *
+   *   1. el texto escrito para **ese** lead, en `lead_textos`;
+   *   2. si no tiene, el de por defecto de su paso, que está acá.
+   *
+   * Lo que no vuelve son las plantillas con `{{negocio}}` adentro: esto es un
+   * texto plano, igual para todos, y el que quiera decir algo del negocio se
+   * escribe lead por lead. Sin un texto acá y sin uno propio, el lead sigue
+   * bloqueado: nunca sale un mensaje que nadie escribió.
+   */
+  textoPorPaso: z.record(z.string(), z.string().trim().max(2000)).default({}),
+
   /* ── Del modelo viejo, antes de las pistas ──────────────────────────
      Ya no encadenan nada: los días salen de `diasPorPaso`. Se dejan en el
      esquema porque están guardados en `settings` y sacarlos haría fallar el
@@ -169,6 +190,17 @@ export function diasDelPaso(cfg: SettersConfig, paso: Paso): number {
   const guardado = cfg.diasPorPaso[String(paso)]
   if (typeof guardado === 'number') return guardado
   return ubicacionDePaso(paso)?.paso.diasDefault ?? 0
+}
+
+/**
+ * El texto por defecto de un paso, o null si no hay ninguno escrito.
+ *
+ * Null y cadena vacía son lo mismo acá: un texto en blanco no se manda.
+ */
+export function textoPorDefecto(cfg: SettersConfig, paso: Paso): string | null {
+  const guardado = cfg.textoPorPaso[String(paso)]
+  const limpio = typeof guardado === 'string' ? guardado.trim() : ''
+  return limpio.length > 0 ? limpio : null
 }
 
 /** Los días de todos los escalones, para pintar el panel de una. */

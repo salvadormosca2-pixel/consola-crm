@@ -141,8 +141,10 @@ export async function listarMisLeads(
 
   /*
    * Los textos de todas las filas, de un viaje: uno por lead, y pedirlos de a
-   * uno sería una consulta por fila.
+   * uno sería una consulta por fila. La configuración trae los generales, que
+   * son los que salen cuando el lead no tiene uno propio.
    */
+  const cfg = await leerConfigSetters()
   const textos = await leerTextos(
     (filas.rows as Array<{ id: string }>).map((f) => f.id),
   )
@@ -200,7 +202,7 @@ export async function listarMisLeads(
           ? 1
           : null
 
-      const armado = paso === null ? null : elegirTexto(textos.get(f.id), paso)
+      const armado = paso === null ? null : elegirTexto(textos.get(f.id), paso, cfg)
 
       return {
         assignmentId: f.id,

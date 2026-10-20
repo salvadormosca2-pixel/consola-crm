@@ -2,6 +2,7 @@ import type { Pool } from 'pg'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import { PISTA_META } from '@/lib/pistas'
+import { settersConfigSchema } from '@/lib/setters-config'
 import type { PasoDeSeguimiento } from '@/lib/setters-config'
 import {
   asignar,
@@ -19,7 +20,7 @@ import { agregarLeadPropio } from './leads'
 import { borrarSetter, vaciarElEquipo } from './borrar'
 import { deshacerEnvio, registrarEnvio } from './envios'
 import { contarParaRevisar } from '../imports'
-import { cuantosSinTexto } from './textos'
+import { cuantosSinTexto, elegirTexto } from './textos'
 import {
   repartirAEsteSetter,
   repartirAhora,
@@ -937,6 +938,70 @@ describe('el cupo frena las aperturas y nada más', () => {
       [a, escalon],
     )
     expect((await marcar(a, setter.setterId, cuenta, escalon)).ok).toBe(true)
+  })
+})
+
+describe('el texto general destraba la cola', () => {
+  /*
+   * Con el texto obligatoriamente propio, mil leads nuevos eran mil mensajes
+   * que alguien tenía que escribir antes de que el equipo pudiera mandar el
+   * primero: la app del setter quedaba bloqueada entera. El general es el que
+   * sale cuando el lead no tiene uno propio.
+   */
+  const SIN_GENERAL = settersConfigSchema.parse({})
+  const CON_GENERAL = settersConfigSchema.parse({
+    textoPorPaso: { '1': 'Hola! Vi tu perfil, quería hacerte una consulta.' },
+  })
+
+  it('el propio le gana al general', () => {
+    const propios = new Map([
+      [1, { assignmentId: 'x', paso: 1 as const, body: 'Hola Peluquería Sol!', escritoAt: new Date() }],
+    ])
+    const r = elegirTexto(propios, 1, CON_GENERAL)
+    expect(r.ok).toBe(true)
+    if (r.ok) {
+      expect(r.texto).toBe('Hola Peluquería Sol!')
+      expect(r.propio).toBe(true)
+    }
+  })
+
+  it('sin propio sale el general, y queda dicho que no es propio', () => {
+    const r = elegirTexto(undefined, 1, CON_GENERAL)
+    expect(r.ok).toBe(true)
+    if (r.ok) {
+      expect(r.texto).toBe('Hola! Vi tu perfil, quería hacerte una consulta.')
+      expect(r.propio).toBe(false)
+    }
+  })
+
+  it('sin propio y sin general, el lead queda bloqueado', () => {
+    // Nunca sale un mensaje que nadie escribió.
+    const r = elegirTexto(undefined, 1, SIN_GENERAL)
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.motivo).toMatch(/ni el de este lead ni el general/i)
+  })
+
+  it('un general vacío no cuenta como texto', () => {
+    const cfg = settersConfigSchema.parse({ textoPorPaso: { '1': '   ' } })
+    expect(elegirTexto(undefined, 1, cfg).ok).toBe(false)
+  })
+
+  it('el tablero solo cuenta como pendiente al que no tiene ninguno de los dos', async () => {
+    const setter = await crearSetter(pool, { cupos: [30] })
+    await asignar(pool, await crearLeadScrapeado(pool, 1), setter.setterId)
+
+    // Sin general escrito, ese lead está bloqueado y hay que avisar.
+    expect(await cuantosSinTexto(db)).toBe(1)
+
+    await pool.query(
+      `insert into settings (key, value_jsonb, updated_at)
+       values ('setters', $1::jsonb, now())
+       on conflict (key) do update set value_jsonb = excluded.value_jsonb, updated_at = now()`,
+      [JSON.stringify({ textoPorPaso: { '1': 'Hola! ¿Estás?' } })],
+    )
+
+    // Con el general escrito deja de ser un pendiente: sale igual.
+    expect(await cuantosSinTexto(db)).toBe(0)
   })
 })
 

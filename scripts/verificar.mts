@@ -281,17 +281,23 @@ async function verificarEscrituras(
     else mal('abrir el chat', 'no quedó registrada la hora de apertura')
 
     /*
-     * El texto del primer mensaje. Va antes del envío a propósito: sin texto
-     * escrito el lead está bloqueado y "Enviado" tiene que rebotar, que es
-     * justamente la regla nueva.
+     * Sin ningún texto —ni propio ni general— no se puede mandar. Se borra el
+     * general a propósito para probar justo eso, y se repone unas líneas más
+     * abajo.
      */
+    await accionDeAdmin(await idDeAccion('guardarTextoGeneral'), [{ paso: 1, body: '' }])
     const sinTexto = await accion(await idDeAccion('marcarEnviado'), [id])
     const quedoSinMandar = await uno<{ n: number }>(
       `select count(*)::int as n from setter_sends where assignment_id = $1`,
       [id],
     )
-    if (quedoSinMandar?.n === 0) bien('sin texto escrito no se puede mandar', '→ rebotó')
-    else mal('sin texto escrito no se puede mandar', `se mandó igual: ${sinTexto.slice(0, 80)}`)
+    if (quedoSinMandar?.n === 0) bien('sin ningún texto no se puede mandar', '→ rebotó')
+    else mal('sin ningún texto no se puede mandar', `se mandó igual: ${sinTexto.slice(0, 80)}`)
+
+    /* Con el general escrito, el mismo lead ya se puede mandar: es lo que
+       destraba la cola cuando entran mil leads de una. */
+    const GENERAL = 'Hola! Vi tu perfil y quería hacerte una consulta. ¿Estás?'
+    await accionDeAdmin(await idDeAccion('guardarTextoGeneral'), [{ paso: 1, body: GENERAL }])
 
     await accionDeAdmin(await idDeAccion('guardarTexto'), [
       { assignmentId: id, paso: 1, body: 'Hola! Te escribo por tu negocio, ¿tenés un minuto?' },
@@ -450,11 +456,22 @@ async function verificarEscrituras(
 
     /* Deshacer: libera el cupo sin borrar el rastro. */
     const tercero = await leadDePrueba(setterId, 'Deshacer')
-    await accionDeAdmin(await idDeAccion('guardarTexto'), [
-      { assignmentId: tercero.asignacion, paso: 1, body: 'Hola! Una consulta rápida.' },
-    ])
+    // Este no tiene texto propio: sale el general, y de paso se comprueba que
+    // lo que se manda es exactamente ese texto.
     await accion(await idDeAccion('abrirChat'), [tercero.asignacion])
     await accion(await idDeAccion('marcarEnviado'), [tercero.asignacion])
+
+    const salioElGeneral = await uno<{ body: string }>(
+      `select m.body from messages m
+         join setter_sends ss on ss.message_id = m.id
+        where ss.assignment_id = $1`,
+      [tercero.asignacion],
+    )
+    if (salioElGeneral?.body === GENERAL) {
+      bien('sin texto propio sale el general', `→ "${GENERAL.slice(0, 40)}…"`)
+    } else {
+      mal('sin texto propio sale el general', `salió ${JSON.stringify(salioElGeneral)}`)
+    }
     const envio = await uno<{ id: string }>(
       `select id from setter_sends where assignment_id = $1 and undone_at is null`,
       [tercero.asignacion],
