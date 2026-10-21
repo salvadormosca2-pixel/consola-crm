@@ -128,8 +128,10 @@ export type MensajeDeAsignacion =
 export async function mensajeDeAsignacion(
   assignmentId: string,
   setterId: string,
+  /** Se inyecta en los tests, que corren contra otra base. */
+  cliente: Ejecutor = db,
 ): Promise<MensajeDeAsignacion> {
-  const filas = await db.execute(sql`
+  const filas = await cliente.execute(sql`
     select la.contact_id, la.proximo_paso, la.proximo_seguimiento_at,
            t.body
       from lead_assignments la
@@ -173,16 +175,24 @@ export async function mensajeDeAsignacion(
 
   /* Sin texto propio sale el general del paso, que es lo que destraba la cola
      cuando hay cuarenta leads nuevos y nadie llegó a escribirles uno a uno. */
-  const cfg = await leerConfigSetters()
+  const cfg = await leerConfigSetters(cliente)
   const general = textoPorDefecto(cfg, paso)
   if (general) {
     return { ok: true, texto: general, contactId: f.contact_id, paso, propio: false }
   }
 
-  return {
-    ok: false,
-    motivo: `Todavía no hay texto para "${PASO_META[paso].label}": ni el de este lead ni el general.`,
-  }
+  /*
+   * Sin texto propio y sin general, el envío se registra igual con el cuerpo
+   * vacío. Antes esto devolvía un error y el resultado era el peor de los dos
+   * mundos: el setter abría el chat, le hablaba con sus palabras, tocaba
+   * "Enviado" y la app le contestaba que no había texto. El mensaje ya estaba
+   * mandado en Instagram y el lead quedaba sin registrar.
+   *
+   * `elegirTexto` —el que arma la pantalla— sigue devolviendo "no hay": la
+   * tarjeta tiene que poder decir que ese lead no tiene guion. Lo que ya no
+   * hace es frenar el envío.
+   */
+  return { ok: true, texto: '', contactId: f.contact_id, paso, propio: false }
 }
 
 /**
@@ -291,7 +301,10 @@ export async function colaDeTextos(cliente: Ejecutor = db): Promise<ColaDeTextos
         select jsonb_agg(x order by x.sent_at asc) as hilo from (
           select m.direction, m.body, coalesce(m.sent_at, m.created_at) as sent_at
             from messages m
+           -- Un envío sin guion deja el cuerpo vacío: en el hilo sería un
+           -- globo en blanco, y no hay nada que leer ahí.
            where m.contact_id = c.id and m.undone_at is null
+             and coalesce(m.body, '') <> ''
            order by coalesce(m.sent_at, m.created_at) desc
            limit 4
         ) x

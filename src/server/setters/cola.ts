@@ -72,10 +72,12 @@ export interface ItemDeCola {
   horasRestantes: number
   /** Días de atraso del segundo mensaje. 0 si le toca hoy. */
   diasAtraso: number
-  /** El texto que escribió el admin para este lead y este paso. */
+  /**
+   * El texto que escribió el admin para este lead y este paso, o null si no
+   * hay ninguno. Null no frena nada: la tarjeta lo dice y el setter le escribe
+   * con sus palabras.
+   */
   mensaje: string | null
-  /** Por qué no se puede mandar. Casi siempre: todavía no está escrito. */
-  motivoBloqueo: string | null
   linkDirecto: string
   linkRespaldo: string
 }
@@ -254,7 +256,6 @@ export async function armarColaDelSetter(setterId: string): Promise<ColaDelSette
         ? Math.max(Math.floor((ahora - programado.getTime()) / 86_400_000), 0)
         : 0,
       mensaje: armado.ok ? armado.texto : null,
-      motivoBloqueo: armado.ok ? null : armado.motivo,
       ...linksDeInstagram(f.ig_username),
     })
   }

@@ -20,7 +20,7 @@ import { agregarLeadPropio } from './leads'
 import { borrarSetter, vaciarElEquipo } from './borrar'
 import { deshacerEnvio, registrarEnvio } from './envios'
 import { contarParaRevisar } from '../imports'
-import { cuantosSinTexto, elegirTexto } from './textos'
+import { cuantosSinTexto, elegirTexto, mensajeDeAsignacion } from './textos'
 import {
   repartirAEsteSetter,
   repartirAhora,
@@ -974,11 +974,42 @@ describe('el texto general destraba la cola', () => {
     }
   })
 
-  it('sin propio y sin general, el lead queda bloqueado', () => {
-    // Nunca sale un mensaje que nadie escribió.
+  it('sin propio y sin general no hay guion que mostrar', () => {
+    /*
+     * Nunca sale un mensaje que nadie escribió: la tarjeta no inventa un
+     * texto. Pero eso es todo lo que significa — que no haya guion no frena
+     * ni abrir el chat ni marcar el envío, que es lo que prueba el test de
+     * abajo.
+     */
     const r = elegirTexto(undefined, 1, SIN_GENERAL)
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.motivo).toMatch(/ni el de este lead ni el general/i)
+  })
+
+  it('sin ningún texto escrito, el envío se registra igual y con el cuerpo vacío', async () => {
+    /*
+     * El setter abre el chat, le habla con sus palabras y marca "Enviado". Antes
+     * el servidor le contestaba que no había texto: el mensaje ya estaba mandado
+     * en Instagram y el lead se quedaba sin registrar en la app.
+     */
+    const setter = await crearSetter(pool, { cupos: [30] })
+    const assignmentId = await asignar(pool, await crearLeadScrapeado(pool, 1), setter.setterId)
+
+    const r = await mensajeDeAsignacion(assignmentId, setter.setterId, db)
+    expect(r.ok).toBe(true)
+    if (r.ok) {
+      expect(r.texto).toBe('')
+      expect(r.paso).toBe(1)
+    }
+  })
+
+  it('el lead de otro sigue sin dar mensaje', async () => {
+    const mio = await crearSetter(pool, { cupos: [30] })
+    const ajeno = await crearSetter(pool, { cupos: [30] })
+    const assignmentId = await asignar(pool, await crearLeadScrapeado(pool, 2), mio.setterId)
+
+    const r = await mensajeDeAsignacion(assignmentId, ajeno.setterId, db)
+    expect(r.ok).toBe(false)
   })
 
   it('un general vacío no cuenta como texto', () => {

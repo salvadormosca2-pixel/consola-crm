@@ -207,8 +207,6 @@ export function Cola({
 
   const abrir = React.useCallback(
     (item: ItemDeCola) => {
-      if (!item.mensaje) return
-
       /*
        * Esto corre **dentro** del toque sobre el enlace y sin cancelarlo: la
        * navegación a Instagram sigue su camino sola. Es a propósito, porque el
@@ -216,14 +214,23 @@ export function Cola({
        * sobre un enlace de verdad; abrirlo desde acá con código lo dejaba en
        * el navegador.
        *
-       * No existe forma de precargar el texto de un DM de Instagram, así que
-       * el portapapeles es el camino, y el copiado tiene que pasar acá: una
-       * vez que la pantalla cambió de app ya no se puede escribir en él.
+       * Si hay un guion escrito se copia, porque no existe forma de precargar
+       * el texto de un DM de Instagram y el portapapeles es el único camino; el
+       * copiado tiene que pasar acá, que una vez que la pantalla cambió de app
+       * ya no se puede escribir en él.
+       *
+       * Y si no hay guion, se abre igual. Antes la función cortaba en la
+       * primera línea cuando el texto faltaba: no copiaba —lógico— pero
+       * tampoco registraba la apertura, así que el lead se quedaba sin forma
+       * de marcarse. Hablarle no depende de que alguien le haya escrito un
+       * mensaje antes.
        */
-      void copiarAlPortapapeles(item.mensaje).then((ok) => {
-        if (ok) toast.success('Mensaje copiado — pegá con mantener presionado')
-        else toast.error('No se pudo copiar. Mantené presionado el mensaje y copialo a mano.')
-      })
+      if (item.mensaje) {
+        void copiarAlPortapapeles(item.mensaje).then((ok) => {
+          if (ok) toast.success('Mensaje copiado — pegá con mantener presionado')
+          else toast.error('No se pudo copiar. Mantené presionado el mensaje y copialo a mano.')
+        })
+      }
 
       setAbiertos((s) => new Set(s).add(item.assignmentId))
       void abrirChat(item.assignmentId)
@@ -732,7 +739,15 @@ function TarjetaDeLead({
    * desconocidos, que es justo al revés de lo que conviene.
    */
   const sinCupoEnSuCuenta = item.cuentaSinCupo && item.seccion === 'apertura'
-  const bloqueado = item.mensaje === null || sinCupoEnSuCuenta
+
+  /*
+   * Que nadie le haya escrito un guion no frena nada. Es un dato de la
+   * tarjeta, no un candado: se abre el chat y se le habla con las palabras que
+   * salgan. Lo único que frena es el tope de la cuenta, que es un límite de
+   * Instagram y no una tarea pendiente nuestra.
+   */
+  const sinTexto = item.mensaje === null
+  const bloqueado = sinCupoEnSuCuenta
   const habilitado = (abierto || item.abierto) && !sinCupoEnSuCuenta
 
   /*
@@ -807,11 +822,12 @@ function TarjetaDeLead({
               El seguimiento tiene que salir de ahí, así que no sirve cambiar de cuenta.
             </p>
           </div>
-        ) : bloqueado ? (
-          <div className="mt-3 rounded-[5px] border border-rojo/35 bg-rojo-tenue px-2.5 py-2">
-            <p className="text-[13px] font-medium text-rojo">Todavía no tiene mensaje</p>
+        ) : sinTexto ? (
+          <div className="mt-3 rounded-[5px] border border-borde bg-fondo px-2.5 py-2">
+            <p className="text-[13px] font-medium text-texto">Sin mensaje escrito</p>
             <p className="mt-0.5 text-[12.5px] leading-relaxed text-texto-2">
-              {item.motivoBloqueo} Ya le figura en su lista: salteálo y seguí con el que sigue.
+              Abrile el chat y escribile con tus palabras. Cuando el mensaje salga, marcá
+              &quot;Enviado&quot; igual que siempre.
             </p>
           </div>
         ) : (
@@ -844,28 +860,24 @@ function TarjetaDeLead({
               ¿Tiene historia subida? Respondele la historia.
             </p>
             <p className="mt-0.5 text-[12px] leading-relaxed text-texto-2">
-              Pegá este mismo mensaje ahí. Un mensaje suelto le cae en solicitudes y capaz no lo
-              ve nunca; una respuesta a la historia le llega a la bandeja y la abre.
+              {sinTexto ? 'Escribile ahí.' : 'Pegá este mismo mensaje ahí.'} Un mensaje suelto le
+              cae en solicitudes y capaz no lo ve nunca; una respuesta a la historia le llega a la
+              bandeja y la abre.
             </p>
           </div>
         ) : null}
 
         {/*
-          El enlace está siempre, también cuando el lead todavía no tiene
-          mensaje o la cuenta llegó a su tope. Esconderlo dejaba al setter sin
-          forma de abrirle el chat justo cuando quería hablarle, que es lo único
-          que de verdad se puede hacer desde acá.
-
-          Lo que cambia es qué hace el toque: con el lead bloqueado no copia
-          nada ni marca el chat como abierto, así que "Enviado" sigue trabado
-          hasta que haya texto o hasta mañana. Abrir Instagram y decir que el
-          mensaje salió son dos cosas distintas.
+          El enlace está siempre y siempre hace lo mismo: registra que abriste
+          el chat —que es lo que después habilita "Enviado"— y copia el guion si
+          lo hay. Antes no se dibujaba cuando el lead no tenía mensaje escrito,
+          que es justo cuando más se lo busca.
         */}
         <AbrirInstagram
           link={item.linkDirecto}
-          onAbrir={bloqueado ? undefined : onAbrir}
+          onAbrir={onAbrir}
           bloqueado={!listo}
-          variant={habilitado || bloqueado ? 'secundaria' : 'primaria'}
+          variant={habilitado ? 'secundaria' : 'primaria'}
           className="h-12 w-full text-[14px]"
         >
           <ExternalLink aria-hidden />
