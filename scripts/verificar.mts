@@ -226,22 +226,38 @@ async function verificarEscrituras(
 ): Promise<void> {
   console.log('\nEscrituras: se toca la pantalla, se mira la base')
 
-  // Un lead descartable, para no tocar los de la demostración.
-  const contacto = await uno<{ id: string }>(
-    `insert into contacts (business_name, ig_username, has_instagram, niche, city,
-                           origen, preferred_channel, score, dedupe_key, stage)
-     values ('Verificación', $1, true, 'consultoría', 'Catamarca', 'scrapeado',
-             'instagram', 50, $2, 'nuevo')
-     returning id`,
-    [`verificacion${Date.now()}`, `ig:verificacion${Date.now()}`],
-  )
-  const asignacion = await uno<{ id: string }>(
-    `insert into lead_assignments (contact_id, setter_id, estado, asignado_at, vence_at)
-     values ($1, $2, 'asignado', now(), now() + interval '40 hours')
-     returning id`,
-    [contacto!.id, setterId],
-  )
-  const id = asignacion!.id
+  // Leads descartables, para no tocar los de la demostración.
+  const nuevoLead = async (
+    sufijo: string,
+  ): Promise<{ contactoId: string; asignacionId: string }> => {
+    const marca = `verificacion${sufijo}${Date.now()}`
+    const contacto = await uno<{ id: string }>(
+      `insert into contacts (business_name, ig_username, has_instagram, niche, city,
+                             origen, preferred_channel, score, dedupe_key, stage)
+       values ('Verificación', $1, true, 'consultoría', 'Catamarca', 'scrapeado',
+               'instagram', 50, $2, 'nuevo')
+       returning id`,
+      [marca, `ig:${marca}`],
+    )
+    const asignacion = await uno<{ id: string }>(
+      `insert into lead_assignments (contact_id, setter_id, estado, asignado_at, vence_at)
+       values ($1, $2, 'asignado', now(), now() + interval '40 hours')
+       returning id`,
+      [contacto!.id, setterId],
+    )
+    return { contactoId: contacto!.id, asignacionId: asignacion!.id }
+  }
+
+  const principal = await nuevoLead('')
+  const contacto = { id: principal.contactoId }
+  const id = principal.asignacionId
+
+  /*
+   * El del envío sin guion va aparte: ese lead queda contactado, y si fuera el
+   * mismo, el camino de abajo —escribir el primer mensaje, mandarlo, calificar—
+   * arrancaría desde el lugar equivocado.
+   */
+  const pelado = await nuevoLead('pelado')
 
   const accion = async (nombre: string, datos: unknown[]): Promise<unknown> => {
     const r = await fetch(`${BASE}/mis-leads`, {
@@ -281,18 +297,32 @@ async function verificarEscrituras(
     else mal('abrir el chat', 'no quedó registrada la hora de apertura')
 
     /*
-     * Sin ningún texto —ni propio ni general— no se puede mandar. Se borra el
-     * general a propósito para probar justo eso, y se repone unas líneas más
-     * abajo.
+     * Sin ningún texto —ni propio ni general— el envío se registra igual, con el
+     * cuerpo vacío: el setter abre el chat, le habla con sus palabras y marca
+     * "Enviado". Se borra el general a propósito para probar justo eso, y se
+     * repone unas líneas más abajo.
+     *
+     * Antes esto rebotaba, y era el peor de los dos mundos: el mensaje mandado
+     * en Instagram y el lead sin registrar en la app.
      */
     await accionDeAdmin(await idDeAccion('guardarTextoGeneral'), [{ paso: 1, body: '' }])
-    const sinTexto = await accion(await idDeAccion('marcarEnviado'), [id])
-    const quedoSinMandar = await uno<{ n: number }>(
-      `select count(*)::int as n from setter_sends where assignment_id = $1`,
-      [id],
+    await accion(await idDeAccion('abrirChat'), [pelado.asignacionId])
+    const sinTexto = await accion(await idDeAccion('marcarEnviado'), [pelado.asignacionId])
+    const peladoMandado = await uno<{ estado: string; envios: number; body: string | null }>(
+      `select la.estado,
+              (select count(*)::int from setter_sends ss
+                where ss.assignment_id = la.id and ss.undone_at is null) as envios,
+              (select m.body from messages m
+                where m.contact_id = la.contact_id and m.direction = 'out'
+                order by coalesce(m.sent_at, m.created_at) desc limit 1) as body
+         from lead_assignments la where la.id = $1`,
+      [pelado.asignacionId],
     )
-    if (quedoSinMandar?.n === 0) bien('sin ningún texto no se puede mandar', '→ rebotó')
-    else mal('sin ningún texto no se puede mandar', `se mandó igual: ${sinTexto.slice(0, 80)}`)
+    if (peladoMandado?.envios === 1 && peladoMandado.estado === 'contactado') {
+      bien('sin ningún texto se manda igual', `→ contactado, cuerpo "${peladoMandado.body ?? ''}"`)
+    } else {
+      mal('sin ningún texto se manda igual', `rebotó: ${sinTexto.slice(0, 80)}`)
+    }
 
     /* Con el general escrito, el mismo lead ya se puede mandar: es lo que
        destraba la cola cuando entran mil leads de una. */
@@ -381,7 +411,7 @@ async function verificarEscrituras(
     ])
     const reunion = await uno<{ n: number }>(
       `select count(*)::int as n from meetings where contact_id = $1`,
-      [contacto!.id],
+      [contacto.id],
     )
     if (reunion?.n === 1) bien('agendar reunión', '→ guardada')
     else mal('agendar reunión', `hay ${reunion?.n} reuniones, tendría que haber 1`)
@@ -391,7 +421,7 @@ async function verificarEscrituras(
     /* El registro de actividad tiene que haber anotado todo esto. */
     const rastro = await uno<{ n: number }>(
       `select count(*)::int as n from events where contact_id = $1`,
-      [contacto!.id],
+      [contacto.id],
     )
     if ((rastro?.n ?? 0) >= 4) bien('quedó rastro en Actividad', `→ ${rastro!.n} eventos`)
     else mal('quedó rastro en Actividad', `solo ${rastro?.n} eventos para todo el recorrido`)
@@ -735,8 +765,10 @@ async function verificarEscrituras(
       }
     }
   } finally {
-    // El lead de prueba se va entero: eventos, envíos, reuniones y contacto.
-    await pool.query(`delete from contacts where id = $1`, [contacto!.id])
+    // Los leads de prueba se van enteros: eventos, envíos, reuniones y contacto.
+    await pool.query(`delete from contacts where id = any($1::uuid[])`, [
+      [contacto.id, pelado.contactoId],
+    ])
   }
 }
 
