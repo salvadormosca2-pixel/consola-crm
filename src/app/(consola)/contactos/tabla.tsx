@@ -2,9 +2,10 @@
 
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { toast } from 'sonner'
-import { Instagram, MessageCircle, Search, X } from 'lucide-react'
+import { ExternalLink, Instagram, MessageCircle, Search, X } from 'lucide-react'
 import * as React from 'react'
 
+import { AbrirInstagram } from '@/components/setter/abrir-instagram'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Chip, Panel } from '@/components/ui/panel'
@@ -311,7 +312,18 @@ function Ficha({ contacto, onCerrar }: { contacto: FilaContacto; onCerrar: () =>
           <span className="dato">{formatearTelefono(contacto.phoneE164)}</span>
         </Dato>
         <Dato rotulo="Instagram">
-          <span className="dato">{contacto.igUsername ? `@${contacto.igUsername}` : '—'}</span>
+          {contacto.igUsername ? (
+            <AbrirInstagram
+              link={`https://ig.me/m/${contacto.igUsername}`}
+              aria-label={`Abrir el chat con ${contacto.businessName} en Instagram`}
+              className="dato inline-flex max-w-full items-center gap-1 text-texto hover:underline"
+            >
+              <span className="truncate">@{contacto.igUsername}</span>
+              <ExternalLink className="h-3 w-3 shrink-0" aria-hidden />
+            </AbrirInstagram>
+          ) : (
+            <span className="dato">—</span>
+          )}
         </Dato>
         <Dato rotulo="Rubro">{contacto.niche ?? '—'}</Dato>
         <Dato rotulo="Ciudad">{contacto.city ?? '—'}</Dato>

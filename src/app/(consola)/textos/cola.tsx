@@ -1,10 +1,11 @@
 'use client'
 
-import { PencilLine } from 'lucide-react'
+import { ExternalLink, PencilLine } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import * as React from 'react'
 import { toast } from 'sonner'
 
+import { AbrirInstagram } from '@/components/setter/abrir-instagram'
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Chip, Panel, PanelHeader } from '@/components/ui/panel'
@@ -205,7 +206,17 @@ function Ficha({ lead }: { lead: LeadEsperandoTexto }) {
         titulo={
           <span className="flex flex-wrap items-center gap-2">
             {lead.negocio}
-            <span className="dato text-[12px] font-normal text-texto-2">@{lead.igUsername}</span>
+            {/* El usuario abre el perfil, que es con lo que se escribe el
+                primer mensaje: antes era texto suelto y había que buscarlo a
+                mano en Instagram. */}
+            <AbrirInstagram
+              link={`https://www.instagram.com/${lead.igUsername}/`}
+              aria-label={`Abrir @${lead.igUsername} en Instagram`}
+              className="dato inline-flex items-center gap-1 text-[12px] font-normal text-texto-2 hover:text-texto hover:underline"
+            >
+              @{lead.igUsername}
+              <ExternalLink className="h-3 w-3 shrink-0" aria-hidden />
+            </AbrirInstagram>
             {lead.rubro ? <Chip>{lead.rubro}</Chip> : null}
             {lead.ciudad ? <Chip>{lead.ciudad}</Chip> : null}
           </span>

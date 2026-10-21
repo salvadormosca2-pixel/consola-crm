@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation'
 import * as React from 'react'
 import { toast } from 'sonner'
 
+import { AbrirInstagram } from '@/components/setter/abrir-instagram'
 import { Button } from '@/components/ui/button'
 import { Chip, Panel, PanelHeader } from '@/components/ui/panel'
 import { Input } from '@/components/ui/input'
@@ -259,7 +260,17 @@ export function VistaDeLeads({
                     {f.businessName}
                   </Link>
                   <span className="dato text-[11.5px] text-texto-2">
-                    {f.igUsername ? `@${f.igUsername}` : 'sin Instagram'}
+                    {f.igUsername ? (
+                      <AbrirInstagram
+                        link={`https://ig.me/m/${f.igUsername}`}
+                        aria-label={`Abrir el chat con ${f.businessName} en Instagram`}
+                        className="hover:text-texto hover:underline"
+                      >
+                        @{f.igUsername}
+                      </AbrirInstagram>
+                    ) : (
+                      'sin Instagram'
+                    )}
                     {f.niche ? ` · ${f.niche}` : ''}
                     {f.city ? ` · ${f.city}` : ''}
                   </span>

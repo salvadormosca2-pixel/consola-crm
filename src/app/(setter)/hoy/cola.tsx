@@ -850,18 +850,27 @@ function TarjetaDeLead({
           </div>
         ) : null}
 
-        {!bloqueado ? (
-          <AbrirInstagram
-            link={item.linkDirecto}
-            onAbrir={onAbrir}
-            bloqueado={!listo}
-            variant={habilitado ? 'secundaria' : 'primaria'}
-            className="h-12 w-full text-[14px]"
-          >
-            <ExternalLink aria-hidden />
-            Abrir Instagram
-          </AbrirInstagram>
-        ) : null}
+        {/*
+          El enlace está siempre, también cuando el lead todavía no tiene
+          mensaje o la cuenta llegó a su tope. Esconderlo dejaba al setter sin
+          forma de abrirle el chat justo cuando quería hablarle, que es lo único
+          que de verdad se puede hacer desde acá.
+
+          Lo que cambia es qué hace el toque: con el lead bloqueado no copia
+          nada ni marca el chat como abierto, así que "Enviado" sigue trabado
+          hasta que haya texto o hasta mañana. Abrir Instagram y decir que el
+          mensaje salió son dos cosas distintas.
+        */}
+        <AbrirInstagram
+          link={item.linkDirecto}
+          onAbrir={bloqueado ? undefined : onAbrir}
+          bloqueado={!listo}
+          variant={habilitado || bloqueado ? 'secundaria' : 'primaria'}
+          className="h-12 w-full text-[14px]"
+        >
+          <ExternalLink aria-hidden />
+          Abrir Instagram
+        </AbrirInstagram>
 
         <div className="flex gap-2">
           <Button
