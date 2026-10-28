@@ -4,7 +4,7 @@ import type { Metadata } from 'next'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Panel } from '@/components/ui/panel'
 import { STAGE_META, type ContactStage } from '@/db/enums'
-import { contarPorEtapa, listarContactos, opcionesDeFiltro } from '@/server/contacts'
+import { contarPorEtapa, LIMITE_LISTADO, listarContactos, opcionesDeFiltro } from '@/server/contacts'
 
 import { TablaContactos } from './tabla'
 
@@ -56,7 +56,7 @@ export default async function PaginaContactos() {
         <div>
           <h1 className="text-[20px]">Contactos</h1>
           <p className="mt-0.5 text-[12.5px] text-texto-2">
-            {contactos.length.toLocaleString('es-AR')} negocios en tu base.
+            {contactos.length.toLocaleString('es-AR')} negocios en tu base, con los dados de baja.
           </p>
         </div>
 
@@ -86,7 +86,11 @@ export default async function PaginaContactos() {
         </div>
       </div>
 
-      <TablaContactos contactos={contactos} opciones={opciones} />
+      <TablaContactos
+        contactos={contactos}
+        opciones={opciones}
+        truncado={contactos.length >= LIMITE_LISTADO}
+      />
     </div>
   )
 }

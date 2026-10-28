@@ -2,9 +2,16 @@ import 'server-only'
 
 import { and, asc, desc, eq, isNotNull, isNull, sql, type SQL } from 'drizzle-orm'
 
-import { db } from '@/db'
+import { db, type Db } from '@/db'
 import type { ContactStage } from '@/db/enums'
 import { contacts } from '@/db/schema'
+
+/**
+ * Tope de filas que se traen de una. Si la base tiene más, la pantalla avisa
+ * que está viendo un recorte: una lista cortada en silencio es peor que un
+ * aviso, porque parece completa.
+ */
+export const LIMITE_LISTADO = 5000
 
 export async function contarContactos(): Promise<number> {
   const [row] = await db
@@ -32,6 +39,8 @@ export interface FilaContacto {
   lastOutboundAt: Date | null
   lastInboundAt: Date | null
   nextFollowupAt: Date | null
+  /** Si tiene fecha, está dado de baja. Se sigue mostrando, marcado. */
+  discardedAt: Date | null
 }
 
 export interface FiltrosContactos {
@@ -42,7 +51,21 @@ export interface FiltrosContactos {
   ciudad?: string
   respondieron?: 'si' | 'no'
   seguimiento?: 'vencido'
+  /** 'si' = le mandé algo alguna vez, aunque después se haya dado de baja. */
+  contactados?: 'si' | 'no'
+  /** Por defecto vienen todos, de baja o no. */
+  baja?: 'solo' | 'sin'
 }
+
+/**
+ * Qué cuenta como "lo contacté alguna vez".
+ *
+ * `sentCount` es el contador del motor de envío y `lastOutboundAt` la fecha del
+ * último mensaje que salió. Se miran los dos porque un lead que trabajó un
+ * setter a mano por Instagram tiene fecha de salida sin que el contador se
+ * haya movido.
+ */
+const CONTACTADO = sql`(${contacts.sentCount} > 0 or ${contacts.lastOutboundAt} is not null)`
 
 /**
  * Lista de contactos con sus filtros combinables.
@@ -53,9 +76,16 @@ export interface FiltrosContactos {
  */
 export async function listarContactos(
   filtros: FiltrosContactos = {},
-  limite = 5000,
+  limite = LIMITE_LISTADO,
+  cliente: Db = db,
 ): Promise<FilaContacto[]> {
-  const condiciones: SQL[] = [isNull(contacts.discardedAt)]
+  /*
+   * Arranca sin ninguna condición a propósito. Antes esto empezaba con
+   * `isNull(discardedAt)` y la pantalla escondía los dados de baja: un lead
+   * que trabajé y descarté seguía en la base pero no había forma de verlo.
+   * Ahora vienen todos y quien filtra es el que mira.
+   */
+  const condiciones: SQL[] = []
 
   if (filtros.etapa) condiciones.push(sql`${contacts.stage} = ${filtros.etapa}`)
   if (filtros.canal === 'whatsapp') condiciones.push(isNotNull(contacts.phoneE164))
@@ -64,6 +94,10 @@ export async function listarContactos(
   if (filtros.ciudad) condiciones.push(eq(contacts.city, filtros.ciudad))
   if (filtros.respondieron === 'si') condiciones.push(sql`${contacts.receivedCount} > 0`)
   if (filtros.respondieron === 'no') condiciones.push(sql`${contacts.receivedCount} = 0`)
+  if (filtros.contactados === 'si') condiciones.push(CONTACTADO)
+  if (filtros.contactados === 'no') condiciones.push(sql`not (${CONTACTADO})`)
+  if (filtros.baja === 'solo') condiciones.push(isNotNull(contacts.discardedAt))
+  if (filtros.baja === 'sin') condiciones.push(isNull(contacts.discardedAt))
   if (filtros.seguimiento === 'vencido') {
     condiciones.push(sql`${contacts.nextFollowupAt} is not null and ${contacts.nextFollowupAt} <= now()`)
   }
@@ -77,7 +111,7 @@ export async function listarContactos(
     )
   }
 
-  const filas = await db
+  const filas = await cliente
     .select({
       id: contacts.id,
       businessName: contacts.businessName,
@@ -96,9 +130,10 @@ export async function listarContactos(
       lastOutboundAt: contacts.lastOutboundAt,
       lastInboundAt: contacts.lastInboundAt,
       nextFollowupAt: contacts.nextFollowupAt,
+      discardedAt: contacts.discardedAt,
     })
     .from(contacts)
-    .where(and(...condiciones))
+    .where(condiciones.length > 0 ? and(...condiciones) : undefined)
     .orderBy(desc(contacts.score), asc(contacts.businessName))
     .limit(limite)
 
@@ -114,12 +149,12 @@ const [rubros, ciudades] = await Promise.all([
     db
       .selectDistinct({ v: contacts.niche })
       .from(contacts)
-      .where(and(isNotNull(contacts.niche), isNull(contacts.discardedAt)))
+      .where(isNotNull(contacts.niche))
       .orderBy(asc(contacts.niche)),
     db
       .selectDistinct({ v: contacts.city })
       .from(contacts)
-      .where(and(isNotNull(contacts.city), isNull(contacts.discardedAt)))
+      .where(isNotNull(contacts.city))
       .orderBy(asc(contacts.city)),
   ])
 
@@ -129,12 +164,16 @@ const [rubros, ciudades] = await Promise.all([
   }
 }
 
-/** Cuántos contactos hay en cada etapa, para las pastillas de arriba. */
+/**
+ * Cuántos contactos hay en cada etapa, para las pastillas de arriba.
+ *
+ * Cuenta también los dados de baja, porque la tabla de abajo ahora los muestra:
+ * si las pastillas los dejaran afuera, los números no sumarían al total.
+ */
 export async function contarPorEtapa(): Promise<Record<string, number>> {
   const filas = await db
     .select({ stage: contacts.stage, n: sql<number>`count(*)::int` })
     .from(contacts)
-    .where(isNull(contacts.discardedAt))
     .groupBy(contacts.stage)
 
   return Object.fromEntries(filas.map((f) => [f.stage, f.n]))

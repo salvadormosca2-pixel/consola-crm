@@ -2,7 +2,7 @@
 
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { toast } from 'sonner'
-import { ExternalLink, Instagram, MessageCircle, Search, X } from 'lucide-react'
+import { Download, ExternalLink, Instagram, MessageCircle, Search, X } from 'lucide-react'
 import * as React from 'react'
 
 import { AbrirInstagram } from '@/components/setter/abrir-instagram'
@@ -11,7 +11,7 @@ import { Input } from '@/components/ui/input'
 import { Chip, Panel } from '@/components/ui/panel'
 import { STAGE_META, type ContactStage } from '@/db/enums'
 import { formatearTelefono } from '@/lib/phone-ar'
-import { haceCuanto } from '@/lib/tz'
+import { formatCorto, haceCuanto } from '@/lib/tz'
 import { cn } from '@/lib/utils'
 import type { FilaContacto } from '@/server/contacts'
 import { clasificar } from '@/server/actions/contacts'
@@ -25,12 +25,20 @@ interface Opciones {
   ciudades: string[]
 }
 
+/** Le mandé algo alguna vez, aunque después lo haya dado de baja. */
+function contactado(c: FilaContacto): boolean {
+  return c.sentCount > 0 || c.lastOutboundAt !== null
+}
+
 export function TablaContactos({
   contactos,
   opciones,
+  truncado = false,
 }: {
   contactos: FilaContacto[]
   opciones: Opciones
+  /** La base tiene más filas que el tope que se trae de una. */
+  truncado?: boolean
 }) {
   const [busqueda, setBusqueda] = React.useState('')
   const [etapa, setEtapa] = React.useState('')
@@ -38,6 +46,8 @@ export function TablaContactos({
   const [rubro, setRubro] = React.useState('')
   const [ciudad, setCiudad] = React.useState('')
   const [respondieron, setRespondieron] = React.useState('')
+  const [contacto, setContacto] = React.useState('')
+  const [baja, setBaja] = React.useState('')
   const [seleccionado, setSeleccionado] = React.useState<FilaContacto | null>(null)
 
   /*
@@ -55,13 +65,17 @@ export function TablaContactos({
       if (ciudad && c.city !== ciudad) return false
       if (respondieron === 'si' && c.receivedCount === 0) return false
       if (respondieron === 'no' && c.receivedCount > 0) return false
+      if (contacto === 'si' && !contactado(c)) return false
+      if (contacto === 'no' && contactado(c)) return false
+      if (baja === 'solo' && !c.discardedAt) return false
+      if (baja === 'sin' && c.discardedAt) return false
       if (q) {
         const heno = `${c.businessName} ${c.contactName ?? ''} ${c.phoneE164 ?? ''} ${c.igUsername ?? ''}`
         if (!heno.toLowerCase().includes(q)) return false
       }
       return true
     })
-  }, [contactos, busqueda, etapa, canal, rubro, ciudad, respondieron])
+  }, [contactos, busqueda, etapa, canal, rubro, ciudad, respondieron, contacto, baja])
 
   const contenedor = React.useRef<HTMLDivElement>(null)
   const virtual = useVirtualizer({
@@ -71,7 +85,9 @@ export function TablaContactos({
     overscan: 12,
   })
 
-  const hayFiltros = Boolean(busqueda || etapa || canal || rubro || ciudad || respondieron)
+  const hayFiltros = Boolean(
+    busqueda || etapa || canal || rubro || ciudad || respondieron || contacto || baja,
+  )
 
   function limpiar() {
     setBusqueda('')
@@ -80,6 +96,63 @@ export function TablaContactos({
     setRubro('')
     setCiudad('')
     setRespondieron('')
+    setContacto('')
+    setBaja('')
+  }
+
+  /**
+   * Baja lo que está en pantalla, con los filtros puestos. Mismo criterio que
+   * el botón de "Mis leads": lo que exporta es lo que se ve, ni más ni menos.
+   */
+  function exportar(): void {
+    const cabecera = [
+      'negocio',
+      'contacto',
+      'telefono',
+      'instagram',
+      'rubro',
+      'ciudad',
+      'etapa',
+      'score',
+      'enviados',
+      'recibidos',
+      'ultimo_envio',
+      'ultima_respuesta',
+      'contactado',
+      'baja',
+    ]
+    // En una planilla, una celda vacía se lee mejor que el guión de la pantalla.
+    const fecha = (d: Date | null): string => (d ? formatCorto(d) : '')
+    const lineas = filtrados.map((c) =>
+      [
+        c.businessName,
+        c.contactName ?? '',
+        c.phoneE164 ?? '',
+        c.igUsername ?? '',
+        c.niche ?? '',
+        c.city ?? '',
+        STAGE_META[c.stage].label,
+        c.score,
+        c.sentCount,
+        c.receivedCount,
+        fecha(c.lastOutboundAt),
+        fecha(c.lastInboundAt),
+        contactado(c) ? 'si' : 'no',
+        fecha(c.discardedAt),
+      ]
+        .map((v) => `"${String(v).replace(/"/g, '""')}"`)
+        .join(','),
+    )
+
+    const csv = [cabecera.join(','), ...lineas].join('\n')
+    // Con BOM, para que Excel abra los acentos bien sin preguntar nada.
+    const blob = new Blob([`\ufeff${csv}`], { type: 'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `contactos-${new Date().toISOString().slice(0, 10)}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
   }
 
   return (
@@ -135,11 +208,32 @@ export function TablaContactos({
           <option value="no">Sin contestar</option>
         </Selector>
 
+        <Selector valor={contacto} onCambio={setContacto} etiqueta="Contacto">
+          <option value="si">Los que contacté</option>
+          <option value="no">Nunca contactados</option>
+        </Selector>
+
+        <Selector valor={baja} onCambio={setBaja} etiqueta="Baja">
+          <option value="sin">Sin las bajas</option>
+          <option value="solo">Solo las bajas</option>
+        </Selector>
+
         {hayFiltros ? (
           <Button variant="fantasma" size="sm" onClick={limpiar}>
             <X aria-hidden />
             Limpiar
           </Button>
+        ) : null}
+
+        <Button variant="secundaria" size="sm" onClick={exportar} disabled={filtrados.length === 0}>
+          <Download aria-hidden />
+          Exportar
+        </Button>
+
+        {truncado ? (
+          <span className="whitespace-nowrap text-[11.5px] text-ambar">
+            Hay más contactos que el tope que se trae de una: esto es un recorte.
+          </span>
         ) : null}
 
         <span className="dato ml-auto whitespace-nowrap text-[11.5px] text-texto-2">
@@ -160,6 +254,7 @@ export function TablaContactos({
           <Encabezado className="text-right">Env.</Encabezado>
           <Encabezado className="text-right">Rec.</Encabezado>
           <Encabezado>Último</Encabezado>
+          <Encabezado>Estado</Encabezado>
         </div>
 
         {filtrados.length === 0 ? (
@@ -186,6 +281,7 @@ export function TablaContactos({
                     className={cn(
                       'absolute left-0 top-0 grid w-full items-center border-b border-borde/50 text-left',
                       'text-[12.5px] transition-colors duration-150 hover:bg-elevada/50',
+                      c.discardedAt && 'opacity-60',
                       seleccionado?.id === c.id && 'bg-elevada',
                     )}
                     style={{ ...COLUMNAS, height: ALTO, transform: `translateY(${item.start}px)` }}
@@ -219,6 +315,9 @@ export function TablaContactos({
                     </Celda>
                     <Celda className="text-texto-2">
                       {haceCuanto(c.lastInboundAt ?? c.lastOutboundAt)}
+                    </Celda>
+                    <Celda>
+                      {c.discardedAt ? <Chip tono="negativo">Baja</Chip> : null}
                     </Celda>
                   </button>
                 )
@@ -335,6 +434,13 @@ function Ficha({ contacto, onCerrar }: { contacto: FilaContacto; onCerrar: () =>
         </Dato>
         <Dato rotulo="Último movimiento">
           {haceCuanto(contacto.lastInboundAt ?? contacto.lastOutboundAt)}
+        </Dato>
+        <Dato rotulo="Baja">
+          {contacto.discardedAt ? (
+            <Chip tono="negativo">{formatCorto(contacto.discardedAt)}</Chip>
+          ) : (
+            '—'
+          )}
         </Dato>
         <Dato rotulo="Próximo seguimiento">
           {contacto.nextFollowupAt ? haceCuanto(contacto.nextFollowupAt) : '—'}
