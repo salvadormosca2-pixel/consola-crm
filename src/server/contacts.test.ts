@@ -52,6 +52,17 @@ async function crear(opts: {
   )
 }
 
+/** Un mensaje saliente del contacto, como el que deja un envío de setter. */
+async function mensajeSaliente(negocio: string, deshecho = false): Promise<void> {
+  await pool.query(
+    `insert into messages (contact_id, channel, direction, body, status, undone_at)
+     select id, 'instagram', 'out', 'Hola!', 'enviado',
+            case when $2 then now() else null end
+       from contacts where business_name = $1`,
+    [negocio, deshecho],
+  )
+}
+
 const nombres = (filas: Array<{ businessName: string }>): string[] =>
   filas.map((f) => f.businessName).sort()
 
@@ -103,6 +114,32 @@ describe('listarContactos', () => {
     const filas = await listarContactos({ contactados: 'no' }, 5000, db)
 
     expect(nombres(filas)).toEqual(['Nunca'])
+  })
+
+  it('sigue siendo hablado después de vaciar el equipo', async () => {
+    /*
+     * El caso que importa y que los contadores solos no cubren:
+     * `vaciarElEquipo` pone sent_count en 0 y last_outbound_at en null, pero
+     * no borra los mensajes. Sin mirar `messages`, este lead se perdía.
+     */
+    await crear({ negocio: 'Contactado antes del vaciado' })
+    await mensajeSaliente('Contactado antes del vaciado')
+
+    const filas = await listarContactos({ contactados: 'si' }, 5000, db)
+
+    expect(nombres(filas)).toEqual(['Contactado antes del vaciado'])
+  })
+
+  it('un envío deshecho y sin contadores no cuenta como hablado', async () => {
+    // Deshacer sella el mensaje con undone_at en vez de borrarlo.
+    await crear({ negocio: 'Marcado sin querer' })
+    await mensajeSaliente('Marcado sin querer', true)
+
+    const si = await listarContactos({ contactados: 'si' }, 5000, db)
+    const no = await listarContactos({ contactados: 'no' }, 5000, db)
+
+    expect(si).toEqual([])
+    expect(nombres(no)).toEqual(['Marcado sin querer'])
   })
 
   it('encuentra a los que contacté aunque después los haya dado de baja', async () => {

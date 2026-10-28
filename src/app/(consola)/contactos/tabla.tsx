@@ -34,11 +34,18 @@ export function TablaContactos({
   contactos,
   opciones,
   truncado = false,
+  contexto = 'todos',
 }: {
   contactos: FilaContacto[]
   opciones: Opciones
   /** La base tiene más filas que el tope que se trae de una. */
   truncado?: boolean
+  /**
+   * 'hablados' = la pantalla ya viene filtrada por los que contactamos. Se
+   * esconde el desplegable que filtra eso, porque ofrecer "nunca contactados"
+   * en una pantalla que no los tiene es prometer algo que no va a pasar.
+   */
+  contexto?: 'todos' | 'hablados'
 }) {
   const [busqueda, setBusqueda] = React.useState('')
   const [etapa, setEtapa] = React.useState('')
@@ -150,7 +157,8 @@ export function TablaContactos({
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `contactos-${new Date().toISOString().slice(0, 10)}.csv`
+    const dia = new Date().toISOString().slice(0, 10)
+    a.download = contexto === 'hablados' ? `leads-hablados-${dia}.csv` : `contactos-${dia}.csv`
     a.click()
     URL.revokeObjectURL(url)
   }
@@ -208,10 +216,12 @@ export function TablaContactos({
           <option value="no">Sin contestar</option>
         </Selector>
 
-        <Selector valor={contacto} onCambio={setContacto} etiqueta="Contacto">
-          <option value="si">Los que contacté</option>
-          <option value="no">Nunca contactados</option>
-        </Selector>
+        {contexto === 'todos' ? (
+          <Selector valor={contacto} onCambio={setContacto} etiqueta="Hablados">
+            <option value="si">Los que hablamos</option>
+            <option value="no">Los que nunca</option>
+          </Selector>
+        ) : null}
 
         <Selector valor={baja} onCambio={setBaja} etiqueta="Baja">
           <option value="sin">Sin las bajas</option>
@@ -227,7 +237,7 @@ export function TablaContactos({
 
         <Button variant="secundaria" size="sm" onClick={exportar} disabled={filtrados.length === 0}>
           <Download aria-hidden />
-          Exportar
+          Descargar
         </Button>
 
         {truncado ? (

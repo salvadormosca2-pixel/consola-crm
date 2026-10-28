@@ -6,6 +6,7 @@ import {
   History,
   LogOut,
   MessageSquareText,
+  MessagesSquare,
   Repeat,
   Upload,
   UserCog,
@@ -28,6 +29,11 @@ import type { FilaNotificacion } from '@/server/setters/notificaciones'
  * cuando preguntan, y qué hizo cada uno. Todo lo que no responde una pregunta
  * que alguien se hace no está.
  *
+ * Hablados cuelga de Contactos y es su propia sección porque contesta una
+ * pregunta que se hace sola —"¿a quiénes les escribimos alguna vez?"— y que
+ * ninguna otra pantalla contestaba: la de contactos los mezcla con los que
+ * nunca tocamos, y la del equipo solo muestra los asignados a un setter.
+ *
  * Textos y Seguimientos van separadas porque son dos cosas distintas. Textos
  * es el mensaje de cada lead, escrito a mano, y se vacía todos los días;
  * Seguimientos son los días de la escalera, que se tocan una vez cada tanto.
@@ -36,6 +42,7 @@ const SECCIONES = [
   { href: '/equipo', label: 'Equipo', icono: UserCog },
   { href: '/reuniones', label: 'Reuniones', icono: CalendarDays },
   { href: '/contactos', label: 'Contactos', icono: Users },
+  { href: '/contactos/hablados', label: 'Hablados', icono: MessagesSquare },
   { href: '/importar', label: 'Importar', icono: Upload },
   { href: '/textos', label: 'Textos', icono: MessageSquareText },
   { href: '/seguimientos', label: 'Seguimientos', icono: Repeat },

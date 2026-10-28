@@ -4,7 +4,7 @@ import { and, asc, desc, eq, isNotNull, isNull, sql, type SQL } from 'drizzle-or
 
 import { db, type Db } from '@/db'
 import type { ContactStage } from '@/db/enums'
-import { contacts } from '@/db/schema'
+import { contacts, messages } from '@/db/schema'
 
 /**
  * Tope de filas que se traen de una. Si la base tiene más, la pantalla avisa
@@ -58,14 +58,30 @@ export interface FiltrosContactos {
 }
 
 /**
- * Qué cuenta como "lo contacté alguna vez".
+ * Qué cuenta como "le hablamos alguna vez".
  *
- * `sentCount` es el contador del motor de envío y `lastOutboundAt` la fecha del
- * último mensaje que salió. Se miran los dos porque un lead que trabajó un
- * setter a mano por Instagram tiene fecha de salida sin que el contador se
- * haya movido.
+ * Los contadores del contacto son el camino rápido, pero **no alcanzan**:
+ * `vaciarElEquipo` deja en cero `sent_count` y en null `last_outbound_at` de
+ * todos los leads que vuelven al pozo. Un negocio contactado antes de un
+ * vaciado se vería como si nunca le hubiéramos escrito.
+ *
+ * El rastro que sí sobrevive es el mensaje: el vaciado borra `setter_sends`
+ * pero no toca `messages`, y deshacer un envío no borra la fila, la sella con
+ * `undone_at`. Por eso la autoridad acá es "hay un mensaje saliente vigente".
+ *
+ * Los contadores se siguen mirando igual, para que un envío del Despachador
+ * cuente aunque la fila del mensaje no esté, y porque son gratis.
  */
-const CONTACTADO = sql`(${contacts.sentCount} > 0 or ${contacts.lastOutboundAt} is not null)`
+const CONTACTADO = sql`(
+  ${contacts.sentCount} > 0
+  or ${contacts.lastOutboundAt} is not null
+  or exists (
+    select 1 from ${messages}
+     where ${messages.contactId} = ${contacts.id}
+       and ${messages.direction} = 'out'
+       and ${messages.undoneAt} is null
+  )
+)`
 
 /**
  * Lista de contactos con sus filtros combinables.
