@@ -623,6 +623,47 @@ async function verificarEscrituras(
     )
     if (clasificado?.etapa === 'interesado') bien('clasificar desde el panel', '→ interesado')
     else mal('clasificar desde el panel', `quedó en ${clasificado?.etapa}`)
+
+    /*
+     * Tirarlo al pozo de nuevo. Lo que hay que ver no es solo que vuelva a
+     * 'nuevo': es que la asignación anterior quede devuelta, porque si sigue
+     * activa el índice no deja reasignarlo y el lead no lo trabaja nadie más.
+     */
+    const quinto = await leadDePrueba(setterId, 'AlPozo')
+    await pool.query(
+      `update contacts set stage = 'perdido', sent_count = 2, last_outbound_at = now(),
+              discarded_at = now() where id = $1`,
+      [quinto.contacto],
+    )
+    await fetch(`${BASE}/contactos`, {
+      method: 'POST',
+      headers: {
+        cookie: cookiesAdmin,
+        'content-type': 'text/plain;charset=UTF-8',
+        'next-action': await idDeAccion('tirarAlPozo'),
+      },
+      body: JSON.stringify([[quinto.contacto]]),
+    })
+    const vuelto = await uno<{
+      etapa: string
+      enviados: number
+      baja: string | null
+      activas: number
+    }>(
+      `select c.stage as etapa, c.sent_count as enviados, c.discarded_at as baja,
+              (select count(*)::int from lead_assignments la
+                where la.contact_id = c.id and la.estado not in ('vencido', 'devuelto')) as activas
+         from contacts c where c.id = $1`,
+      [quinto.contacto],
+    )
+    if (vuelto?.etapa === 'nuevo' && vuelto.activas === 0 && vuelto.baja === null) {
+      bien('tirar al pozo de nuevo', `→ nuevo, sin asignación activa, y conserva ${vuelto.enviados} enviados`)
+    } else {
+      mal(
+        'tirar al pozo de nuevo',
+        `quedó en ${vuelto?.etapa} con ${vuelto?.activas} asignaciones activas y baja ${vuelto?.baja}`,
+      )
+    }
     await pool.query(`delete from contacts where id = $1`, [cuarto.contacto])
 
     /*

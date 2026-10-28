@@ -1,8 +1,9 @@
 'use client'
 
 import { useVirtualizer } from '@tanstack/react-virtual'
+import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
-import { Download, ExternalLink, Instagram, MessageCircle, Search, X } from 'lucide-react'
+import { Download, ExternalLink, Instagram, MessageCircle, RotateCcw, Search, X } from 'lucide-react'
 import * as React from 'react'
 
 import { AbrirInstagram } from '@/components/setter/abrir-instagram'
@@ -14,7 +15,7 @@ import { formatearTelefono } from '@/lib/phone-ar'
 import { formatCorto, haceCuanto } from '@/lib/tz'
 import { cn } from '@/lib/utils'
 import type { FilaContacto } from '@/server/contacts'
-import { clasificar } from '@/server/actions/contacts'
+import { clasificar, tirarAlPozo } from '@/server/actions/contacts'
 import { BotonContesto } from '@/components/boton-contesto'
 
 /** Alto de fila en píxeles. Fijo, que es lo que permite virtualizar. */
@@ -56,6 +57,9 @@ export function TablaContactos({
   const [contacto, setContacto] = React.useState('')
   const [baja, setBaja] = React.useState('')
   const [seleccionado, setSeleccionado] = React.useState<FilaContacto | null>(null)
+  const [confirmando, setConfirmando] = React.useState(false)
+  const [pendiente, iniciar] = React.useTransition()
+  const router = useRouter()
 
   /*
    * El filtrado pasa en el cliente: con 1.000 contactos el payload es chico y
@@ -92,6 +96,12 @@ export function TablaContactos({
     overscan: 12,
   })
 
+  /*
+   * Si cambian los filtros con la confirmación abierta, lo que dice el cartel
+   * ya no es lo que se iba a mandar: mostraría un número y tocaría otro.
+   */
+  React.useEffect(() => setConfirmando(false), [filtrados])
+
   const hayFiltros = Boolean(
     busqueda || etapa || canal || rubro || ciudad || respondieron || contacto || baja,
   )
@@ -105,6 +115,28 @@ export function TablaContactos({
     setRespondieron('')
     setContacto('')
     setBaja('')
+  }
+
+  /**
+   * Los tira al pozo para hablarlos de nuevo: vuelven a 'nuevo' y entran en el
+   * próximo reparto. Opera sobre lo que está en pantalla, igual que Descargar,
+   * así que el filtro es la selección.
+   */
+  function alPozo(): void {
+    const ids = filtrados.map((c) => c.id)
+    iniciar(async () => {
+      const r = await tirarAlPozo(ids)
+      setConfirmando(false)
+      if (!r.ok) {
+        toast.error(r.error ?? 'No se pudieron tirar al pozo.')
+        return
+      }
+      const partes = [`${r.tirados} al pozo`]
+      if (r.revividos > 0) partes.push(`${r.revividos} estaban de baja`)
+      if (r.saltados > 0) partes.push(`${r.saltados} quedaron afuera`)
+      toast.success(partes.join(' · '))
+      router.refresh()
+    })
   }
 
   /**
@@ -240,6 +272,16 @@ export function TablaContactos({
           Descargar
         </Button>
 
+        <Button
+          variant="secundaria"
+          size="sm"
+          onClick={() => setConfirmando(true)}
+          disabled={pendiente || confirmando || filtrados.length === 0}
+        >
+          <RotateCcw aria-hidden />
+          Tirar al pozo de nuevo
+        </Button>
+
         {truncado ? (
           <span className="whitespace-nowrap text-[11.5px] text-ambar">
             Hay más contactos que el tope que se trae de una: esto es un recorte.
@@ -251,6 +293,36 @@ export function TablaContactos({
           {filtrados.length !== contactos.length ? ` de ${contactos.length.toLocaleString('es-AR')}` : ''}
         </span>
       </Panel>
+
+      {/* ── Confirmación de tirarlos al pozo ─────────────────────────── */}
+      {confirmando ? (
+        <Panel className="border-ambar/45 bg-ambar-tenue p-2.5">
+          <p className="text-[12.5px] text-texto">
+            Vas a tirar al pozo{' '}
+            <strong className="dato">{filtrados.length.toLocaleString('es-AR')}</strong>{' '}
+            {filtrados.length === 1 ? 'negocio' : 'negocios'}: vuelven a la etapa Nuevo y entran
+            en el próximo reparto, para hablarlos de nuevo desde el principio.
+          </p>
+          <p className="mt-1 text-[11.5px] text-texto-2">
+            Lo que ya pasó no se borra: siguen contando como hablados y su historial de mensajes
+            queda. Los que estén dados de baja vuelven a circulación. Los marcados como “no
+            contactar” y los perfiles inexistentes quedan afuera.
+          </p>
+          <div className="mt-2 flex items-center gap-1.5">
+            <Button variant="primaria" size="sm" onClick={alPozo} disabled={pendiente}>
+              {pendiente ? 'Tirando…' : 'Sí, tirarlos al pozo'}
+            </Button>
+            <Button
+              variant="fantasma"
+              size="sm"
+              onClick={() => setConfirmando(false)}
+              disabled={pendiente}
+            >
+              Cancelar
+            </Button>
+          </div>
+        </Panel>
+      ) : null}
 
       {/* ── Tabla ────────────────────────────────────────────────────── */}
       <Panel className="overflow-hidden">

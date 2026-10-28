@@ -4,7 +4,7 @@ import { and, asc, desc, eq, isNotNull, isNull, sql, type SQL } from 'drizzle-or
 
 import { db, type Db } from '@/db'
 import type { ContactStage } from '@/db/enums'
-import { contacts, messages } from '@/db/schema'
+import { contacts, events, messages } from '@/db/schema'
 
 /**
  * Tope de filas que se traen de una. Si la base tiene más, la pantalla avisa
@@ -210,3 +210,110 @@ export async function contarSinClasificar(): Promise<number> {
 }
 
 
+
+/* ── Volver a tirarlos al pozo ─────────────────────────────────────────── */
+
+export interface ResumenDelPozo {
+  /** Cuántos quedaron en 'nuevo', listos para el próximo reparto. */
+  tirados: number
+  /** Cuántos no se pueden tocar: 'no contactar' o perfil inexistente. */
+  saltados: number
+  /** De los tirados, cuántos estaban dados de baja y volvieron a circulación. */
+  revividos: number
+}
+
+/**
+ * Devuelve contactos al pozo para hablarlos de nuevo.
+ *
+ * Es la misma decisión que ya toma `vaciarElEquipo` cuando cambia el equipo o
+ * el guion —toda la lista se vuelve a trabajar desde el principio— pero a
+ * pedido y sobre los contactos que se le pasen, sin borrar ningún setter.
+ *
+ * Tres cosas que no son obvias y son el centro de esto:
+ *
+ *   1. **Primero se libera la asignación activa.** `lead_assignments_activo_uq`
+ *      permite como máximo una asignación por contacto que no haya vuelto al
+ *      pozo. Si no se marca 'devuelto' la anterior, el próximo reparto no puede
+ *      asignarlo: el lead queda en 'nuevo' y no lo trabaja nadie nunca.
+ *   2. **`sent_count` y `last_outbound_at` no se tocan.** Son el registro de
+ *      que ya recibió mensajes; borrarlos sería mentir sobre lo que pasó, y es
+ *      además lo que lo mantiene en la pantalla de Hablados.
+ *   3. **'No contactar' no vuelve nunca.** Es la única etapa que es una
+ *      decisión sobre la persona y no sobre el lead. Los perfiles inexistentes
+ *      tampoco: escribirle de nuevo a una cuenta que no existe gasta cupo al
+ *      aire.
+ */
+export async function devolverAlPozoEnLote(
+  ids: string[],
+  actorUserId: string | null,
+  cliente: Db = db,
+): Promise<ResumenDelPozo> {
+  const unicos = [...new Set(ids)]
+  if (unicos.length === 0) return { tirados: 0, saltados: 0, revividos: 0 }
+
+  const lista = sql.join(
+    unicos.map((id) => sql`${id}::uuid`),
+    sql`, `,
+  )
+
+  const elegibles = await cliente.execute(sql`
+    select c.id, c.stage, (c.discarded_at is not null) as de_baja
+      from contacts c
+     where c.id in (${lista})
+       and c.stage <> 'no_contactar'
+       and not exists (
+         select 1 from lead_assignments la
+          where la.contact_id = c.id and la.estado = 'cuenta_inexistente'
+       )
+  `)
+
+  const filas = elegibles.rows as Array<{ id: string; stage: ContactStage; de_baja: boolean }>
+  const saltados = unicos.length - filas.length
+  if (filas.length === 0) return { tirados: 0, saltados, revividos: 0 }
+
+  const elegidos = sql.join(
+    filas.map((f) => sql`${f.id}::uuid`),
+    sql`, `,
+  )
+
+  await cliente.transaction(async (tx) => {
+    // 1. Liberar la asignación activa, si la hay. Sin esto no se reasignan.
+    await tx.execute(sql`
+      update lead_assignments
+         set estado = 'devuelto', devuelto_at = now(),
+             devuelto_motivo = 'Se lo tira al pozo de nuevo para hablarlo otra vez.',
+             marcado_por = ${actorUserId}::uuid
+       where contact_id in (${elegidos})
+         and estado not in ('vencido', 'devuelto')
+    `)
+
+    // 2. El contacto vuelve a arrancar el recorrido, sin perder su historia.
+    await tx.execute(sql`
+      update contacts
+         set stage = 'nuevo',
+             sequence_step = 0,
+             next_followup_at = null,
+             discarded_at = null,
+             updated_at = now()
+       where id in (${elegidos})
+    `)
+
+    // 3. Un evento por contacto, para saber de qué etapa volvió cada uno.
+    for (let i = 0; i < filas.length; i += 500) {
+      await tx.insert(events).values(
+        filas.slice(i, i + 500).map((f) => ({
+          type: 'etapa_cambiada',
+          contactId: f.id,
+          actorUserId,
+          payload: { desde: f.stage, hasta: 'nuevo', motivo: 'tirado_al_pozo' },
+        })),
+      )
+    }
+  })
+
+  return {
+    tirados: filas.length,
+    saltados,
+    revividos: filas.filter((f) => f.de_baja).length,
+  }
+}

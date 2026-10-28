@@ -2,12 +2,15 @@
 
 import { eq, sql } from 'drizzle-orm'
 import { revalidatePath } from 'next/cache'
+import { z } from 'zod'
 
 import { auth } from '@/auth'
 import { db } from '@/db'
 import type { ContactStage } from '@/db/enums'
 import { contacts, events, messages } from '@/db/schema'
 import type { EstadoAccion } from '@/lib/form-state'
+import { devolverAlPozoEnLote, type ResumenDelPozo } from '@/server/contacts'
+import { ErrorDePermiso, exigirAdmin } from '@/server/session'
 
 async function usuarioActual(): Promise<string | null> {
   const sesion = await auth()
@@ -87,6 +90,48 @@ function puntajeDeEtapa(etapa: ContactStage): number {
     sin_respuesta: 5,
   }
   return mapa[etapa] ?? 20
+}
+
+/* ── Volver a tirarlos al pozo ─────────────────────────────────────────── */
+
+export interface ResultadoAlPozo extends EstadoAccion, ResumenDelPozo {}
+
+/**
+ * Los tira al pozo para hablarlos de nuevo.
+ *
+ * La acción solo pone la sesión y refresca las pantallas: la regla de quién
+ * vuelve y qué se conserva vive en `devolverAlPozoEnLote`, que es donde los
+ * tests la pueden probar contra Postgres.
+ */
+export async function tirarAlPozo(ids: string[]): Promise<ResultadoAlPozo> {
+  const vacio = { tirados: 0, saltados: 0, revividos: 0 }
+  try {
+    const sesion = await exigirAdmin()
+
+    const validos = ids.filter((i) => z.string().uuid().safeParse(i).success)
+    if (validos.length === 0) return { ok: false, error: 'No hay ninguno para tirar.', ...vacio }
+
+    const resumen = await devolverAlPozoEnLote(validos, sesion.userId)
+
+    if (resumen.tirados === 0) {
+      return {
+        ok: false,
+        error: 'Ninguno de esos puede volver al pozo: son "no contactar" o perfiles inexistentes.',
+        ...resumen,
+      }
+    }
+
+    revalidatePath('/contactos')
+    revalidatePath('/contactos/hablados')
+    revalidatePath('/equipo')
+    revalidatePath('/equipo/leads')
+
+    return { ok: true, error: null, ...resumen }
+  } catch (err) {
+    if (err instanceof ErrorDePermiso) return { ok: false, error: err.message, ...vacio }
+    console.error('Error al tirar al pozo:', err)
+    return { ok: false, error: 'No se pudieron tirar al pozo.', ...vacio }
+  }
 }
 
 /**
